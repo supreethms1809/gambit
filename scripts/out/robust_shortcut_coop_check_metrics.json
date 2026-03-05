@@ -1,0 +1,25 @@
+{
+  "batch_size": 4,
+  "game_config": {
+    "lambda_disjoint": 0.0,
+    "lambda_gap": 0.0,
+    "lambda_mean": 1.0,
+    "lambda_shortcut": 1.0,
+    "lambda_sparse": 0.05,
+    "lambda_var": 0.5
+  },
+  "game_mode": "cooperative",
+  "id_ood_gap": -0.002183272037655115,
+  "num_images": 8,
+  "num_steps": 2,
+  "run_name": "robust_shortcut_coop_check",
+  "scalar_metrics": {
+    "disjoint": 0.03656189329922199,
+    "loss": 0.03819883428514004,
+    "rob_mean": -2.520780014947377e-06,
+    "rob_var": 5.761048305075178e-10,
+    "sho_gap": 1.4512799680233002e-05,
+    "sho_mean": -2.520780014947377e-06,
+    "sparse": 0.7638757824897766
+  }
+}

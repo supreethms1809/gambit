@@ -1,0 +1,35 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -1.0863877832889557e-06,
+      "overlap": 0.03510911390185356,
+      "sparse": 1.0,
+      "suff": 0.405961811542511
+    },
+    "naive_contrastive": {
+      "margin": -8.174218237400055e-06,
+      "overlap": 0.0,
+      "sparse": 1.0,
+      "suff": 0.40595218539237976
+    },
+    "optimized": {
+      "margin": 5.024485290050507e-07,
+      "overlap": 0.006129652727395296,
+      "sparse": 1.0135478973388672,
+      "suff": 0.40595661103725433
+    }
+  },
+  "batch_size": 8,
+  "dataset": "pets",
+  "evidence": "gradcam",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 1.0,
+  "lambda_mass": 2.0,
+  "model": "resnet18",
+  "num_images": 16,
+  "pretrained": false,
+  "run_name": "ablation_contrastive_pets_gradcam"
+}

@@ -1,0 +1,2 @@
+dataset,loss,margin,mass_dev,overlap,run_name,sparse,suff
+stanford_dogs,-0.9844710230827332,-0.5235105156898499,0.06129667907953262,0.3479107618331909,contrastive_ig_stanford_dogs,0.975395143032074,1.7489267587661743

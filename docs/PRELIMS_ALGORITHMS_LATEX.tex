@@ -1,0 +1,65 @@
+% CDEA paper-ready algorithms (algorithm + algpseudocode style).
+% Suggested preamble:
+% \usepackage{amsmath,amssymb}
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+
+\begin{algorithm}[t]
+\caption{CDEA Instantiation I: Contrastive Shared-Unique Allocation}
+\label{alg:cdea-contrastive}
+\begin{algorithmic}[1]
+\Require Input $x$, model $f$, unit space $\mathcal{U}$, selector $\textsc{TopM}$, base evidence provider $g$, optional interaction $\mathcal{I}$, steps $T$
+\State $(\ell, p) \gets (f(x), \mathrm{softmax}(f(x)))$
+\State $H \gets \textsc{TopM}(\ell, p)$ \Comment{hypothesis IDs + valid mask}
+\State $E \gets g(x, f, H)$ \Comment{$E \in \mathbb{R}_{\ge 0}^{B \times K \times R}$}
+\State Normalize $E$ over unit axis $R$
+\If{$\mathrm{embed\_units}$ exists}
+    \State $\Phi \gets \mathcal{U}.\mathrm{embed\_units}(x)$ \Comment{$\Phi \in \mathbb{R}^{B \times R \times D}$}
+    \State $t \gets \sum_{u=1}^{R} E_{:,:,u}\,\Phi_{:,u,:}$ \Comment{$t \in \mathbb{R}^{B \times K \times D}$}
+\Else
+    \State $t \gets \varnothing$
+\EndIf
+\State $(t', a) \gets \mathcal{I}(t)$ if interaction enabled, else $(\varnothing,\varnothing)$
+\State Initialize mask logits for $m^{\text{unique}} \in [0,1]^{B \times K \times R}$ and optional $m^{\text{shared}} \in [0,1]^{B \times R}$
+\For{$s=1$ to $T$}
+    \State $m \gets \sigma(\text{logits})$
+    \For{each valid hypothesis $k \in H$}
+        \State $m_k^{\text{tot}} \gets m_k^{\text{unique}} + m^{\text{shared}}$ (or $m_k^{\text{unique}}$ if shared disabled)
+        \State $x_k^{\text{keep}} \gets \mathcal{U}.\mathrm{keep}(x, m_k^{\text{tot}})$
+        \State Compute $z_k = f(x_k^{\text{keep}})[k]$ and margin $\Delta_k = z_k - \max_{l\neq k} z_l$
+    \EndFor
+    \State Compute penalties: overlap$(m^{\text{unique}})$, sparse$(m^{\text{unique}})$, mass\_dev$(m^{\text{unique}},E)$
+    \State $\mathcal{L}_{\text{con}} \gets -(\lambda_{\text{suff}}\bar{z} + \lambda_{\text{margin}}\bar{\Delta}) + \lambda_{\text{overlap}}\Omega + \lambda_{\text{sparse}}S + \lambda_{\text{mass}}M$
+    \State Adam step on mask logits using $\nabla \mathcal{L}_{\text{con}}$
+\EndFor
+\State Compute report tensors: shared-only vs shared+unique probabilities and pairwise margins
+\State \Return Explanation$(H,\{m^{\text{unique}},m^{\text{shared}}\},\text{metrics},\{t',a\})$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{CDEA Instantiation II: Shift-Aware Robust-Shortcut Allocation}
+\label{alg:cdea-shift}
+\begin{algorithmic}[1]
+\Require EnvBatch $\mathcal{E}=\{x^{(0)}_{\text{id}},x^{(1)}_{\text{ood}},\dots,x^{(J)}_{\text{ood}}\}$, model $f$, unit space $\mathcal{U}$, selector/provider $(\textsc{TopM}, g)$, steps $T$
+\State On ID input, compute hypotheses/evidence (same kernel): $H, E$
+\State Choose target class $y$ (predicted / top-hypothesis / provided label mode)
+\State Initialize logits for $m_{\text{rob}} \in [0,1]^{B \times R}$ and $m_{\text{sho}} \in [0,1]^{B \times R}$
+\For{$s=1$ to $T$}
+    \State $(m_{\text{rob}}, m_{\text{sho}}) \gets \sigma(\text{logits}_{\text{rob}}), \sigma(\text{logits}_{\text{sho}})$
+    \For{$e=0$ to $J$}
+        \State $s^{\text{rob}}_e \gets f(\mathcal{U}.\mathrm{keep}(x^{(e)},m_{\text{rob}}))_y - f(\mathcal{U}.\mathrm{keep}(x^{(e)},0))_y$
+        \State $s^{\text{sho}}_e \gets f(\mathcal{U}.\mathrm{keep}(x^{(e)},m_{\text{sho}}))_y - f(\mathcal{U}.\mathrm{keep}(x^{(e)},0))_y$
+    \EndFor
+    \State $\mathrm{rob\_mean} \gets \frac{1}{J+1}\sum_e s^{\text{rob}}_e$,\quad $\mathrm{rob\_var} \gets \mathrm{Var}_e(s^{\text{rob}}_e)$
+    \State $\mathrm{sho\_gap} \gets s^{\text{sho}}_0 - \frac{1}{J}\sum_{e=1}^{J}s^{\text{sho}}_e$
+    \State $\mathrm{sho\_mean} \gets \frac{1}{J+1}\sum_e s^{\text{sho}}_e$
+    \State $\mathrm{disjoint} \gets \lVert m_{\text{rob}} \odot m_{\text{sho}} \rVert_1$,\quad $\mathrm{sparse} \gets \frac{1}{2}(\lVert m_{\text{rob}} \rVert_1 + \lVert m_{\text{sho}} \rVert_1)$
+    \State $\mathcal{L}_{\text{shift}} \gets -(\lambda_m\mathrm{rob\_mean}-\lambda_v\mathrm{rob\_var}+\lambda_g\mathrm{sho\_gap}+\lambda_{sh}\mathrm{sho\_mean})+\lambda_d\mathrm{disjoint}+\lambda_s\mathrm{sparse}$
+    \State Adam step on both mask logits using $\nabla \mathcal{L}_{\text{shift}}$
+\EndFor
+\State Optionally compute external shortcut ID-OOD gap diagnostic
+\State \Return Explanation$(H,\{m_{\text{rob}},m_{\text{sho}}\},\text{metrics},\text{extras})$
+\end{algorithmic}
+\end{algorithm}
+ 

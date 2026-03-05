@@ -1,0 +1,85 @@
+{
+  "batch_size": 64,
+  "config": {
+    "batch_size": 64,
+    "dataset": "stanford_dogs",
+    "evidence": "gradcam",
+    "interaction": "none",
+    "interaction_attn_mix": 0.35,
+    "interaction_dim": 64,
+    "interaction_dropout": 0.0,
+    "interaction_ffn": 256,
+    "interaction_heads": 4,
+    "interaction_weight_blend": 0.5,
+    "lambda_mass": 2.0,
+    "lambda_partition": 0.1,
+    "max_viz_classes": 3,
+    "model": "resnet18",
+    "num_alloc_steps": 25,
+    "pretrained": false,
+    "use_shared": true
+  },
+  "dataset": "stanford_dogs",
+  "metric_tensor_shapes": {
+    "hypothesis_weights_topm": [
+      64,
+      5
+    ],
+    "pairwise_margin_delta_logits_topm": [
+      64,
+      5,
+      5
+    ],
+    "pairwise_margin_delta_probs_topm": [
+      64,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_only_logits_topm": [
+      64,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_only_probs_topm": [
+      64,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_plus_unique_logits_topm": [
+      64,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_plus_unique_probs_topm": [
+      64,
+      5,
+      5
+    ],
+    "split_shared_only_logits_topm": [
+      64,
+      5
+    ],
+    "split_shared_only_probs_topm": [
+      64,
+      5
+    ],
+    "split_shared_plus_unique_logits_topm": [
+      64,
+      5
+    ],
+    "split_shared_plus_unique_probs_topm": [
+      64,
+      5
+    ]
+  },
+  "run_name": "contrastive_stanford_dogs",
+  "scalar_metrics": {
+    "loss": -5.390000343322754,
+    "margin": -2.561291217803955,
+    "mass_dev": 0.17152781784534454,
+    "overlap": 0.063007652759552,
+    "sparse": 0.9778811931610107,
+    "suff": 8.355842590332031
+  },
+  "top_k": 5
+}

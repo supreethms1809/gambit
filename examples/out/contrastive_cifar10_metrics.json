@@ -1,0 +1,84 @@
+{
+  "batch_size": 4,
+  "config": {
+    "batch_size": 4,
+    "dataset": "cifar10",
+    "evidence": "gradcam",
+    "interaction": "none",
+    "interaction_attn_mix": 0.35,
+    "interaction_dim": 64,
+    "interaction_dropout": 0.0,
+    "interaction_ffn": 256,
+    "interaction_heads": 4,
+    "interaction_weight_blend": 0.5,
+    "lambda_mass": 2.0,
+    "lambda_partition": 0.1,
+    "model": "resnet18",
+    "num_alloc_steps": 25,
+    "pretrained": false,
+    "use_shared": true
+  },
+  "dataset": "cifar10",
+  "metric_tensor_shapes": {
+    "hypothesis_weights_topm": [
+      4,
+      5
+    ],
+    "pairwise_margin_delta_logits_topm": [
+      4,
+      5,
+      5
+    ],
+    "pairwise_margin_delta_probs_topm": [
+      4,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_only_logits_topm": [
+      4,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_only_probs_topm": [
+      4,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_plus_unique_logits_topm": [
+      4,
+      5,
+      5
+    ],
+    "pairwise_margin_shared_plus_unique_probs_topm": [
+      4,
+      5,
+      5
+    ],
+    "split_shared_only_logits_topm": [
+      4,
+      5
+    ],
+    "split_shared_only_probs_topm": [
+      4,
+      5
+    ],
+    "split_shared_plus_unique_logits_topm": [
+      4,
+      5
+    ],
+    "split_shared_plus_unique_probs_topm": [
+      4,
+      5
+    ]
+  },
+  "run_name": "contrastive_cifar10",
+  "scalar_metrics": {
+    "loss": 0.1759740114212036,
+    "margin": -0.24935713410377502,
+    "mass_dev": 0.023919200524687767,
+    "overlap": 0.1663520187139511,
+    "sparse": 0.9893864393234253,
+    "suff": 0.20396125316619873
+  },
+  "top_k": 5
+}
