@@ -1,0 +1,23 @@
+{
+  "batch_size": 4,
+  "game_config": {
+    "lambda_disjoint": 0.4,
+    "lambda_gap": 1.5,
+    "lambda_mean": 1.0,
+    "lambda_sparse": 0.05,
+    "lambda_var": 0.5
+  },
+  "game_mode": "competitive",
+  "id_ood_gap": -0.00014745158841833472,
+  "num_images": 8,
+  "num_steps": 2,
+  "run_name": "robust_shortcut_modecheck",
+  "scalar_metrics": {
+    "disjoint": 0.03598741441965103,
+    "loss": 0.05234966427087784,
+    "rob_mean": 1.2463578059396241e-05,
+    "rob_var": 1.1073021388696702e-09,
+    "sho_gap": -1.764204353094101e-05,
+    "sparse": 0.7588139772415161
+  }
+}

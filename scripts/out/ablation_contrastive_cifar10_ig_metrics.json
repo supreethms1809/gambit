@@ -1,0 +1,35 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -0.5201170146465302,
+      "overlap": 0.5179084539413452,
+      "sparse": 1.0,
+      "suff": 0.5761702656745911
+    },
+    "naive_contrastive": {
+      "margin": -0.5200717449188232,
+      "overlap": 0.30232028663158417,
+      "sparse": 1.0,
+      "suff": 0.5761895775794983
+    },
+    "optimized": {
+      "margin": -0.5199595093727112,
+      "overlap": 0.06096378527581692,
+      "sparse": 0.9006425142288208,
+      "suff": 0.5759494304656982
+    }
+  },
+  "batch_size": 8,
+  "dataset": "cifar10",
+  "evidence": "ig",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 8,
+  "input_size": 224,
+  "lambda_disjoint": 1.0,
+  "lambda_mass": 2.0,
+  "model": "resnet18",
+  "num_images": 16,
+  "pretrained": false,
+  "run_name": "ablation_contrastive_cifar10_ig"
+}

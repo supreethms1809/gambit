@@ -1,0 +1,84 @@
+{
+  "batch_size": 4,
+  "config": {
+    "batch_size": 4,
+    "dataset": "pets",
+    "evidence": "gradcam",
+    "interaction": "none",
+    "interaction_attn_mix": 0.35,
+    "interaction_dim": 64,
+    "interaction_dropout": 0.0,
+    "interaction_ffn": 256,
+    "interaction_heads": 4,
+    "interaction_weight_blend": 0.5,
+    "lambda_mass": 2.0,
+    "lambda_partition": 0.1,
+    "model": "resnet18",
+    "num_alloc_steps": 25,
+    "pretrained": false,
+    "use_shared": true
+  },
+  "dataset": "pets",
+  "metric_tensor_shapes": {
+    "hypothesis_weights_topm": [
+      4,
+      2
+    ],
+    "pairwise_margin_delta_logits_topm": [
+      4,
+      2,
+      2
+    ],
+    "pairwise_margin_delta_probs_topm": [
+      4,
+      2,
+      2
+    ],
+    "pairwise_margin_shared_only_logits_topm": [
+      4,
+      2,
+      2
+    ],
+    "pairwise_margin_shared_only_probs_topm": [
+      4,
+      2,
+      2
+    ],
+    "pairwise_margin_shared_plus_unique_logits_topm": [
+      4,
+      2,
+      2
+    ],
+    "pairwise_margin_shared_plus_unique_probs_topm": [
+      4,
+      2,
+      2
+    ],
+    "split_shared_only_logits_topm": [
+      4,
+      2
+    ],
+    "split_shared_only_probs_topm": [
+      4,
+      2
+    ],
+    "split_shared_plus_unique_logits_topm": [
+      4,
+      2
+    ],
+    "split_shared_plus_unique_probs_topm": [
+      4,
+      2
+    ]
+  },
+  "run_name": "contrastive_pets",
+  "scalar_metrics": {
+    "loss": 0.2610350251197815,
+    "margin": 0.00033374130725860596,
+    "mass_dev": 0.02683936059474945,
+    "overlap": 0.0034514032304286957,
+    "sparse": 0.9920914769172668,
+    "suff": -0.15739518404006958
+  },
+  "top_k": 2
+}

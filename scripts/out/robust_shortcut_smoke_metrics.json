@@ -1,0 +1,15 @@
+{
+  "batch_size": 8,
+  "id_ood_gap": -0.0025973411684390157,
+  "num_images": 32,
+  "num_steps": 10,
+  "run_name": "robust_shortcut_smoke",
+  "scalar_metrics": {
+    "disjoint": 0.03598741441965103,
+    "loss": 0.04511418007314205,
+    "rob_mean": 3.833222763205413e-05,
+    "rob_var": 1.7274943975298385e-09,
+    "sho_gap": -1.432944554835558e-05,
+    "sparse": 0.7588139772415161
+  }
+}
