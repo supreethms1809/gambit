@@ -26,7 +26,10 @@ from modality.grid_regions import VisionGridUnitSpace
 from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from instantiations.shift.objective import RobustShortcutObjective
 from instantiations.shift.allocator import RobustShortcutOptimizationAllocator
-from instantiations.shift.biased_data import ColoredMNIST, env_batch_colored_mnist, compute_id_ood_gap
+from instantiations.shift.biased_data import (
+    ColoredMNIST, env_batch_colored_mnist, compute_id_ood_gap,
+    build_biased_dataset, get_env_batch_fn, BIASED_DATASETS,
+)
 
 
 TV_MODELS = ["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"]
@@ -164,6 +167,7 @@ def run_eval(
     model_name: str = "resnet18",
     pretrained: bool = True,
     checkpoint: Optional[str] = None,
+    dataset_name: str = "colored_mnist",
     lambda_mean: Optional[float] = None,
     lambda_var: Optional[float] = None,
     lambda_gap: Optional[float] = None,
@@ -198,11 +202,13 @@ def run_eval(
     input_size = TV_INPUT_SIZE if use_tv else None
 
     try:
-        dataset = ColoredMNIST(root=data_root, train=False, download=True, correlation=0.95)
+        dataset = build_biased_dataset(dataset_name, root=data_root, train=False, download=True, correlation=0.95)
+        env_batch_fn = get_env_batch_fn(dataset_name)
     except Exception as e:
-        print("ColoredMNIST failed (need torchvision):", e)
+        print(f"{dataset_name} failed (need torchvision): {e}")
         print("Falling back to synthetic biased data (color = label mod 3).")
         dataset = _synthetic_biased((num_images or 200) * 2)
+        env_batch_fn = _env_synthetic
         if num_images is not None:
             num_images = min(num_images, len(dataset))
 
@@ -251,7 +257,7 @@ def run_eval(
         if input_size is not None and x.shape[-1] != input_size:
             x = F.interpolate(x, size=(input_size, input_size), mode="bilinear", align_corners=False)
 
-        env = env_batch_colored_mnist(x, y) if isinstance(loader.dataset, ColoredMNIST) else _env_synthetic(x, y)
+        env = env_batch_fn(x, y)
         with torch.no_grad():
             logits = model(x)
             hypotheses = selector.select(logits, torch.softmax(logits, dim=-1))
@@ -380,11 +386,15 @@ def _env_synthetic(x: torch.Tensor, y: torch.Tensor) -> EnvBatch:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate shift-aware robust/shortcut instantiation")
-    parser.add_argument("--num_images", type=int, default=200)
+    parser.add_argument("--num_images", type=int, default=None,
+                        help="Number of images to evaluate (default: full dataset)")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_steps", type=int, default=40)
     parser.add_argument("--data_root", type=str, default=None)
     parser.add_argument("--export_prefix", type=str, default="robust_shortcut")
+    parser.add_argument("--dataset", dest="dataset_name", type=str,
+                        default="colored_mnist", choices=BIASED_DATASETS,
+                        help="Biased dataset to evaluate on")
     parser.add_argument("--model", dest="model_name", type=str, default="resnet18",
                         choices=TV_MODELS + ["smallcnn"])
     parser.add_argument("--pretrained", dest="pretrained", action="store_true", default=True)
@@ -434,6 +444,7 @@ if __name__ == "__main__":
             game_mode=args.game_mode,
             model_name=args.model_name,
             pretrained=args.pretrained,
+            dataset_name=args.dataset_name,
             lambda_mean=args.lambda_mean,
             lambda_var=args.lambda_var,
             lambda_gap=args.lambda_gap,

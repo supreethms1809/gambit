@@ -102,6 +102,54 @@ def get_train_loader(
                                    generator=torch.Generator().manual_seed(42))
         return DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
 
+    if dataset == "colored_cifar10":
+        from instantiations.shift.biased_data import ColoredCIFAR10
+        from torchvision import transforms
+        base_ds = ColoredCIFAR10(root=str(data_root), train=True, download=True,
+                                 correlation=COLORED_MNIST_CORRELATION)
+
+        class _ResizeWrapper(torch.utils.data.Dataset):
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __len__(self):
+                return len(self.inner)
+
+            def __getitem__(self, i):
+                x, y = self.inner[i]
+                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
+                                  mode="bilinear", align_corners=False).squeeze(0)
+                x = transforms.functional.normalize(
+                    x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                return x, y
+
+        ds = _ResizeWrapper(base_ds)
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+
+    if dataset == "texture_mnist":
+        from instantiations.shift.biased_data import TextureBiasedMNIST
+        from torchvision import transforms
+        base_ds = TextureBiasedMNIST(root=str(data_root), train=True, download=True,
+                                     correlation=COLORED_MNIST_CORRELATION)
+
+        class _ResizeWrapper(torch.utils.data.Dataset):
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __len__(self):
+                return len(self.inner)
+
+            def __getitem__(self, i):
+                x, y = self.inner[i]
+                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
+                                  mode="bilinear", align_corners=False).squeeze(0)
+                x = transforms.functional.normalize(
+                    x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                return x, y
+
+        ds = _ResizeWrapper(base_ds)
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+
     if dataset == "colored_mnist":
         from instantiations.shift.biased_data import ColoredMNIST
         from torchvision import transforms
@@ -135,7 +183,8 @@ def get_train_loader(
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     raise ValueError(f"Unknown dataset: {dataset}. "
-                     f"Choices: mnist, cifar10, pets, stanford_dogs, colored_mnist")
+                     f"Choices: mnist, cifar10, pets, stanford_dogs, "
+                     f"colored_mnist, colored_cifar10, texture_mnist")
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +370,8 @@ def get_or_train(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train GAMBIT backbone checkpoints")
     parser.add_argument("--dataset", required=True,
-                        choices=["mnist", "cifar10", "pets", "stanford_dogs", "colored_mnist"])
+                        choices=["mnist", "cifar10", "pets", "stanford_dogs",
+                                 "colored_mnist", "colored_cifar10", "texture_mnist"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
                         choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"])
     parser.add_argument("--epochs", dest="num_epochs", type=int, default=10)

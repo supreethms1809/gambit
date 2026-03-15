@@ -191,12 +191,14 @@ def run_shift_matrix(
     num_steps: int,
     pretrained: bool = True,
     checkpoint: Optional[str] = None,
+    dataset_name: str = "colored_mnist",
 ) -> List[Dict]:
     """Run robust-shortcut eval for every (game_mode, seed) combo.
 
     Args:
-        checkpoint: Optional path to a ``.pt`` checkpoint trained on ColoredMNIST.
-                    Without this the model has a random head and produces no useful signal.
+        checkpoint:   Optional path to a ``.pt`` checkpoint trained on the biased dataset.
+                      Without this the model has a random head and produces no useful signal.
+        dataset_name: Which biased dataset to evaluate on (colored_mnist, colored_cifar10, texture_mnist).
     """
     OUT.mkdir(parents=True, exist_ok=True)
     per_seed: Dict[int, Dict[str, Dict]] = {}
@@ -205,9 +207,9 @@ def run_shift_matrix(
         torch.manual_seed(seed)
         per_seed[seed] = {}
         for mode in game_modes:
-            prefix = f"shift_{mode}_seed{seed}"
+            prefix = f"shift_{dataset_name}_{mode}_seed{seed}"
             print(f"\n{'='*60}")
-            print(f"  shift game_mode={mode}  seed={seed}")
+            print(f"  shift dataset={dataset_name}  game_mode={mode}  seed={seed}")
             print(f"{'='*60}")
             try:
                 mean_metrics, mean_gap = run_eval(
@@ -219,10 +221,11 @@ def run_shift_matrix(
                     model_name="resnet18",
                     pretrained=pretrained,
                     checkpoint=checkpoint,
+                    dataset_name=dataset_name,
                 )
                 per_seed[seed][mode] = {**mean_metrics, "id_ood_gap": mean_gap}
             except Exception as exc:
-                print(f"[WARN] shift/{mode}/seed{seed} failed: {exc}")
+                print(f"[WARN] shift/{dataset_name}/{mode}/seed{seed} failed: {exc}")
                 per_seed[seed][mode] = {}
 
     agg_rows = []
@@ -235,7 +238,7 @@ def run_shift_matrix(
                 if m in seed_data:
                     metric_lists[m].append(seed_data[m])
 
-        row: Dict = {"game_mode": mode, "n_seeds": len(seeds)}
+        row: Dict = {"dataset": dataset_name, "game_mode": mode, "n_seeds": len(seeds)}
         for m in all_shift_metrics:
             mu, sd = _mean_std(metric_lists[m])
             row[f"{m}_mean"] = mu
@@ -243,9 +246,11 @@ def run_shift_matrix(
             row[f"{m}_fmt"] = _fmt(mu, sd)
         agg_rows.append(row)
 
-    save_rows_csv(OUT / "summary_shift.csv", agg_rows)
-    save_json(OUT / "summary_shift.json", {"rows": agg_rows, "seeds": seeds})
-    print(f"\nShift summary saved to {OUT / 'summary_shift.csv'}")
+    csv_name = f"summary_shift_{dataset_name}.csv"
+    json_name = f"summary_shift_{dataset_name}.json"
+    save_rows_csv(OUT / csv_name, agg_rows)
+    save_json(OUT / json_name, {"rows": agg_rows, "seeds": seeds, "dataset": dataset_name})
+    print(f"\nShift summary saved to {OUT / csv_name}")
     return agg_rows
 
 
@@ -420,11 +425,12 @@ def write_report(
         "Columns: Rob Mean ↑ (robust sufficiency across envs), Rob Var ↓ (stability),",
         "Sho Gap ↑ (shortcut is ID-specific), Disjoint ↓ (mask separation), Sparse ↓, ID-OOD Gap ↑.",
         "",
-        "| Game Mode | Rob Mean ↑ | Rob Var ↓ | Sho Gap ↑ | Disjoint ↓ | Sparse ↓ | ID-OOD Gap ↑ |",
-        "|---|---|---|---|---|---|---|",
+        "| Dataset | Game Mode | Rob Mean ↑ | Rob Var ↓ | Sho Gap ↑ | Disjoint ↓ | Sparse ↓ | ID-OOD Gap ↑ |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in shift_rows:
         lines.append(
+            f"| {row.get('dataset', 'colored_mnist')} "
             f"| {row['game_mode']} "
             f"| {_fmt(row.get('rob_mean_mean', float('nan')), row.get('rob_mean_std', 0.0), n_seeds=n_seeds)} "
             f"| {_fmt(row.get('rob_var_mean', float('nan')), row.get('rob_var_std', 0.0), n_seeds=n_seeds)} "
@@ -484,6 +490,12 @@ def main() -> None:
         default=["cooperative", "mixed", "competitive"],
         choices=["cooperative", "mixed", "competitive"],
     )
+    parser.add_argument(
+        "--shift_datasets", nargs="+",
+        default=["colored_mnist"],
+        choices=["colored_mnist", "colored_cifar10", "texture_mnist"],
+        help="Biased datasets for Instantiation II (default: colored_mnist)",
+    )
     parser.add_argument("--shift_num_images", type=int, default=None,
                         help="Images per shift game run (default: full dataset)")
     parser.add_argument("--pretrained", dest="pretrained", action="store_true", default=True,
@@ -518,6 +530,7 @@ def main() -> None:
         args.datasets = ["mnist", "cifar10"]
         args.evidence_types = ["gradcam", "ig"]
         args.shift_game_modes = ["mixed"]
+        args.shift_datasets = ["colored_mnist"]
         args.pretrained = False  # smoke test: skip download, use random weights
         args.train = False       # smoke test: skip training entirely
 
@@ -529,6 +542,7 @@ def main() -> None:
     print(f"  num_images:  {args.num_images}")
     print(f"  num_steps:   {args.num_steps}")
     print(f"  shift modes: {args.shift_game_modes}")
+    print(f"  shift datasets: {args.shift_datasets}")
     print(f"  pretrained:  {args.pretrained}")
     print(f"  train:       {args.train}"
           + (f" ({args.train_epochs} epochs, {'linear probe' if args.freeze_backbone else 'full fine-tune'})"
@@ -540,7 +554,7 @@ def main() -> None:
     # -----------------------------------------------------------------------
     ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
     contrastive_checkpoints: Dict[str, str] = {}
-    shift_checkpoint: Optional[str] = None
+    shift_checkpoints: Dict[str, str] = {}
 
     if args.train and args.pretrained:
         data_root = REPO / "data"
@@ -562,19 +576,20 @@ def main() -> None:
                     contrastive_checkpoints[dataset] = str(ckpt)
 
         if not args.skip_shift:
-            print("\n--- Training backbone for ColoredMNIST (shift experiment) ---")
-            ckpt = get_or_train(
-                dataset="colored_mnist",
-                model_name="resnet18",
-                pretrained=True,
-                data_root=data_root,
-                ckpt_dir=ckpt_dir,
-                num_epochs=args.train_epochs,
-                freeze_backbone=False,   # full fine-tune: model must learn the color shortcut
-                batch_size=args.train_batch_size,
-            )
-            if ckpt.exists():
-                shift_checkpoint = str(ckpt)
+            print("\n--- Training backbone for shift datasets ---")
+            for shift_ds in args.shift_datasets:
+                ckpt = get_or_train(
+                    dataset=shift_ds,
+                    model_name="resnet18",
+                    pretrained=True,
+                    data_root=data_root,
+                    ckpt_dir=ckpt_dir,
+                    num_epochs=args.train_epochs,
+                    freeze_backbone=False,   # full fine-tune: model must learn the shortcut
+                    batch_size=args.train_batch_size,
+                )
+                if ckpt.exists():
+                    shift_checkpoints[shift_ds] = str(ckpt)
     elif args.train and not args.pretrained:
         print("\n[INFO] --train requires --pretrained (ImageNet init). Skipping training.")
 
@@ -597,15 +612,19 @@ def main() -> None:
         )
 
     if not args.skip_shift:
-        shift_rows = run_shift_matrix(
-            game_modes=args.shift_game_modes,
-            seeds=args.seeds,
-            num_images=args.shift_num_images if hasattr(args, "shift_num_images") else args.num_images,
-            batch_size=args.batch_size,
-            num_steps=args.num_steps,
-            pretrained=args.pretrained,
-            checkpoint=shift_checkpoint,
-        )
+        shift_rows = []
+        for shift_ds in args.shift_datasets:
+            rows = run_shift_matrix(
+                game_modes=args.shift_game_modes,
+                seeds=args.seeds,
+                num_images=args.shift_num_images if hasattr(args, "shift_num_images") else args.num_images,
+                batch_size=args.batch_size,
+                num_steps=args.num_steps,
+                pretrained=args.pretrained,
+                checkpoint=shift_checkpoints.get(shift_ds),
+                dataset_name=shift_ds,
+            )
+            shift_rows.extend(rows)
 
     write_report(
         contrastive_rows=contrastive_rows,
