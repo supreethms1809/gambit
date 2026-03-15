@@ -9,7 +9,10 @@ Public API::
     from core.visualization import (
         mask_to_image,
         overlay_rgba,
+        extract_layer_activations,
         show_evidence_heatmap,
+        show_evidence_region_bars,
+        show_feature_activations,
         show_explanation_gallery,
         show_gradcam_vs_ig,
         show_probability_split,
@@ -21,11 +24,13 @@ Call ``fig.show()`` in a notebook or ``fig.write_html(path)`` to save.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -604,6 +609,266 @@ def show_probability_split(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.25),
         plot_bgcolor="white",
         margin=dict(l=60, r=20, t=80, b=60),
+    )
+
+    if out_path is not None:
+        fig.write_html(str(out_path))
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Feature extraction utility
+# ---------------------------------------------------------------------------
+
+def extract_layer_activations(
+    model: nn.Module,
+    x: torch.Tensor,
+    target_layer: Optional[Any] = None,
+) -> torch.Tensor:
+    """Run a forward pass and return activations at ``target_layer``.
+
+    Auto-detects the target layer using the same logic as GradCAMRegionsProvider:
+      - ViT (torchvision VisionTransformer): ``model.encoder.layers[-1]``
+      - CNN: last ``Conv2d`` layer
+
+    Args:
+        model:        Eval-mode ``nn.Module``.
+        x:            ``(B, C, H, W)`` input tensor on the correct device.
+        target_layer: Explicit layer to hook. If None, auto-detected.
+
+    Returns:
+        Activation tensor detached to CPU.
+        CNN shape:  ``(B, C, h, w)``
+        ViT shape:  ``(B, seq_len, dim)``  (index 0 is the CLS token)
+    """
+    if target_layer is None:
+        try:
+            from base_evidence.gradcam_regions import _find_target_layer
+            target_layer = _find_target_layer(model)
+        except Exception as e:
+            raise ValueError(
+                f"Could not auto-detect target layer: {e}. "
+                "Pass target_layer explicitly."
+            )
+
+    captured: List[torch.Tensor] = []
+
+    def _hook(_m: Any, _inp: Any, out: Any) -> None:
+        captured.append(out.detach().cpu())
+
+    handle = target_layer.register_forward_hook(_hook)
+    try:
+        with torch.no_grad():
+            model(x)
+    finally:
+        handle.remove()
+
+    if not captured:
+        raise RuntimeError("Forward hook did not capture any activations.")
+    return captured[0]
+
+
+# ---------------------------------------------------------------------------
+# Evidence region bar chart
+# ---------------------------------------------------------------------------
+
+def show_evidence_region_bars(
+    evidence: torch.Tensor,
+    hypothesis_ids: torch.Tensor,
+    class_names: Optional[List[str]] = None,
+    sample_idx: int = 0,
+    grid_h: Optional[int] = None,
+    grid_w: Optional[int] = None,
+    title: str = "Evidence Distribution per Region",
+    out_path: Optional[Path] = None,
+):
+    """Grouped bar chart of per-region evidence for each class hypothesis.
+
+    The spatial heatmap smooths over region boundaries; this chart shows the
+    exact numeric evidence mass at each grid cell so inter-class overlap is
+    immediately visible.  Bars that heavily overlap across classes indicate
+    ambiguous (shared) evidence; non-overlapping bars indicate well-separated
+    (unique) evidence — what CDEA aims to maximise.
+
+    Args:
+        evidence:       ``(B, K, R)`` evidence tensor from the base provider.
+        hypothesis_ids: ``(B, K)`` integer class IDs per sample.
+        class_names:    Optional list of string class labels.
+        sample_idx:     Which sample in the batch to visualize.
+        grid_h, grid_w: Grid dimensions — used to label regions as (row,col)
+                        instead of a flat index. Optional.
+        title:          Figure title.
+        out_path:       If given, save as HTML.
+
+    Returns:
+        plotly.graph_objects.Figure
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    ev  = evidence[sample_idx].detach().cpu().numpy()        # (K, R)
+    ids = hypothesis_ids[sample_idx].detach().cpu()
+    K, R = ev.shape
+
+    if grid_h and grid_w and grid_h * grid_w == R:
+        region_labels = [f"({r // grid_w},{r % grid_w})" for r in range(R)]
+    else:
+        region_labels = [str(r) for r in range(R)]
+
+    # Panel 1: per-class bar chart.  Panel 2: overlap heatmap.
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("Per-class evidence per region",
+                        "Class × Region evidence heatmap"),
+        column_widths=[0.65, 0.35],
+        horizontal_spacing=0.10,
+    )
+
+    palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+               "#8c564b", "#e377c2", "#7f7f7f"]
+    for k in range(K):
+        cls_id = int(ids[k].item())
+        lbl = (class_names[cls_id]
+               if class_names and 0 <= cls_id < len(class_names)
+               else str(cls_id))
+        fig.add_trace(go.Bar(
+            name=lbl,
+            x=region_labels,
+            y=ev[k].tolist(),
+            marker_color=palette[k % len(palette)],
+            opacity=0.80,
+        ), row=1, col=1)
+
+    # Panel 2: K × R heatmap for a compact view of all classes at once
+    class_labels = []
+    for k in range(K):
+        cls_id = int(ids[k].item())
+        class_labels.append(
+            class_names[cls_id]
+            if class_names and 0 <= cls_id < len(class_names)
+            else str(cls_id)
+        )
+    fig.add_trace(go.Heatmap(
+        z=ev,
+        x=region_labels,
+        y=class_labels,
+        colorscale="Blues",
+        showscale=True,
+        colorbar=dict(len=0.6, thickness=12, x=1.01),
+        hovertemplate="Class: %{y}<br>Region: %{x}<br>Evidence: %{z:.4f}<extra></extra>",
+    ), row=1, col=2)
+
+    fig.update_xaxes(tickangle=-60, tickfont=dict(size=9), row=1, col=1)
+    fig.update_xaxes(tickangle=-60, tickfont=dict(size=9), row=1, col=2)
+    fig.update_yaxes(title_text="Evidence", row=1, col=1, gridcolor="rgba(0,0,0,0.1)")
+    fig.update_yaxes(autorange="reversed", row=1, col=2)
+    fig.update_layout(
+        title_text=title, title_x=0.5,
+        barmode="group",
+        height=420, width=1100,
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, x=0.1),
+        plot_bgcolor="white",
+        margin=dict(l=60, r=40, t=80, b=80),
+    )
+
+    if out_path is not None:
+        fig.write_html(str(out_path))
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Feature activation channel heatmaps
+# ---------------------------------------------------------------------------
+
+def show_feature_activations(
+    x: torch.Tensor,
+    activations: torch.Tensor,
+    unit_space: Any,
+    sample_idx: int = 0,
+    n_channels: int = 6,
+    alpha: float = 0.55,
+    title: str = "Feature Activations at Target Layer",
+    out_path: Optional[Path] = None,
+):
+    """Top-N feature channel heatmaps composited on the input image.
+
+    Shows the raw activation map at the GradCAM target layer **before** any
+    gradient weighting.  This reveals what the model has encoded at the
+    classification-critical layer, independent of any class signal — useful
+    for diagnosing whether the backbone is encoding the right content.
+
+    For ViT, the CLS token is dropped and the 2D patch grid is reconstructed
+    from the sequence dimension before selecting top channels.
+
+    Args:
+        x:           ``(B, C, H, W)`` input tensor (CPU or GPU).
+        activations: Output of ``extract_layer_activations``.
+                     CNN: ``(B, C, h, w)``  |  ViT: ``(B, seq_len, dim)``
+        unit_space:  ``VisionGridUnitSpace`` instance (provides grid_h, grid_w).
+        sample_idx:  Which sample in the batch to visualize.
+        n_channels:  How many top-activation channels to display.
+        alpha:       Heatmap overlay opacity.
+        title:       Figure title.
+        out_path:    If given, save as HTML.
+
+    Returns:
+        plotly.graph_objects.Figure
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    gh, gw = unit_space.grid_h, unit_space.grid_w
+    x_cpu = x.detach().cpu()
+    B, C, H, W = x_cpu.shape
+    img = _to_hwc(x_cpu[sample_idx])
+
+    A = activations[sample_idx]  # CNN: (C, h, w) | ViT: (seq_len, dim)
+
+    if A.dim() == 2:
+        # ViT: drop CLS token (index 0), reshape to 2D spatial
+        A = A[1:, :]  # (num_patches, dim)
+        num_patches = A.shape[0]
+        ph = pw = int(math.isqrt(num_patches))
+        if ph * pw != num_patches:
+            ph, pw = 1, num_patches
+        A = A.T.reshape(-1, ph, pw)  # (dim, ph, pw)
+
+    # Select top-n channels by mean absolute activation magnitude
+    n_top = min(n_channels, A.shape[0])
+    channel_scores = A.abs().mean(dim=(1, 2))   # (C,)
+    top_indices = channel_scores.topk(n_top).indices.tolist()
+
+    n_cols = n_top + 1  # +1 for original image
+    col_titles = ["Input"] + [f"Ch {idx}\n(score={channel_scores[idx]:.3f})"
+                               for idx in top_indices]
+
+    fig = make_subplots(rows=1, cols=n_cols,
+                        subplot_titles=col_titles,
+                        horizontal_spacing=0.02)
+
+    fig.add_trace(go.Image(z=_to_uint8(img), name="Input"), row=1, col=1)
+
+    for i, ch_idx in enumerate(top_indices):
+        ch_map = A[ch_idx].float().numpy()  # (h, w) — may be low-res
+        # Upsample to input resolution
+        ch_up = mask_to_image(torch.from_numpy(ch_map), A.shape[1], A.shape[2], H, W)
+        # Shift to [0, 1] (activations can be negative after residual adds)
+        ch_up = ch_up - ch_up.min()
+        ch_up = ch_up / (ch_up.max() + 1e-8)
+        composited = _composite_heatmap(img, ch_up, alpha=alpha)
+        fig.add_trace(
+            go.Image(z=composited,
+                     hovertemplate=f"<b>Channel {ch_idx}</b><extra></extra>"),
+            row=1, col=i + 2,
+        )
+
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_layout(
+        title_text=title, title_x=0.5,
+        height=320, width=300 * n_cols,
+        margin=dict(l=10, r=10, t=80, b=10),
+        showlegend=False,
     )
 
     if out_path is not None:
