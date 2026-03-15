@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 REPO = Path(__file__).resolve().parent.parent
@@ -28,7 +29,13 @@ from instantiations.shift.allocator import RobustShortcutOptimizationAllocator
 from instantiations.shift.biased_data import ColoredMNIST, env_batch_colored_mnist, compute_id_ood_gap
 
 
-class SmallCNN(nn.Module):
+TV_MODELS = ["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"]
+TV_INPUT_SIZE = 224
+TV_GRID_H, TV_GRID_W = 7, 7
+
+
+class _SmallCNN(nn.Module):
+    """Lightweight backbone — smoke tests only, not for real experiments."""
     def __init__(self, num_classes=10):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 32, 3, padding=1)
@@ -40,6 +47,26 @@ class SmallCNN(nn.Module):
         x = torch.relu(self.conv1(x))
         x = torch.relu(self.conv2(x))
         return self.fc(self.pool(x).flatten(1))
+
+
+def _build_backbone(model_name: str, num_classes: int, pretrained: bool) -> nn.Module:
+    from torchvision import models
+    weights = "IMAGENET1K_V1" if pretrained else None
+    if model_name == "resnet18":
+        m = models.resnet18(weights=weights)
+        m.fc = nn.Linear(m.fc.in_features, num_classes)
+    elif model_name == "resnet34":
+        m = models.resnet34(weights=weights)
+        m.fc = nn.Linear(m.fc.in_features, num_classes)
+    elif model_name == "mobilenet_v2":
+        m = models.mobilenet_v2(weights=weights)
+        m.classifier[1] = nn.Linear(m.last_channel, num_classes)
+    elif model_name == "efficientnet_b0":
+        m = models.efficientnet_b0(weights=weights)
+        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+    else:
+        raise ValueError(f"model_name must be one of: {TV_MODELS}")
+    return m
 
 
 def _mask_to_image(m: torch.Tensor, grid_h: int, grid_w: int, h: int, w: int) -> torch.Tensor:
@@ -129,6 +156,8 @@ def run_eval(
     data_root: Optional[str] = None,
     export_prefix: str = "robust_shortcut",
     game_mode: str = "mixed",
+    model_name: str = "resnet18",
+    pretrained: bool = True,
     lambda_mean: Optional[float] = None,
     lambda_var: Optional[float] = None,
     lambda_gap: Optional[float] = None,
@@ -156,8 +185,11 @@ def run_eval(
 
     data_root = data_root or str(REPO / "data")
     device = get_device()
-    grid_h, grid_w = 4, 4
-    R = grid_h * grid_w
+
+    use_tv = model_name in TV_MODELS
+    grid_h = TV_GRID_H if use_tv else 4
+    grid_w = TV_GRID_W if use_tv else 4
+    input_size = TV_INPUT_SIZE if use_tv else None
 
     try:
         dataset = ColoredMNIST(root=data_root, train=False, download=True, correlation=0.95)
@@ -169,7 +201,14 @@ def run_eval(
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     unit_space = VisionGridUnitSpace(grid_h, grid_w)
-    model = SmallCNN(num_classes=10).to(device).eval()
+
+    if use_tv:
+        model = _build_backbone(model_name, num_classes=10, pretrained=pretrained).to(device).eval()
+        print(f"Model: {model_name} ({'pretrained ImageNet' if pretrained else 'random init'})")
+    else:
+        model = _SmallCNN(num_classes=10).to(device).eval()
+        print("Model: SmallCNN (smoke test only)")
+
     selector = TopMSelector(m=5)
     provider = GradCAMRegionsProvider(grid_h, grid_w)
     objective = RobustShortcutObjective(
@@ -199,6 +238,9 @@ def run_eval(
         x = x[: min(batch_size, num_images - count)]
         y = y[: x.shape[0]]
         count += x.shape[0]
+
+        if input_size is not None and x.shape[-1] != input_size:
+            x = F.interpolate(x, size=(input_size, input_size), mode="bilinear", align_corners=False)
 
         env = env_batch_colored_mnist(x, y) if isinstance(loader.dataset, ColoredMNIST) else _env_synthetic(x, y)
         with torch.no_grad():
@@ -334,6 +376,10 @@ if __name__ == "__main__":
     parser.add_argument("--num_steps", type=int, default=40)
     parser.add_argument("--data_root", type=str, default=None)
     parser.add_argument("--export_prefix", type=str, default="robust_shortcut")
+    parser.add_argument("--model", dest="model_name", type=str, default="resnet18",
+                        choices=TV_MODELS + ["smallcnn"])
+    parser.add_argument("--pretrained", dest="pretrained", action="store_true", default=True)
+    parser.add_argument("--no-pretrained", dest="pretrained", action="store_false")
     parser.add_argument(
         "--game_mode",
         type=str,
@@ -377,6 +423,8 @@ if __name__ == "__main__":
             data_root=args.data_root,
             export_prefix=args.export_prefix,
             game_mode=args.game_mode,
+            model_name=args.model_name,
+            pretrained=args.pretrained,
             lambda_mean=args.lambda_mean,
             lambda_var=args.lambda_var,
             lambda_gap=args.lambda_gap,

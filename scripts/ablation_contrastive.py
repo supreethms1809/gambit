@@ -112,7 +112,12 @@ def _get_eval_loader(
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
         ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
         return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    raise ValueError("dataset must be one of: mnist, cifar10, pets")
+    if dataset == "stanford_dogs":
+        target_size = image_size if image_size is not None else 224
+        t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
+        ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
+        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
+    raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
 
 
 def _fallback_random_loader(
@@ -139,11 +144,13 @@ def _fallback_random_loader(
 
     if image_size is not None:
         h, w = image_size, image_size
-        num_classes = 2 if dataset == "pets" else 10
+        num_classes = 2 if dataset == "pets" else (120 if dataset == "stanford_dogs" else 10)
     elif dataset == "mnist":
         h, w, num_classes = 28, 28, 10
     elif dataset == "pets":
         h, w, num_classes = 64, 64, 2
+    elif dataset == "stanford_dogs":
+        h, w, num_classes = 224, 224, 120
     else:
         h, w, num_classes = 32, 32, 10
 
@@ -206,8 +213,8 @@ def run_ablation(
     from instantiations.contrastive.objective import ContrastiveObjective
     from instantiations.contrastive.allocator import OptimizationAllocator
 
-    if dataset not in {"mnist", "cifar10", "pets"}:
-        raise ValueError("dataset must be one of: mnist, cifar10, pets")
+    if dataset not in {"mnist", "cifar10", "pets", "stanford_dogs"}:
+        raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
     if evidence not in {"gradcam", "ig"}:
         raise ValueError("evidence must be 'gradcam' or 'ig'")
     if model_name not in MODEL_CHOICES:
@@ -389,7 +396,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Run CDEA contrastive ablation")
-    parser.add_argument("--dataset", type=str, default="cifar10", choices=["mnist", "cifar10", "pets"])
+    parser.add_argument("--dataset", type=str, default="cifar10", choices=["mnist", "cifar10", "pets", "stanford_dogs"])
     parser.add_argument("--evidence", type=str, default="gradcam", choices=["gradcam", "ig"])
     parser.add_argument("--model", dest="model_name", type=str, default="resnet18", choices=MODEL_CHOICES)
     parser.add_argument("--pretrained", action="store_true")

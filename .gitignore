@@ -209,3 +209,9 @@ __marimo__/
 # Others
 data/
 .claude/
+
+# Generated experiment outputs (run scripts/run_experiments.py to regenerate)
+scripts/out/*.json
+scripts/out/*.csv
+scripts/out/journal/
+examples/out/
