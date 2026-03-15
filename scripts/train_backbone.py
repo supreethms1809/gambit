@@ -39,6 +39,17 @@ REPO = Path(__file__).resolve().parent.parent
 TV_INPUT_SIZE = 224
 COLORED_MNIST_CORRELATION = 0.9
 
+
+def model_grid_size(model_name: str) -> tuple:
+    """Return (grid_h, grid_w) for model at TV_INPUT_SIZE=224.
+
+    vit_b_16 → 14×14 (224/16=14 patches per side)
+    all others → 7×7
+    """
+    if model_name == "vit_b_16":
+        return 14, 14
+    return 7, 7
+
 # ---------------------------------------------------------------------------
 # Data loaders  (train splits)
 # ---------------------------------------------------------------------------
@@ -206,15 +217,21 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = True) -> 
     elif model_name == "efficientnet_b0":
         m = models.efficientnet_b0(weights=weights)
         m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+    elif model_name == "vit_b_16":
+        m = models.vit_b_16(weights=weights)
+        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
+    elif model_name == "vit_b_32":
+        m = models.vit_b_32(weights=weights)
+        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
     else:
         raise ValueError(f"Unsupported model: {model_name}")
     return m
 
 
 def _freeze_backbone(model: nn.Module) -> None:
-    """Freeze all layers except the output head (fc / classifier)."""
+    """Freeze all layers except the output head (fc / classifier / heads)."""
     for name, param in model.named_parameters():
-        is_head = "fc" in name or "classifier" in name
+        is_head = "fc" in name or "classifier" in name or "heads" in name
         param.requires_grad_(is_head)
 
 
@@ -373,7 +390,8 @@ def main() -> None:
                         choices=["mnist", "cifar10", "pets", "stanford_dogs",
                                  "colored_mnist", "colored_cifar10", "texture_mnist"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
-                        choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"])
+                        choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
+                                 "vit_b_16", "vit_b_32"])
     parser.add_argument("--epochs", dest="num_epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=32)

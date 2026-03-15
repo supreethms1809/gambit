@@ -44,37 +44,43 @@ class SmallCNN(nn.Module):
 
 
 TV_INPUT_SIZE = 224
-MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"]
+MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
+                 "vit_b_16", "vit_b_32"]
 
 
 def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
                  checkpoint: Optional[str] = None) -> nn.Module:
     if model_name == "smallcnn":
-        return SmallCNN(num_classes=num_classes)
+        model = SmallCNN(num_classes=num_classes)
+        if checkpoint is not None:
+            state = torch.load(checkpoint, map_location="cpu")
+            model.load_state_dict(state)
+            print(f"  [model] loaded checkpoint: {checkpoint}")
+        return model
     try:
         from torchvision import models
     except ImportError as e:
         raise ImportError("torchvision is required for torchvision model backbones") from e
 
+    weights = "IMAGENET1K_V1" if pretrained else None
     if model_name == "resnet18":
-        weights = "IMAGENET1K_V1" if pretrained else None
         model = models.resnet18(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
-        return model
-    if model_name == "resnet34":
-        weights = "IMAGENET1K_V1" if pretrained else None
+    elif model_name == "resnet34":
         model = models.resnet34(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
-        return model
-    if model_name == "mobilenet_v2":
-        weights = "IMAGENET1K_V1" if pretrained else None
+    elif model_name == "mobilenet_v2":
         model = models.mobilenet_v2(weights=weights)
         model.classifier[1] = nn.Linear(model.last_channel, num_classes)
-        return model
-    if model_name == "efficientnet_b0":
-        weights = "IMAGENET1K_V1" if pretrained else None
+    elif model_name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=weights)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif model_name == "vit_b_16":
+        model = models.vit_b_16(weights=weights)
+        model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
+    elif model_name == "vit_b_32":
+        model = models.vit_b_32(weights=weights)
+        model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
     else:
         raise ValueError(f"model_name must be one of: {', '.join(MODEL_CHOICES)}")
     if checkpoint is not None:
@@ -238,7 +244,12 @@ def run_ablation(
     device = get_device()
     use_torchvision_backbone = model_name != "smallcnn"
     input_size = TV_INPUT_SIZE if use_torchvision_backbone else None
-    grid_h, grid_w = (7, 7) if use_torchvision_backbone else (4, 4)
+    if not use_torchvision_backbone:
+        grid_h, grid_w = 4, 4
+    elif model_name == "vit_b_16":
+        grid_h, grid_w = 14, 14
+    else:
+        grid_h, grid_w = 7, 7
     unit_space = VisionGridUnitSpace(grid_h, grid_w)
     try:
         loader, num_classes = _get_eval_loader(dataset, batch_size, data_root_path, image_size=input_size)

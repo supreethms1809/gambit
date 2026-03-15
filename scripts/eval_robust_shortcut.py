@@ -32,9 +32,10 @@ from instantiations.shift.biased_data import (
 )
 
 
-TV_MODELS = ["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"]
+TV_MODELS = ["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0", "vit_b_16", "vit_b_32"]
 TV_INPUT_SIZE = 224
 TV_GRID_H, TV_GRID_W = 7, 7
+VIT_B16_GRID_H, VIT_B16_GRID_W = 14, 14
 
 
 class _SmallCNN(nn.Module):
@@ -68,6 +69,12 @@ def _build_backbone(model_name: str, num_classes: int, pretrained: bool,
     elif model_name == "efficientnet_b0":
         m = models.efficientnet_b0(weights=weights)
         m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+    elif model_name == "vit_b_16":
+        m = models.vit_b_16(weights=weights)
+        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
+    elif model_name == "vit_b_32":
+        m = models.vit_b_32(weights=weights)
+        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
     else:
         raise ValueError(f"model_name must be one of: {TV_MODELS}")
     if checkpoint is not None:
@@ -197,8 +204,12 @@ def run_eval(
     device = get_device()
 
     use_tv = model_name in TV_MODELS
-    grid_h = TV_GRID_H if use_tv else 4
-    grid_w = TV_GRID_W if use_tv else 4
+    if not use_tv:
+        grid_h, grid_w = 4, 4
+    elif model_name == "vit_b_16":
+        grid_h, grid_w = VIT_B16_GRID_H, VIT_B16_GRID_W
+    else:
+        grid_h, grid_w = TV_GRID_H, TV_GRID_W
     input_size = TV_INPUT_SIZE if use_tv else None
 
     try:
