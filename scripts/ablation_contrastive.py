@@ -47,7 +47,8 @@ TV_INPUT_SIZE = 224
 MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"]
 
 
-def _build_model(model_name: str, num_classes: int, pretrained: bool = False) -> nn.Module:
+def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
+                 checkpoint: Optional[str] = None) -> nn.Module:
     if model_name == "smallcnn":
         return SmallCNN(num_classes=num_classes)
     try:
@@ -74,8 +75,13 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False) ->
         weights = "IMAGENET1K_V1" if pretrained else None
         model = models.efficientnet_b0(weights=weights)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-        return model
-    raise ValueError(f"model_name must be one of: {', '.join(MODEL_CHOICES)}")
+    else:
+        raise ValueError(f"model_name must be one of: {', '.join(MODEL_CHOICES)}")
+    if checkpoint is not None:
+        state = torch.load(checkpoint, map_location="cpu")
+        model.load_state_dict(state)
+        print(f"  [model] loaded checkpoint: {checkpoint}")
+    return model
 
 
 def _get_eval_loader(
@@ -196,7 +202,7 @@ def compute_metrics(
 
 
 def run_ablation(
-    num_images: int = 200,
+    num_images: Optional[int] = None,
     batch_size: int = 16,
     dataset: str = "cifar10",
     evidence: str = "gradcam",
@@ -207,6 +213,7 @@ def run_ablation(
     lambda_mass: float = 2.0,
     data_root: str | None = None,
     export_prefix: str | None = None,
+    checkpoint: Optional[str] = None,
 ):
     from core.runner import CDEAExplainer
     from core.allocator import EvidenceAsMaskAllocator
@@ -237,9 +244,10 @@ def run_ablation(
         loader, num_classes = _get_eval_loader(dataset, batch_size, data_root_path, image_size=input_size)
     except Exception as e:
         print("Dataset load failed for", dataset, "using random fallback:", e)
-        loader, num_classes = _fallback_random_loader(dataset, batch_size, num_images, image_size=input_size)
+        loader, num_classes = _fallback_random_loader(dataset, batch_size, num_images or 200, image_size=input_size)
 
-    model = _build_model(model_name, num_classes, pretrained=pretrained).to(device).eval()
+    model = _build_model(model_name, num_classes, pretrained=pretrained,
+                         checkpoint=checkpoint).to(device).eval()
     selector = TopMSelector(m=min(5, num_classes))
     if evidence_kind == "gradcam":
         provider = GradCAMRegionsProvider(grid_h, grid_w)
@@ -259,10 +267,11 @@ def run_ablation(
     results: Dict[str, List[Dict[str, float]]] = {"base_evidence": [], "naive_contrastive": [], "optimized": []}
     count = 0
     for x, _ in loader:
-        if count >= num_images:
+        if num_images is not None and count >= num_images:
             break
         x = x.to(device)
-        x = x[: min(batch_size, num_images - count)]
+        if num_images is not None:
+            x = x[: min(batch_size, num_images - count)]
         count += x.shape[0]
         with torch.no_grad():
             logits = model(x)
@@ -311,7 +320,7 @@ def run_ablation(
 
     print("--- Ablation (mean over batches) ---")
     print(
-        "dataset=%s evidence=%s model=%s pretrained=%s ig_steps=%d lambda_disjoint=%.3f lambda_mass=%.3f num_images=%d batch_size=%d"
+        "dataset=%s evidence=%s model=%s pretrained=%s ig_steps=%d lambda_disjoint=%.3f lambda_mass=%.3f num_images=%s batch_size=%d"
         % (
             dataset,
             evidence_kind,
@@ -320,7 +329,7 @@ def run_ablation(
             ig_steps,
             lambda_disjoint,
             lambda_mass,
-            num_images,
+            "all" if num_images is None else str(num_images),
             batch_size,
         )
     )
@@ -361,7 +370,7 @@ def run_ablation(
         "ig_steps": int(ig_steps) if evidence_kind == "ig" else None,
         "lambda_disjoint": float(lambda_disjoint),
         "lambda_mass": float(lambda_mass),
-        "num_images": int(num_images),
+        "num_images": count,
         "batch_size": int(batch_size),
         "aggregates": {
             "base_evidence": base_agg,

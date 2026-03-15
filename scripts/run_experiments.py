@@ -43,6 +43,7 @@ if str(REPO) not in sys.path:
 from core.reporting import save_json, save_rows_csv
 from scripts.ablation_contrastive import run_ablation
 from scripts.eval_robust_shortcut import run_eval
+from scripts.train_backbone import get_or_train
 
 OUT = REPO / "scripts" / "out" / "journal"
 
@@ -93,8 +94,15 @@ def run_contrastive_matrix(
     lambda_disjoint: float,
     lambda_mass: float,
     pretrained: bool = True,
+    checkpoints: Optional[Dict[str, str]] = None,
 ) -> List[Dict]:
-    """Run ablation for every (dataset, evidence, seed) combo. Return aggregated rows."""
+    """Run ablation for every (dataset, evidence, seed) combo. Return aggregated rows.
+
+    Args:
+        checkpoints: Optional dict mapping dataset name -> path to trained ``.pt`` checkpoint.
+                     When provided, the checkpoint is loaded into the model before running
+                     the interpretation games (overrides random head weights).
+    """
     OUT.mkdir(parents=True, exist_ok=True)
     # seed -> dataset -> evidence -> method -> metric -> value
     per_seed: Dict[int, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]] = {}
@@ -109,6 +117,7 @@ def run_contrastive_matrix(
                 print(f"\n{'='*60}")
                 print(f"  dataset={dataset}  evidence={evidence}  seed={seed}")
                 print(f"{'='*60}")
+                ckpt = checkpoints.get(dataset) if checkpoints else None
                 try:
                     results = run_ablation(
                         num_images=num_images,
@@ -121,6 +130,7 @@ def run_contrastive_matrix(
                         lambda_disjoint=lambda_disjoint,
                         lambda_mass=lambda_mass,
                         export_prefix=prefix,
+                        checkpoint=ckpt,
                     )
                     # run_ablation returns dict method -> list of per-batch dicts
                     per_seed[seed][dataset][evidence] = {
@@ -180,8 +190,14 @@ def run_shift_matrix(
     batch_size: int,
     num_steps: int,
     pretrained: bool = True,
+    checkpoint: Optional[str] = None,
 ) -> List[Dict]:
-    """Run robust-shortcut eval for every (game_mode, seed) combo."""
+    """Run robust-shortcut eval for every (game_mode, seed) combo.
+
+    Args:
+        checkpoint: Optional path to a ``.pt`` checkpoint trained on ColoredMNIST.
+                    Without this the model has a random head and produces no useful signal.
+    """
     OUT.mkdir(parents=True, exist_ok=True)
     per_seed: Dict[int, Dict[str, Dict]] = {}
 
@@ -202,6 +218,7 @@ def run_shift_matrix(
                     game_mode=mode,
                     model_name="resnet18",
                     pretrained=pretrained,
+                    checkpoint=checkpoint,
                 )
                 per_seed[seed][mode] = {**mean_metrics, "id_ood_gap": mean_gap}
             except Exception as exc:
@@ -453,8 +470,8 @@ def main() -> None:
         choices=["gradcam", "ig"],
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
-    parser.add_argument("--num_images", type=int, default=200,
-                        help="Images per (dataset, evidence, seed) contrastive run")
+    parser.add_argument("--num_images", type=int, default=None,
+                        help="Images per (dataset, evidence, seed) contrastive run (default: full dataset)")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_steps", type=int, default=40,
                         help="Allocation optimizer steps (contrastive and shift)")
@@ -467,17 +484,28 @@ def main() -> None:
         default=["cooperative", "mixed", "competitive"],
         choices=["cooperative", "mixed", "competitive"],
     )
-    parser.add_argument("--shift_num_images", type=int, default=200,
-                        help="Images per shift game run (overrides --num_images for shift)")
+    parser.add_argument("--shift_num_images", type=int, default=None,
+                        help="Images per shift game run (default: full dataset)")
     parser.add_argument("--pretrained", dest="pretrained", action="store_true", default=True,
                         help="Use ImageNet pretrained weights (default: on)")
     parser.add_argument("--no-pretrained", dest="pretrained", action="store_false",
                         help="Use randomly initialized weights")
+    parser.add_argument("--train", dest="train", action="store_true", default=True,
+                        help="Fine-tune backbone on each dataset before running experiments (default: on)")
+    parser.add_argument("--no-train", dest="train", action="store_false",
+                        help="Skip training — use ImageNet head as-is (random output layer)")
+    parser.add_argument("--train_epochs", type=int, default=10,
+                        help="Training epochs per dataset (default: 10)")
+    parser.add_argument("--freeze_backbone", dest="freeze_backbone", action="store_true", default=True,
+                        help="Linear probe: freeze backbone, train head only (default)")
+    parser.add_argument("--no-freeze-backbone", dest="freeze_backbone", action="store_false",
+                        help="Full fine-tune: train all layers")
+    parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--skip_contrastive", action="store_true")
     parser.add_argument("--skip_shift", action="store_true")
     parser.add_argument(
         "--quick", action="store_true",
-        help="Smoke-test mode: 1 seed, 32 images, 10 steps, mnist+cifar10 only, no pretrained",
+        help="Smoke-test mode: 1 seed, 32 images, 10 steps, mnist+cifar10 only, no pretrained, no training",
     )
     args = parser.parse_args()
 
@@ -491,6 +519,7 @@ def main() -> None:
         args.evidence_types = ["gradcam", "ig"]
         args.shift_game_modes = ["mixed"]
         args.pretrained = False  # smoke test: skip download, use random weights
+        args.train = False       # smoke test: skip training entirely
 
     print("=" * 60)
     print("GAMBIT Experiment Runner")
@@ -501,7 +530,53 @@ def main() -> None:
     print(f"  num_steps:   {args.num_steps}")
     print(f"  shift modes: {args.shift_game_modes}")
     print(f"  pretrained:  {args.pretrained}")
+    print(f"  train:       {args.train}"
+          + (f" ({args.train_epochs} epochs, {'linear probe' if args.freeze_backbone else 'full fine-tune'})"
+             if args.train else ""))
     print("=" * 60)
+
+    # -----------------------------------------------------------------------
+    # Step 1: Train / load checkpoints
+    # -----------------------------------------------------------------------
+    ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
+    contrastive_checkpoints: Dict[str, str] = {}
+    shift_checkpoint: Optional[str] = None
+
+    if args.train and args.pretrained:
+        data_root = REPO / "data"
+
+        if not args.skip_contrastive:
+            print("\n--- Training backbone for contrastive datasets ---")
+            for dataset in args.datasets:
+                ckpt = get_or_train(
+                    dataset=dataset,
+                    model_name="resnet18",
+                    pretrained=True,
+                    data_root=data_root,
+                    ckpt_dir=ckpt_dir,
+                    num_epochs=args.train_epochs,
+                    freeze_backbone=args.freeze_backbone,
+                    batch_size=args.train_batch_size,
+                )
+                if ckpt.exists():
+                    contrastive_checkpoints[dataset] = str(ckpt)
+
+        if not args.skip_shift:
+            print("\n--- Training backbone for ColoredMNIST (shift experiment) ---")
+            ckpt = get_or_train(
+                dataset="colored_mnist",
+                model_name="resnet18",
+                pretrained=True,
+                data_root=data_root,
+                ckpt_dir=ckpt_dir,
+                num_epochs=args.train_epochs,
+                freeze_backbone=False,   # full fine-tune: model must learn the color shortcut
+                batch_size=args.train_batch_size,
+            )
+            if ckpt.exists():
+                shift_checkpoint = str(ckpt)
+    elif args.train and not args.pretrained:
+        print("\n[INFO] --train requires --pretrained (ImageNet init). Skipping training.")
 
     contrastive_rows: List[Dict] = []
     shift_rows: List[Dict] = []
@@ -518,6 +593,7 @@ def main() -> None:
             lambda_disjoint=args.lambda_disjoint,
             lambda_mass=args.lambda_mass,
             pretrained=args.pretrained,
+            checkpoints=contrastive_checkpoints or None,
         )
 
     if not args.skip_shift:
@@ -528,6 +604,7 @@ def main() -> None:
             batch_size=args.batch_size,
             num_steps=args.num_steps,
             pretrained=args.pretrained,
+            checkpoint=shift_checkpoint,
         )
 
     write_report(

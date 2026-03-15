@@ -49,7 +49,8 @@ class _SmallCNN(nn.Module):
         return self.fc(self.pool(x).flatten(1))
 
 
-def _build_backbone(model_name: str, num_classes: int, pretrained: bool) -> nn.Module:
+def _build_backbone(model_name: str, num_classes: int, pretrained: bool,
+                    checkpoint: Optional[str] = None) -> nn.Module:
     from torchvision import models
     weights = "IMAGENET1K_V1" if pretrained else None
     if model_name == "resnet18":
@@ -66,6 +67,10 @@ def _build_backbone(model_name: str, num_classes: int, pretrained: bool) -> nn.M
         m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
     else:
         raise ValueError(f"model_name must be one of: {TV_MODELS}")
+    if checkpoint is not None:
+        state = torch.load(checkpoint, map_location="cpu")
+        m.load_state_dict(state)
+        print(f"  [model] loaded checkpoint: {checkpoint}")
     return m
 
 
@@ -150,7 +155,7 @@ def _save_mask_visualization(
 
 
 def run_eval(
-    num_images: int = 200,
+    num_images: Optional[int] = None,
     batch_size: int = 16,
     num_steps: int = 40,
     data_root: Optional[str] = None,
@@ -158,6 +163,7 @@ def run_eval(
     game_mode: str = "mixed",
     model_name: str = "resnet18",
     pretrained: bool = True,
+    checkpoint: Optional[str] = None,
     lambda_mean: Optional[float] = None,
     lambda_var: Optional[float] = None,
     lambda_gap: Optional[float] = None,
@@ -196,14 +202,16 @@ def run_eval(
     except Exception as e:
         print("ColoredMNIST failed (need torchvision):", e)
         print("Falling back to synthetic biased data (color = label mod 3).")
-        dataset = _synthetic_biased(num_images * 2)
-        num_images = min(num_images, len(dataset))
+        dataset = _synthetic_biased((num_images or 200) * 2)
+        if num_images is not None:
+            num_images = min(num_images, len(dataset))
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     unit_space = VisionGridUnitSpace(grid_h, grid_w)
 
     if use_tv:
-        model = _build_backbone(model_name, num_classes=10, pretrained=pretrained).to(device).eval()
+        model = _build_backbone(model_name, num_classes=10, pretrained=pretrained,
+                                checkpoint=checkpoint).to(device).eval()
         print(f"Model: {model_name} ({'pretrained ImageNet' if pretrained else 'random init'})")
     else:
         model = _SmallCNN(num_classes=10).to(device).eval()
@@ -231,12 +239,13 @@ def run_eval(
     saved_viz = False
     count = 0
     for x, y in loader:
-        if count >= num_images:
+        if num_images is not None and count >= num_images:
             break
         x = x.to(device)
         y = y.to(device)
-        x = x[: min(batch_size, num_images - count)]
-        y = y[: x.shape[0]]
+        if num_images is not None:
+            x = x[: min(batch_size, num_images - count)]
+            y = y[: x.shape[0]]
         count += x.shape[0]
 
         if input_size is not None and x.shape[-1] != input_size:
@@ -300,7 +309,7 @@ def run_eval(
     summary = {
         "run_name": export_prefix,
         "game_mode": game_cfg.mode,
-        "num_images": int(num_images),
+        "num_images": count,
         "batch_size": int(batch_size),
         "num_steps": int(num_steps),
         "game_config": {
