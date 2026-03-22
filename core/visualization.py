@@ -44,13 +44,19 @@ def mask_to_image(
     grid_w: int,
     h: int,
     w: int,
+    smooth: bool = True,
 ) -> np.ndarray:
     """Upsample a region mask to pixel space.
+
+    Bilinear interpolation followed by an optional Gaussian blur to soften
+    the block artefacts introduced by the coarse spatial grid.
 
     Args:
         m:              Tensor of shape (R,) or (K, R).
         grid_h, grid_w: Grid dimensions.
         h, w:           Target pixel height and width.
+        smooth:         If True (default), apply a Gaussian blur whose sigma
+                        scales with the upsampling ratio (≈ 0.4 grid cells).
 
     Returns:
         np.ndarray of shape (H, W) or (K, H, W), float32.
@@ -61,6 +67,14 @@ def mask_to_image(
     pm = m.detach().cpu().float().view(-1, 1, grid_h, grid_w)
     pm = F.interpolate(pm, size=(h, w), mode="bilinear", align_corners=False)
     out = pm.squeeze(1).numpy()
+    if smooth:
+        from scipy.ndimage import gaussian_filter
+        sigma = (h / grid_h) * 0.45
+        if out.ndim == 2:
+            out = gaussian_filter(out, sigma=sigma)
+        else:
+            out = np.stack([gaussian_filter(out[i], sigma=sigma)
+                            for i in range(out.shape[0])])
     if out.shape[0] == 1:
         out = out[0]
     return out
@@ -74,10 +88,10 @@ def overlay_rgba(
 ) -> np.ndarray:
     """Build an RGBA overlay from unique and shared mask arrays.
 
-    Color encoding:
-        Green  = unique evidence (class-specific)
-        Red    = shared evidence (common across top classes)
-        Yellow = both
+    Color encoding (colorblind-safe):
+        Blue   (#2979FF) = unique evidence (class-specific)
+        Orange (#FF9100) = shared evidence (common across top classes)
+        Purple (#9C27B0) = both
 
     Args:
         unique: (H, W) float array, unique mask for one class.
@@ -92,9 +106,15 @@ def overlay_rgba(
     s = np.clip(shared,  0, 1).astype(np.float32)
     u = (u / (u.max() + 1e-8)) ** gamma
     s = (s / (s.max() + 1e-8)) ** gamma
+
+    # Blue (#2979FF) for unique, Orange (#FF9100) for shared.
+    # Where both overlap → Purple blend.
+    blue   = np.array([0.161, 0.475, 1.0], dtype=np.float32)   # #2979FF
+    orange = np.array([1.0,   0.569, 0.0], dtype=np.float32)   # #FF9100
+    total = u + s + 1e-8
     rgba = np.zeros((*u.shape, 4), dtype=np.float32)
-    rgba[..., 0] = s           # red   = shared
-    rgba[..., 1] = u           # green = unique
+    for c in range(3):
+        rgba[..., c] = (u * blue[c] + s * orange[c]) / total
     rgba[..., 3] = alpha * np.clip(u + s, 0, 1)
     return rgba
 
@@ -164,6 +184,110 @@ def _composite_overlay(img_hwc: np.ndarray,
 
 def _to_uint8(img_hwc: np.ndarray) -> np.ndarray:
     return (img_hwc * 255).clip(0, 255).astype(np.uint8)
+
+
+def _burn_text(
+    img_u8: np.ndarray,
+    text: str,
+    position: str = "top",
+    font_scale: float = 0.5,
+    bg_alpha: float = 0.6,
+) -> np.ndarray:
+    """Burn a text label onto a uint8 HWC image with a semi-transparent background.
+
+    Uses OpenCV if available, otherwise falls back to a plain bar with no text
+    (so the function never errors out).
+    """
+    out = np.ascontiguousarray(img_u8.copy())
+    H, W = out.shape[:2]
+    bar_h = max(int(H * 0.1), 18)
+
+    try:
+        import cv2
+        thickness = 1
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (tw, th), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+        if position == "top":
+            y0, y1 = 0, bar_h
+        else:
+            y0, y1 = H - bar_h, H
+
+        # Semi-transparent dark background
+        overlay = out.copy()
+        overlay[y0:y1, :] = 0
+        out = np.ascontiguousarray(
+            ((1 - bg_alpha) * out.astype(np.float32)
+             + bg_alpha * overlay.astype(np.float32)).astype(np.uint8))
+
+        # Center text in the bar
+        tx = max((W - tw) // 2, 4)
+        ty = y0 + (bar_h + th) // 2
+        cv2.putText(out, text, (tx, ty), font, font_scale,
+                    (255, 255, 255), thickness, cv2.LINE_AA)
+    except ImportError:
+        # Fallback: dark bar without text
+        bar = out[0:bar_h if position == "top" else H - bar_h:H, :].astype(np.float32)
+        bar = (bar * (1 - bg_alpha)).astype(np.uint8)
+        if position == "top":
+            out[0:bar_h, :] = bar
+        else:
+            out[H - bar_h:H, :] = bar
+
+    return out
+
+
+def _annotate_labels(
+    img_hwc: np.ndarray,
+    true_name: Optional[str] = None,
+    pred_name: Optional[str] = None,
+    pred_prob: Optional[float] = None,
+    correct: Optional[bool] = None,
+) -> np.ndarray:
+    """Burn true/predicted labels onto a float [0,1] HWC image. Returns uint8."""
+    out = np.ascontiguousarray(_to_uint8(img_hwc))
+    H, W = out.shape[:2]
+    bar_h = max(int(H * 0.1), 18)
+
+    try:
+        import cv2
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fs = 0.45
+        thickness = 1
+
+        lines = []
+        if true_name is not None:
+            lines.append(("True: " + true_name, (255, 255, 255)))
+        if pred_name is not None:
+            prob_str = f" ({pred_prob:.0%})" if pred_prob is not None else ""
+            # Blue text for correct, red-ish for wrong (colorblind-safe tones)
+            if correct is True:
+                color = (100, 200, 255)   # light blue
+            elif correct is False:
+                color = (100, 140, 255)   # warm orange in BGR → (255, 140, 100) in RGB
+                color = (255, 140, 100)
+            else:
+                color = (255, 255, 255)
+            lines.append(("Pred: " + pred_name + prob_str, color))
+
+        total_h = bar_h * len(lines)
+        # Draw from bottom
+        overlay = out.copy()
+        overlay[H - total_h:H, :] = 0
+        out = np.ascontiguousarray(
+            ((1 - 0.65) * out.astype(np.float32)
+             + 0.65 * overlay.astype(np.float32)).astype(np.uint8))
+
+        for i, (text, color) in enumerate(lines):
+            y_bar_top = H - total_h + i * bar_h
+            (tw, th), _ = cv2.getTextSize(text, font, fs, thickness)
+            tx = max((W - tw) // 2, 4)
+            ty = y_bar_top + (bar_h + th) // 2
+            cv2.putText(out, text, (tx, ty), font, fs, color, thickness, cv2.LINE_AA)
+    except ImportError:
+        pass  # graceful degradation
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +366,7 @@ def show_explanation_gallery(
     unit_space,
     class_names: Optional[List[str]] = None,
     probs: Optional[torch.Tensor] = None,
+    true_labels: Optional[torch.Tensor] = None,
     n_samples: Optional[int] = None,
     max_classes: int = 3,
     title: str = "CDEA Contrastive Explanation Gallery",
@@ -250,9 +375,12 @@ def show_explanation_gallery(
     """Multi-sample gallery: Input | Evidence heatmaps | Unique/Shared overlays.
 
     Each row = one image from the batch.
-    Columns = [Input] [Evidence × K] [Overlay × K]
+    Columns = [Input] [Evidence × K] [Allocated mask × K]
 
-    Color code: green = unique evidence, red = shared, yellow = both.
+    Color code (colorblind-safe):
+        Blue   = unique evidence (class-specific)
+        Orange = shared evidence (common across top classes)
+        Purple = both
 
     Args:
         x:           (B, C, H, W) input tensor.
@@ -260,6 +388,7 @@ def show_explanation_gallery(
         unit_space:  VisionGridUnitSpace instance.
         class_names: Optional string labels.
         probs:       (B, num_classes) softmax probabilities.
+        true_labels: (B,) integer true class labels.
         n_samples:   How many samples to show (default: all).
         max_classes: Max top classes per image.
         title:       Figure title.
@@ -287,26 +416,36 @@ def show_explanation_gallery(
     hyp_ids_all = explanation.hypotheses.ids.detach().cpu()
     if probs is not None:
         probs = probs.detach().cpu()
+    if true_labels is not None:
+        true_labels = true_labels.detach().cpu()
 
-    n_cols = 1 + K + K
-    col_titles_row0 = (
-        ["Input"]
-        + [f"Evidence #{k+1}" for k in range(K)]
-        + [f"Overlay #{k+1}" for k in range(K)]
-    )
-    # subplot_titles is a flat list: row by row
+    def _name(cls_id: int) -> str:
+        return (class_names[cls_id] if class_names and cls_id < len(class_names)
+                else f"cls {cls_id}")
+
+    # Layout: Input | Evidence×K | Mask×K
+    # Group evidence columns together, then mask columns together.
+    n_cols = 1 + 2 * K
+
+    # Column headers — short labels, class name only (no long descriptions)
+    col_headers = ["Input"]
+    for k in range(K):
+        col_headers.append(f"Evidence")
+    for k in range(K):
+        col_headers.append(f"Allocation")
+
+    # Build subplot titles: only first row gets headers
     subplot_titles = []
     for b in range(n):
-        for c_idx in range(n_cols):
-            if b == 0:
-                subplot_titles.append(col_titles_row0[c_idx])
-            else:
-                subplot_titles.append("")
+        for c in range(n_cols):
+            subplot_titles.append(col_headers[c] if b == 0 else "")
 
-    fig = make_subplots(rows=n, cols=n_cols,
-                        subplot_titles=subplot_titles,
-                        horizontal_spacing=0.01,
-                        vertical_spacing=0.06)
+    fig = make_subplots(
+        rows=n, cols=n_cols,
+        subplot_titles=subplot_titles,
+        horizontal_spacing=0.015,
+        vertical_spacing=0.08 if n <= 4 else 0.05,
+    )
 
     for b in range(n):
         img = _to_hwc(x_cpu[b])
@@ -314,63 +453,85 @@ def show_explanation_gallery(
         m_shared_b = (mask_to_image(m_shared_all[b], gh, gw, H, W)
                       if m_shared_all is not None else None)
 
-        # Col 0: input image with prediction label
-        label_input = "Input"
+        # --- Col 1: Input image ---
+        # Build annotation text with true label and predicted label
+        hover_parts = []
+        if true_labels is not None:
+            true_id = int(true_labels[b].item())
+            hover_parts.append(f"True: {_name(true_id)}")
         if probs is not None:
             pred_id = int(probs[b].argmax().item())
-            lbl = (class_names[pred_id] if class_names and pred_id < len(class_names)
-                   else str(pred_id))
-            label_input = f"{lbl} ({float(probs[b, pred_id]):.2f})"
+            pred_p = float(probs[b, pred_id])
+            hover_parts.append(f"Pred: {_name(pred_id)} ({pred_p:.0%})")
+        hover_text = "<br>".join(hover_parts) if hover_parts else "Input"
+
+        # Burn true/pred labels onto the image as a text annotation
+        img_annotated = _annotate_labels(
+            img,
+            true_name=(_name(int(true_labels[b].item())) if true_labels is not None else None),
+            pred_name=(_name(int(probs[b].argmax().item())) if probs is not None else None),
+            pred_prob=(float(probs[b].max().item()) if probs is not None else None),
+            correct=((int(true_labels[b].item()) == int(probs[b].argmax().item()))
+                     if true_labels is not None and probs is not None else None),
+        )
         fig.add_trace(
-            go.Image(z=_to_uint8(img), name=label_input,
-                     hovertemplate=f"<b>{label_input}</b><extra></extra>"),
+            go.Image(z=img_annotated,
+                     hovertemplate=f"<b>{hover_text}</b><extra></extra>"),
             row=b + 1, col=1,
         )
 
         for k in range(K):
-            cls_id  = int(hyp_ids_all[b, k].item())
-            cls_lbl = (class_names[cls_id] if class_names and cls_id < len(class_names)
-                       else str(cls_id))
-            cls_p   = float(probs[b, cls_id].item()) if probs is not None else None
-            label_k = f"{cls_lbl} ({cls_p:.2f})" if cls_p is not None else cls_lbl
+            cls_id = int(hyp_ids_all[b, k].item())
+            cls_name = _name(cls_id)
+            cls_prob = (f" ({float(probs[b, cls_id]):.0%})"
+                        if probs is not None else "")
 
-            # Evidence heatmap
+            # --- Evidence columns (col 2 … K+1) ---
             if evidence_all is not None:
                 ev_k = mask_to_image(evidence_all[b, k], gh, gw, H, W)
                 composited_ev = _composite_heatmap(img, ev_k)
             else:
                 composited_ev = _to_uint8(img)
+            # Burn class name onto evidence image
+            composited_ev = _burn_text(composited_ev, f"{cls_name}{cls_prob}",
+                                       position="top")
             fig.add_trace(
-                go.Image(z=composited_ev, name=label_k,
-                         hovertemplate=f"<b>Evidence: {label_k}</b><extra></extra>"),
-                row=b + 1, col=2 + k,
+                go.Image(z=composited_ev,
+                         hovertemplate=f"<b>{cls_name}: evidence</b><extra></extra>"),
+                row=b + 1, col=1 + k + 1,
             )
 
-            # Unique/shared overlay
+            # --- Allocation columns (col K+2 … 2K+1) ---
             mk, sh = _unique_shared_from_masks(m_unique_b, k, m_shared_b)
             composited_ov = _composite_overlay(img, mk, sh)
+            composited_ov = _burn_text(composited_ov, f"{cls_name}{cls_prob}",
+                                        position="top")
             fig.add_trace(
-                go.Image(z=composited_ov, name=f"Overlay {label_k}",
-                         hovertemplate=f"<b>Overlay: {label_k}</b><extra></extra>"),
-                row=b + 1, col=2 + K + k,
+                go.Image(z=composited_ov,
+                         hovertemplate=(
+                             f"<b>{cls_name}: "
+                             f"blue=unique / orange=shared</b><extra></extra>")),
+                row=b + 1, col=1 + K + k + 1,
             )
 
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
 
-    # Legend annotation
+    # Colorblind-safe legend
     legend_html = (
-        "<span style='color:green'>■ Unique</span>  "
-        "<span style='color:red'>■ Shared</span>  "
-        "<span style='color:#cccc00'>■ Both</span>"
+        "Allocation:  "
+        "<span style='color:#2979FF; font-weight:bold'>■ unique</span> &nbsp;"
+        "<span style='color:#FF9100; font-weight:bold'>■ shared</span> &nbsp;"
+        "<span style='color:#9C27B0; font-weight:bold'>■ both</span>"
     )
+    total_w = max(n_cols * 220, 700)
     fig.update_layout(
         title_text=f"{title}<br><sup>{legend_html}</sup>",
         title_x=0.5,
-        height=max(280 * n, 320),
-        width=280 * n_cols,
+        height=max(260 * n + 80, 340),
+        width=total_w,
         showlegend=False,
-        margin=dict(l=10, r=10, t=80, b=20),
+        margin=dict(l=10, r=10, t=90, b=20),
     )
 
     if out_path is not None:
@@ -419,20 +580,23 @@ def show_gradcam_vs_ig(
     K = min(first_expl.masks["unique"].shape[1], max_classes)
     hyp_ids = first_expl.hypotheses.ids[sample_idx].detach().cpu()
 
-    n_cols = 1 + K + K
-    col_titles = (
-        ["Input"]
-        + [f"Evidence: {class_names[int(hyp_ids[k])] if class_names and int(hyp_ids[k]) < len(class_names) else str(int(hyp_ids[k]))}" for k in range(K)]
-        + [f"Overlay: {class_names[int(hyp_ids[k])] if class_names and int(hyp_ids[k]) < len(class_names) else str(int(hyp_ids[k]))}" for k in range(K)]
-    )
+    # Interleave columns per class: Input | [Ev_k  Ov_k] × K
+    n_cols = 1 + 2 * K
+
+    def _lbl(k: int) -> str:
+        cls_id = int(hyp_ids[k].item())
+        return (class_names[cls_id] if class_names and cls_id < len(class_names)
+                else f"class {cls_id}")
+
+    col_titles = ["Input"]
+    for k in range(K):
+        col_titles.append(f"{_lbl(k)}  — where model looks")
+        col_titles.append(f"{_lbl(k)}  — unique vs shared")
 
     subplot_titles = []
     for p_idx in range(n_providers):
         for c_idx in range(n_cols):
-            if p_idx == 0:
-                subplot_titles.append(col_titles[c_idx])
-            else:
-                subplot_titles.append("")
+            subplot_titles.append(col_titles[c_idx] if p_idx == 0 else "")
 
     fig = make_subplots(rows=n_providers, cols=n_cols,
                         subplot_titles=subplot_titles,
@@ -457,11 +621,9 @@ def show_gradcam_vs_ig(
         )
 
         for k in range(K):
-            cls_id  = int(hyp_ids[k].item())
-            cls_lbl = (class_names[cls_id] if class_names and cls_id < len(class_names)
-                       else str(cls_id))
+            cls_lbl = _lbl(k)
 
-            # Evidence
+            # Evidence column (col 2, 4, 6, …)
             if ev_b is not None:
                 ev_k = mask_to_image(ev_b[k], gh, gw, H, W)
                 composited_ev = _composite_heatmap(img, ev_k)
@@ -469,34 +631,35 @@ def show_gradcam_vs_ig(
                 composited_ev = _to_uint8(img)
             fig.add_trace(
                 go.Image(z=composited_ev,
-                         hovertemplate=f"<b>{pname}: {cls_lbl}</b><extra></extra>"),
-                row=row + 1, col=2 + k,
+                         hovertemplate=f"<b>{pname} — {cls_lbl}: where model looks</b><extra></extra>"),
+                row=row + 1, col=2 + 2 * k,
             )
 
-            # Overlay
+            # Overlay column (col 3, 5, 7, …)
             mk, sh = _unique_shared_from_masks(m_unique_b, k, m_shared_b)
             composited_ov = _composite_overlay(img, mk, sh)
             fig.add_trace(
                 go.Image(z=composited_ov,
-                         hovertemplate=f"<b>{pname}: overlay {cls_lbl}</b><extra></extra>"),
-                row=row + 1, col=2 + K + k,
+                         hovertemplate=f"<b>{pname} — {cls_lbl}: blue=unique / orange=shared</b><extra></extra>"),
+                row=row + 1, col=3 + 2 * k,
             )
 
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
 
     legend_html = (
-        "<span style='color:green'>■ Unique</span>  "
-        "<span style='color:red'>■ Shared</span>  "
-        "<span style='color:#cccc00'>■ Both</span>"
+        "Allocation:  "
+        "<span style='color:#2979FF; font-weight:bold'>■ unique</span> &nbsp;"
+        "<span style='color:#FF9100; font-weight:bold'>■ shared</span> &nbsp;"
+        "<span style='color:#9C27B0; font-weight:bold'>■ both</span>"
     )
     fig.update_layout(
         title_text=f"{title}<br><sup>{legend_html}</sup>",
         title_x=0.5,
         height=max(300 * n_providers, 320),
-        width=280 * n_cols,
+        width=(1 + 2 * K) * 260,
         showlegend=False,
-        margin=dict(l=60, r=10, t=80, b=20),
+        margin=dict(l=80, r=10, t=90, b=20),
     )
 
     if out_path is not None:

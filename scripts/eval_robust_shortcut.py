@@ -290,7 +290,7 @@ def run_eval(
                 x=x,
                 masks=masks,
                 unit_space=unit_space,
-                out_path=REPO / "scripts" / "out" / "robust_shortcut_masks.png",
+                out_path=REPO / "scripts" / "out" / f"{export_prefix}_masks.png",
                 sample_idx=0,
             )
             saved_viz = True

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gambit"
+version = "0.1.0"
+description = "Game theoretic Allocation for Model Based Interpretability and Trust"
+requires-python = ">=3.9"
+dependencies = ["torch", "torchvision"]
+
+[tool.setuptools]
+py-modules = ["gambit"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "modality*", "base_evidence*", "instantiations*"]

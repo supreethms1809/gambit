@@ -184,6 +184,11 @@ def compute_metrics(
     h_ids = hypotheses.ids
     m_tot = masks_unique + (masks_shared[:, None, :] if masks_shared is not None else 0.0)
 
+    # Baseline: all-zeros input — used to make suff baseline-subtracted
+    with torch.no_grad():
+        x_zeros = torch.zeros_like(x)
+        logits_zeros = model(x_zeros)
+
     suff = torch.zeros(B, K, device=x.device)
     margin = torch.zeros(B, K, device=x.device)
     for k in range(K):
@@ -192,7 +197,8 @@ def compute_metrics(
         logits = model(x_keep)
         cls_k = h_ids[:, k].clamp_min(0)
         z_k = logits.gather(1, cls_k.unsqueeze(1)).squeeze(1)
-        suff[:, k] = z_k
+        z_base = logits_zeros.gather(1, cls_k.unsqueeze(1)).squeeze(1)
+        suff[:, k] = z_k - z_base  # how much better than seeing nothing
         z_all = logits.gather(1, h_ids.clamp_min(0))
         z_all = z_all.masked_fill(~valid, float("-inf"))
         z_foil = z_all.clone()

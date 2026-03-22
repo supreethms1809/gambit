@@ -321,12 +321,13 @@ def get_or_train(
     lr: float = 1e-3,
     freeze_backbone: bool = True,
     batch_size: int = 32,
+    seed: int = 0,
     force: bool = False,
 ) -> Path:
     """Return path to a trained checkpoint, training if not already cached.
 
-    Checkpoint filename encodes all hyper-parameters so different configs are
-    cached separately.
+    Checkpoint filename encodes all hyper-parameters (including seed) so
+    different configs are cached separately.
 
     Args:
         dataset:         One of mnist | cifar10 | pets | stanford_dogs | colored_mnist.
@@ -338,6 +339,7 @@ def get_or_train(
         lr:              Adam learning rate.
         freeze_backbone: Linear probe (True) or full fine-tune (False).
         batch_size:      Training batch size.
+        seed:            Random seed for weight init and data shuffling.
         force:           Re-train even if a checkpoint exists.
 
     Returns:
@@ -351,7 +353,7 @@ def get_or_train(
 
     mode_tag = "lp" if freeze_backbone else "ft"   # linear-probe vs fine-tune
     pre_tag  = "pt" if pretrained else "rand"
-    ckpt_name = f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}.pt"
+    ckpt_name = f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}_seed{seed}.pt"
     ckpt_path = ckpt_dir / ckpt_name
 
     if ckpt_path.exists() and not force:
@@ -360,7 +362,7 @@ def get_or_train(
 
     print(f"\n{'='*60}")
     print(f"  Training: dataset={dataset}  model={model_name}  "
-          f"pretrained={pretrained}  freeze={freeze_backbone}  epochs={num_epochs}")
+          f"pretrained={pretrained}  freeze={freeze_backbone}  epochs={num_epochs}  seed={seed}")
     print(f"{'='*60}")
 
     # Get num_classes first (load one batch from the eval loader if train fails)
@@ -371,6 +373,7 @@ def get_or_train(
         print(f"  [train] Skipping training — no checkpoint saved.")
         return ckpt_path  # caller should handle missing file
 
+    torch.manual_seed(seed)
     model = _build_model(model_name, num_classes, pretrained=pretrained)
     model = train_model(model, train_loader, num_epochs=num_epochs, lr=lr,
                         freeze_backbone=freeze_backbone)

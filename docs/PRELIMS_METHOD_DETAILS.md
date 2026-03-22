@@ -172,3 +172,7 @@ Statements you can safely make in prelims text:
 ## 7) Suggested Thesis Paragraph (Method)
 
 We formulate explanation as evidence allocation over a fixed evidence-unit space. For each input, we select top hypotheses and compute nonnegative base evidence over units using attribution methods (e.g., Grad-CAM or Integrated Gradients). Optional hypothesis interaction conditions top-hypothesis token representations, while the central allocation remains an optimization problem over continuous masks constrained to \([0,1]\). In the contrastive setting, we optimize shared and unique masks to balance sufficiency, pairwise margin, overlap, and sparsity. In the shift-aware setting, we optimize robust and shortcut masks across environment variants to maximize robust mean sufficiency, minimize robust variance, and maximize shortcut ID-OOD gap under disjointness and sparsity regularization.
+
+```
+PYTHONPATH=. python scripts/run_experiments.py --datasets mnist cifar10 pets stanford_dogs --shift_datasets colored_mnist colored_cifar10 texture_mnist --evidence gradcam ig --seeds 0 1 2 --num_steps 40 --train_epochs 100
+```

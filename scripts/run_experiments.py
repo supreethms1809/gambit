@@ -94,22 +94,51 @@ def run_contrastive_matrix(
     lambda_disjoint: float,
     lambda_mass: float,
     pretrained: bool = True,
-    checkpoints: Optional[Dict[str, str]] = None,
+    train: bool = False,
+    train_epochs: int = 10,
+    freeze_backbone: bool = True,
+    train_batch_size: int = 32,
+    ckpt_dir: Optional[Path] = None,
+    data_root: Optional[Path] = None,
 ) -> List[Dict]:
     """Run ablation for every (dataset, evidence, seed) combo. Return aggregated rows.
 
-    Args:
-        checkpoints: Optional dict mapping dataset name -> path to trained ``.pt`` checkpoint.
-                     When provided, the checkpoint is loaded into the model before running
-                     the interpretation games (overrides random head weights).
+    When ``train=True`` a separate checkpoint is trained for each (dataset, seed)
+    combination, producing genuine variance across seeds.
     """
     OUT.mkdir(parents=True, exist_ok=True)
+    if ckpt_dir is None:
+        ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
+    if data_root is None:
+        data_root = REPO / "data"
+
     # seed -> dataset -> evidence -> method -> metric -> value
     per_seed: Dict[int, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]] = {}
 
     for seed in seeds:
         torch.manual_seed(seed)
         per_seed[seed] = {}
+
+        # Train per-seed checkpoints for each dataset
+        seed_checkpoints: Dict[str, Optional[str]] = {}
+        if train and pretrained:
+            print(f"\n--- Training backbone for contrastive datasets (seed={seed}) ---")
+            for dataset in datasets:
+                ckpt = get_or_train(
+                    dataset=dataset,
+                    model_name="resnet18",
+                    pretrained=True,
+                    data_root=data_root,
+                    ckpt_dir=ckpt_dir,
+                    num_epochs=train_epochs,
+                    freeze_backbone=freeze_backbone,
+                    batch_size=train_batch_size,
+                    seed=seed,
+                )
+                seed_checkpoints[dataset] = str(ckpt) if ckpt.exists() else None
+        else:
+            seed_checkpoints = {ds: None for ds in datasets}
+
         for dataset in datasets:
             per_seed[seed][dataset] = {}
             for evidence in evidence_types:
@@ -117,7 +146,7 @@ def run_contrastive_matrix(
                 print(f"\n{'='*60}")
                 print(f"  dataset={dataset}  evidence={evidence}  seed={seed}")
                 print(f"{'='*60}")
-                ckpt = checkpoints.get(dataset) if checkpoints else None
+                ckpt = seed_checkpoints.get(dataset)
                 try:
                     results = run_ablation(
                         num_images=num_images,
@@ -190,22 +219,48 @@ def run_shift_matrix(
     batch_size: int,
     num_steps: int,
     pretrained: bool = True,
-    checkpoint: Optional[str] = None,
     dataset_name: str = "colored_mnist",
+    train: bool = False,
+    train_epochs: int = 10,
+    train_batch_size: int = 32,
+    ckpt_dir: Optional[Path] = None,
+    data_root: Optional[Path] = None,
 ) -> List[Dict]:
     """Run robust-shortcut eval for every (game_mode, seed) combo.
 
-    Args:
-        checkpoint:   Optional path to a ``.pt`` checkpoint trained on the biased dataset.
-                      Without this the model has a random head and produces no useful signal.
-        dataset_name: Which biased dataset to evaluate on (colored_mnist, colored_cifar10, texture_mnist).
+    When ``train=True`` a separate checkpoint is trained for each seed,
+    producing genuine variance across seeds.
     """
     OUT.mkdir(parents=True, exist_ok=True)
+    if ckpt_dir is None:
+        ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
+    if data_root is None:
+        data_root = REPO / "data"
+
     per_seed: Dict[int, Dict[str, Dict]] = {}
 
     for seed in seeds:
         torch.manual_seed(seed)
         per_seed[seed] = {}
+
+        # Train per-seed checkpoint for this shift dataset
+        seed_checkpoint: Optional[str] = None
+        if train and pretrained:
+            print(f"\n--- Training backbone for {dataset_name} (seed={seed}) ---")
+            ckpt = get_or_train(
+                dataset=dataset_name,
+                model_name="resnet18",
+                pretrained=True,
+                data_root=data_root,
+                ckpt_dir=ckpt_dir,
+                num_epochs=train_epochs,
+                freeze_backbone=False,  # full fine-tune: model must learn the shortcut
+                batch_size=train_batch_size,
+                seed=seed,
+            )
+            if ckpt.exists():
+                seed_checkpoint = str(ckpt)
+
         for mode in game_modes:
             prefix = f"shift_{dataset_name}_{mode}_seed{seed}"
             print(f"\n{'='*60}")
@@ -220,7 +275,7 @@ def run_shift_matrix(
                     game_mode=mode,
                     model_name="resnet18",
                     pretrained=pretrained,
-                    checkpoint=checkpoint,
+                    checkpoint=seed_checkpoint,
                     dataset_name=dataset_name,
                 )
                 per_seed[seed][mode] = {**mean_metrics, "id_ood_gap": mean_gap}
@@ -292,7 +347,8 @@ def write_report(
         "",
         "> Metrics marked ↑ are better when higher; ↓ are better when lower.",
         "> Overlap is an unnormalized pairwise dot-product sum (scale depends on evidence magnitude).",
-        "> Margin values reflect logit differences — negative values are expected for untrained/random models.",
+        "> Suff is baseline-subtracted vs all-zeros input (positive = mask carries real signal).",
+        "> Margin = logit_k − max(logit_foil) under the kept mask.",
         "",
     ]
 
@@ -330,11 +386,11 @@ def write_report(
             "## Key Findings",
             "",
             f"- **Overlap reduction** (optimized vs base): **{mean_ov_red:.1f}%** mean across {len(ov_reds)} (dataset × evidence) combos",
-            f"- **Sufficiency cost**: {mean_suff_cost:.5f} mean absolute change (negligible)",
+            f"- **Sufficiency cost**: {mean_suff_cost:.5f} mean absolute change",
             f"- **Margin change**: {mean_mg_delta:+.5f} mean delta vs base",
             "",
-            "> These results use randomly initialized models. Overlap reduction will hold with trained models;",
-            "> margin values will become positive and more meaningful with a properly trained backbone.",
+            "> Suff is baseline-subtracted: f(keep(x, m))[k] − f(zeros)[k]. Positive = kept regions carry",
+            "> more signal than seeing nothing. Margin is logit_k − max(logit_foil) under the kept mask.",
             "",
         ]
 
@@ -549,48 +605,10 @@ def main() -> None:
              if args.train else ""))
     print("=" * 60)
 
-    # -----------------------------------------------------------------------
-    # Step 1: Train / load checkpoints
-    # -----------------------------------------------------------------------
     ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
-    contrastive_checkpoints: Dict[str, str] = {}
-    shift_checkpoints: Dict[str, str] = {}
+    data_root = REPO / "data"
 
-    if args.train and args.pretrained:
-        data_root = REPO / "data"
-
-        if not args.skip_contrastive:
-            print("\n--- Training backbone for contrastive datasets ---")
-            for dataset in args.datasets:
-                ckpt = get_or_train(
-                    dataset=dataset,
-                    model_name="resnet18",
-                    pretrained=True,
-                    data_root=data_root,
-                    ckpt_dir=ckpt_dir,
-                    num_epochs=args.train_epochs,
-                    freeze_backbone=args.freeze_backbone,
-                    batch_size=args.train_batch_size,
-                )
-                if ckpt.exists():
-                    contrastive_checkpoints[dataset] = str(ckpt)
-
-        if not args.skip_shift:
-            print("\n--- Training backbone for shift datasets ---")
-            for shift_ds in args.shift_datasets:
-                ckpt = get_or_train(
-                    dataset=shift_ds,
-                    model_name="resnet18",
-                    pretrained=True,
-                    data_root=data_root,
-                    ckpt_dir=ckpt_dir,
-                    num_epochs=args.train_epochs,
-                    freeze_backbone=False,   # full fine-tune: model must learn the shortcut
-                    batch_size=args.train_batch_size,
-                )
-                if ckpt.exists():
-                    shift_checkpoints[shift_ds] = str(ckpt)
-    elif args.train and not args.pretrained:
+    if args.train and not args.pretrained:
         print("\n[INFO] --train requires --pretrained (ImageNet init). Skipping training.")
 
     contrastive_rows: List[Dict] = []
@@ -608,7 +626,12 @@ def main() -> None:
             lambda_disjoint=args.lambda_disjoint,
             lambda_mass=args.lambda_mass,
             pretrained=args.pretrained,
-            checkpoints=contrastive_checkpoints or None,
+            train=args.train,
+            train_epochs=args.train_epochs,
+            freeze_backbone=args.freeze_backbone,
+            train_batch_size=args.train_batch_size,
+            ckpt_dir=ckpt_dir,
+            data_root=data_root,
         )
 
     if not args.skip_shift:
@@ -621,8 +644,12 @@ def main() -> None:
                 batch_size=args.batch_size,
                 num_steps=args.num_steps,
                 pretrained=args.pretrained,
-                checkpoint=shift_checkpoints.get(shift_ds),
                 dataset_name=shift_ds,
+                train=args.train,
+                train_epochs=args.train_epochs,
+                train_batch_size=args.train_batch_size,
+                ckpt_dir=ckpt_dir,
+                data_root=data_root,
             )
             shift_rows.extend(rows)
 
