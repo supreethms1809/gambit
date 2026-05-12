@@ -20,6 +20,10 @@ Usage:
         --batch_size 16 \\
         --num_steps 40
 
+    # ViT backbone (contrastive + shift both use the same --model)
+    PYTHONPATH=. python scripts/run_experiments.py --model vit_b_16 \\
+        --datasets cifar10 --seeds 0
+
 Outputs (all under scripts/out/journal/):
     - Per-seed CSVs:    ablation_<dataset>_<evidence>_seed<N>_metrics.csv
     - Aggregated CSV:   summary_contrastive.csv
@@ -41,7 +45,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from core.reporting import save_json, save_rows_csv
-from scripts.ablation_contrastive import run_ablation
+from scripts.ablation_contrastive import MODEL_CHOICES, run_ablation
+
+# train_backbone.get_or_train does not support smallcnn; keep CLI aligned with checkpoint training.
+_RUN_EXPERIMENT_MODELS = [m for m in MODEL_CHOICES if m != "smallcnn"]
 from scripts.eval_robust_shortcut import run_eval
 from scripts.train_backbone import get_or_train
 
@@ -93,6 +100,7 @@ def run_contrastive_matrix(
     ig_steps: int,
     lambda_disjoint: float,
     lambda_mass: float,
+    model_name: str = "resnet18",
     pretrained: bool = True,
     train: bool = False,
     train_epochs: int = 10,
@@ -126,7 +134,7 @@ def run_contrastive_matrix(
             for dataset in datasets:
                 ckpt = get_or_train(
                     dataset=dataset,
-                    model_name="resnet18",
+                    model_name=model_name,
                     pretrained=True,
                     data_root=data_root,
                     ckpt_dir=ckpt_dir,
@@ -153,7 +161,7 @@ def run_contrastive_matrix(
                         batch_size=batch_size,
                         dataset=dataset,
                         evidence=evidence,
-                        model_name="resnet18",
+                        model_name=model_name,
                         pretrained=pretrained,
                         ig_steps=ig_steps,
                         lambda_disjoint=lambda_disjoint,
@@ -218,6 +226,7 @@ def run_shift_matrix(
     num_images: int,
     batch_size: int,
     num_steps: int,
+    model_name: str = "resnet18",
     pretrained: bool = True,
     dataset_name: str = "colored_mnist",
     train: bool = False,
@@ -249,7 +258,7 @@ def run_shift_matrix(
             print(f"\n--- Training backbone for {dataset_name} (seed={seed}) ---")
             ckpt = get_or_train(
                 dataset=dataset_name,
-                model_name="resnet18",
+                model_name=model_name,
                 pretrained=True,
                 data_root=data_root,
                 ckpt_dir=ckpt_dir,
@@ -273,7 +282,7 @@ def run_shift_matrix(
                     num_steps=num_steps,
                     export_prefix=prefix,
                     game_mode=mode,
-                    model_name="resnet18",
+                    model_name=model_name,
                     pretrained=pretrained,
                     checkpoint=seed_checkpoint,
                     dataset_name=dataset_name,
@@ -319,6 +328,7 @@ def write_report(
     seeds: List[int],
     datasets: List[str],
     evidence_types: List[str],
+    model_name: str = "resnet18",
 ) -> Path:
     n_seeds = len(seeds)
     seed_note = f"n={n_seeds} seed{'s' if n_seeds > 1 else ''} ({seeds[0]})" if n_seeds == 1 else f"mean ± std, n={n_seeds} seeds {seeds}"
@@ -343,7 +353,7 @@ def write_report(
     lines += [
         "# GAMBIT Journal Experiment Report",
         "",
-        f"**Setup:** datasets={datasets}, evidence={evidence_types}, {seed_note}",
+        f"**Setup:** model={model_name}, datasets={datasets}, evidence={evidence_types}, {seed_note}",
         "",
         "> Metrics marked ↑ are better when higher; ↓ are better when lower.",
         "> Overlap is an unnormalized pairwise dot-product sum (scale depends on evidence magnitude).",
@@ -542,6 +552,11 @@ def main() -> None:
     parser.add_argument("--lambda_disjoint", type=float, default=0.5)
     parser.add_argument("--lambda_mass", type=float, default=2.0)
     parser.add_argument(
+        "--model", dest="model_name", default="resnet18",
+        choices=_RUN_EXPERIMENT_MODELS,
+        help="Backbone for contrastive ablations, shift eval, and checkpoint training (vit_b_16 / vit_b_32 use 224px input).",
+    )
+    parser.add_argument(
         "--shift_game_modes", nargs="+",
         default=["cooperative", "mixed", "competitive"],
         choices=["cooperative", "mixed", "competitive"],
@@ -592,6 +607,7 @@ def main() -> None:
 
     print("=" * 60)
     print("GAMBIT Experiment Runner")
+    print(f"  model:       {args.model_name}")
     print(f"  datasets:    {args.datasets}")
     print(f"  evidence:    {args.evidence_types}")
     print(f"  seeds:       {args.seeds}")
@@ -625,6 +641,7 @@ def main() -> None:
             ig_steps=args.ig_steps,
             lambda_disjoint=args.lambda_disjoint,
             lambda_mass=args.lambda_mass,
+            model_name=args.model_name,
             pretrained=args.pretrained,
             train=args.train,
             train_epochs=args.train_epochs,
@@ -643,6 +660,7 @@ def main() -> None:
                 num_images=args.shift_num_images if hasattr(args, "shift_num_images") else args.num_images,
                 batch_size=args.batch_size,
                 num_steps=args.num_steps,
+                model_name=args.model_name,
                 pretrained=args.pretrained,
                 dataset_name=shift_ds,
                 train=args.train,
@@ -659,6 +677,7 @@ def main() -> None:
         seeds=args.seeds,
         datasets=args.datasets,
         evidence_types=args.evidence_types,
+        model_name=args.model_name,
     )
 
 

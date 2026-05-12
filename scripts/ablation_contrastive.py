@@ -7,6 +7,7 @@ Ablation: 100-500 images, compare
 Pass: report at least one quantitative improvement (e.g. overlap reduction at comparable sufficiency).
 """
 from __future__ import annotations
+import math
 import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -24,6 +25,11 @@ from core.reporting import save_json, save_rows_csv
 from modality.grid_regions import VisionGridUnitSpace
 from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
+
+try:
+    from tqdm.auto import tqdm as tqdm_auto
+except ImportError:  # pragma: no cover
+    tqdm_auto = None  # type: ignore[misc, assignment]
 
 
 # ----- Small CNN for CIFAR-10 -----
@@ -281,9 +287,30 @@ def run_ablation(
     opt_allocator = OptimizationAllocator(objective, num_steps=40, lr=0.3, lambda_disjoint=lambda_disjoint)
     base_allocator = EvidenceAsMaskAllocator()
 
+    try:
+        n_batches_hint: int | None = len(loader)
+    except (TypeError, NotImplementedError):
+        n_batches_hint = None
+    if num_images is not None:
+        n_batches_hint = max(1, math.ceil(num_images / max(batch_size, 1)))
+
+    use_tqdm = tqdm_auto is not None
+    if use_tqdm:
+        batch_iter = tqdm_auto(
+            loader,
+            total=n_batches_hint,
+            desc=f"ablation {dataset}/{evidence_kind}",
+            unit="batch",
+            dynamic_ncols=True,
+            leave=True,
+        )
+    else:
+        batch_iter = loader
+        print("  [ablation] tqdm not installed; `pip install tqdm` for a progress bar.", flush=True)
+
     results: Dict[str, List[Dict[str, float]]] = {"base_evidence": [], "naive_contrastive": [], "optimized": []}
     count = 0
-    for x, _ in loader:
+    for x, _ in batch_iter:
         if num_images is not None and count >= num_images:
             break
         x = x.to(device)
@@ -324,6 +351,9 @@ def run_ablation(
         )
         metrics_opt = compute_metrics(x, model, unit_space, hypotheses, masks_opt["unique"], masks_opt.get("shared"))
         results["optimized"].append(metrics_opt)
+
+        if use_tqdm:
+            batch_iter.set_postfix_str(f"{count} imgs", refresh=False)
 
     def agg(name: str) -> Dict[str, float]:
         L = results[name]

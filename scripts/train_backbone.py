@@ -1,6 +1,6 @@
 """
 scripts/train_backbone.py
-~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Train or fine-tune a ResNet backbone for each dataset before running GAMBIT experiments.
 
 Strategy
