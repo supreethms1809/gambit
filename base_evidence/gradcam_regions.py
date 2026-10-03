@@ -9,6 +9,7 @@ Pass ``target_layer`` explicitly to override for any architecture.
 from __future__ import annotations
 from typing import Any, Optional
 import math
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -133,4 +134,25 @@ class GradCAMRegionsProvider:
             E[:, k, :] = cam_r
         E = E.clamp_min(0.0)
         E = E * mask.unsqueeze(-1).float()
+
+        # An all-zero evidence field is not a weak explanation, it is no explanation —
+        # and it flows downstream silently, because the allocator will still optimize
+        # masks from a degenerate start and produce plausible-looking output. Warn
+        # loudly instead.
+        #
+        # The known cause is ViT: Grad-CAM assumes post-ReLU, non-negative activations,
+        # so weights*A is a positive importance score. Transformer token embeddings are
+        # LayerNorm'd and roughly zero-mean, so the CAM is symmetric about zero and the
+        # final relu can annihilate it. Use Integrated Gradients on transformers — it
+        # needs no layer hooks and makes no sign assumption.
+        if bool(mask.any()) and float(E.sum()) == 0.0:
+            warnings.warn(
+                "GradCAMRegionsProvider produced an all-zero evidence field for every "
+                f"hypothesis (target layer: {type(layer).__name__}). Downstream results "
+                "built on this are meaningless. If this is a transformer, Grad-CAM's "
+                "non-negative-activation assumption does not hold — use "
+                "IntegratedGradientsRegionsProvider instead.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         return E
