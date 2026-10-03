@@ -57,7 +57,10 @@ LEGACY_TEST_ROOTS = {
 PAPER_SPLIT_DATASETS = {
     "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
     "cifar100", "oxford_pets", "cub200",
+    "colored_mnist", "planted_patch", "imagenet9", "waterbirds",
 }
+# Fixed color noise and patch positions. Model seeds do not redraw the data.
+SHIFT_DATA_SEED = 43
 
 
 def model_grid_size(model_name: str) -> tuple:
@@ -134,14 +137,27 @@ def _subset_targets(ds) -> Optional[list]:
     return [int(t) for t in targets]
 
 
+def _dataloader(ds, batch_size: int, shuffle: bool, seed: int) -> torch.utils.data.DataLoader:
+    """Shuffle from ``seed``, separate from the backbone's initialization stream."""
+    from torch.utils.data import DataLoader
+
+    generator = None
+    if shuffle:
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(int(seed))
+    return DataLoader(
+        ds, batch_size=batch_size, shuffle=shuffle, num_workers=0, generator=generator,
+    )
+
+
 def get_train_loader(
     dataset: str,
     batch_size: int,
     data_root: Path,
     image_size: int = TV_INPUT_SIZE,
+    seed: int = 0,
 ) -> Tuple[torch.utils.data.DataLoader, int]:
     """Return (train_loader, num_classes) for the given dataset."""
-    from torch.utils.data import DataLoader
     from torchvision.datasets import MNIST, CIFAR10, ImageFolder
 
     if dataset == "mnist":
@@ -154,20 +170,20 @@ def get_train_loader(
         ])
         ds = MNIST(root=str(data_root), train=True, download=True, transform=t)
         ds = _paper_subset(ds, "mnist", "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+        return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "cifar10":
         t = _make_tv_transforms(image_size, augment=True)
         ds = CIFAR10(root=str(data_root), train=True, download=True, transform=t)
         ds = _paper_subset(ds, "cifar10", "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+        return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "pets":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
         num_classes = len(ds.classes)
         ds = _paper_subset(ds, "pets", "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+        return _dataloader(ds, batch_size, True, seed), num_classes
 
     if dataset in {"cifar100", "oxford_pets", "cub200"}:
         from evaluation.paper_datasets import open_unsplit
@@ -176,14 +192,14 @@ def get_train_loader(
         ds = open_unsplit(dataset, "train", data_root, transform=t)
         num_classes = len(set(ds.targets))
         ds = _paper_subset(ds, dataset, "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+        return _dataloader(ds, batch_size, True, seed), num_classes
 
     if dataset == "stanford_dogs":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
         num_classes = len(ds.classes)
         ds = _paper_subset(ds, "stanford_dogs", "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+        return _dataloader(ds, batch_size, True, seed), num_classes
 
     if dataset in MEDICAL_TRAIN_ROOTS:
         # Pre-split medical datasets: train on the train/Training split only.
@@ -191,7 +207,7 @@ def get_train_loader(
         ds = ImageFolder(root=str(data_root / MEDICAL_TRAIN_ROOTS[dataset]), transform=t)
         num_classes = len(ds.classes)
         ds = _paper_subset(ds, dataset, "train")
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+        return _dataloader(ds, batch_size, True, seed), num_classes
 
     if dataset == "colored_cifar10":
         from instantiations.shift.biased_data import ColoredCIFAR10
@@ -214,7 +230,7 @@ def get_train_loader(
                 return x, y
 
         ds = _ResizeWrapper(base_ds)
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+        return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "texture_mnist":
         from instantiations.shift.biased_data import TextureBiasedMNIST
@@ -237,19 +253,14 @@ def get_train_loader(
                 return x, y
 
         ds = _ResizeWrapper(base_ds)
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+        return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "colored_mnist":
         from instantiations.shift.biased_data import ColoredMNIST
-        from torchvision import transforms
-        # ColoredMNIST returns float tensors in [0,1] already; just resize + normalize
-        base_ds = ColoredMNIST(root=str(data_root), train=True, download=True,
-                               correlation=COLORED_MNIST_CORRELATION)
-        # Resize only — no Normalize, to match the [0,1] convention the
-        # explanation interventions are defined in.
-        norm = transforms.Compose([
-            transforms.Resize((image_size, image_size)),  # applied to PIL, but here tensors
-        ])
+        # Colors are fixed by SHIFT_DATA_SEED. Train indices are the MNIST paper
+        # train split, so the val images are held out for checkpoint selection.
+        base_ds = ColoredMNIST(root=str(data_root), train=True, download=False,
+                               correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED)
 
         class _ResizeWrapper(torch.utils.data.Dataset):
             def __init__(self, inner):
@@ -260,18 +271,40 @@ def get_train_loader(
 
             def __getitem__(self, i):
                 x, y = self.inner[i]
-                # x is (3, 28, 28); resize to (3, image_size, image_size)
                 x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
                                   mode="bilinear", align_corners=False).squeeze(0)
-                # No normalization: the explanation pipeline consumes raw [0,1].
                 return x, y
 
-        ds = _ResizeWrapper(base_ds)
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
+        ds = _paper_subset(_ResizeWrapper(base_ds), "mnist", "train")
+        return _dataloader(ds, batch_size, True, seed), 10
+
+    if dataset == "planted_patch":
+        from instantiations.shift.planted_patch import PlantedPatchClassifier
+        ds = PlantedPatchClassifier(
+            split="train", root=data_root, image_size=image_size, patch_seed=0,
+        )
+        return _dataloader(ds, batch_size, True, seed), 10
+
+    if dataset == "imagenet9":
+        from instantiations.shift.imagenet9 import ImageNet9Classifier
+        ds = ImageNet9Classifier(split="train", root=data_root / "imagenet9", image_size=image_size)
+        # Folder prefixes are the class ids. Do not open the images to count them.
+        class_ids = []
+        for pair in ds.inner.pairs:
+            prefix = pair["original"].parent.name.split("_", 1)[0]
+            class_ids.append(int(prefix) if prefix.isdigit() else 0)
+        num_classes = max(class_ids) + 1
+        return _dataloader(ds, batch_size, True, seed), num_classes
+
+    if dataset == "waterbirds":
+        from instantiations.shift.waterbirds import WaterbirdsClassifier
+        ds = WaterbirdsClassifier(split="train", image_size=image_size)
+        return _dataloader(ds, batch_size, True, seed), 2
 
     raise ValueError(f"Unknown dataset: {dataset}. "
                      f"Choices: mnist, cifar10, pets, stanford_dogs, ham10000, brain_tumor, "
-                     f"colored_mnist, colored_cifar10, texture_mnist")
+                     f"colored_mnist, colored_cifar10, texture_mnist, "
+                     f"planted_patch, imagenet9, waterbirds")
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +319,9 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = True) -> 
         m.fc = nn.Linear(m.fc.in_features, num_classes)
     elif model_name == "resnet34":
         m = models.resnet34(weights=weights)
+        m.fc = nn.Linear(m.fc.in_features, num_classes)
+    elif model_name == "resnet50":
+        m = models.resnet50(weights=weights)
         m.fc = nn.Linear(m.fc.in_features, num_classes)
     elif model_name == "mobilenet_v2":
         m = models.mobilenet_v2(weights=weights)
@@ -329,13 +365,48 @@ def get_val_loader(
     image_size: int = TV_INPUT_SIZE,
 ) -> Optional[torch.utils.data.DataLoader]:
     """Val split used for checkpoint selection. This is not the test split."""
-    from torch.utils.data import DataLoader
     from torchvision.datasets import CIFAR10, ImageFolder, MNIST
 
     from evaluation.splits import load_spec
 
     if dataset not in PAPER_SPLIT_DATASETS:
         return None
+    if dataset == "colored_mnist":
+        from instantiations.shift.biased_data import ColoredMNIST
+        base = ColoredMNIST(
+            root=str(data_root), train=True, download=False,
+            correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED,
+        )
+
+        class _ResizeWrapper(torch.utils.data.Dataset):
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __len__(self):
+                return len(self.inner)
+
+            def __getitem__(self, i):
+                x, y = self.inner[i]
+                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
+                                  mode="bilinear", align_corners=False).squeeze(0)
+                return x, y
+
+        ds = _paper_subset(_ResizeWrapper(base), "mnist", "val")
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "planted_patch":
+        from instantiations.shift.planted_patch import PlantedPatchClassifier
+        ds = PlantedPatchClassifier(
+            split="val", root=data_root, image_size=image_size, patch_seed=0,
+        )
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "imagenet9":
+        from instantiations.shift.imagenet9 import ImageNet9Classifier
+        ds = ImageNet9Classifier(split="val", root=data_root / "imagenet9", image_size=image_size)
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "waterbirds":
+        from instantiations.shift.waterbirds import WaterbirdsClassifier
+        ds = WaterbirdsClassifier(split="val", image_size=image_size)
+        return _dataloader(ds, batch_size, False, 0)
     spec = load_spec(dataset)
     root_rel = spec["roots"]["val"]
     legacy_test = LEGACY_TEST_ROOTS.get(dataset)
@@ -353,7 +424,7 @@ def get_val_loader(
     else:
         ds = ImageFolder(root=str(data_root / root_rel), transform=t)
     ds = _paper_subset(ds, dataset, "val")
-    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    return _dataloader(ds, batch_size, False, 0)
 
 
 def inverse_frequency_weights(
@@ -381,6 +452,27 @@ def inverse_frequency_weights(
     return weights.to(device)
 
 
+def score_loader(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    num_classes: int,
+) -> tuple[float, float]:
+    """Top-1 accuracy and macro recall. One pass, no gradient."""
+    from evaluation.accuracy import top1_and_balanced
+
+    preds = []
+    targets = []
+    model.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            preds.append(model(x.to(device)).argmax(1).cpu())
+            targets.append(y.cpu())
+    if not preds:
+        return 0.0, 0.0
+    return top1_and_balanced(torch.cat(preds), torch.cat(targets), num_classes)
+
+
 def balanced_accuracy(
     model: nn.Module,
     loader: torch.utils.data.DataLoader,
@@ -388,20 +480,7 @@ def balanced_accuracy(
     num_classes: int,
 ) -> float:
     """Macro-averaged recall over classes present in *loader*."""
-    correct = torch.zeros(num_classes)
-    seen = torch.zeros(num_classes)
-    model.eval()
-    with torch.no_grad():
-        for x, y in loader:
-            pred = model(x.to(device)).argmax(1).cpu()
-            for c in range(num_classes):
-                m = y == c
-                seen[c] += m.sum()
-                correct[c] += (pred[m] == c).sum()
-    present = seen > 0
-    if not bool(present.any()):
-        return 0.0
-    return (correct[present] / seen[present]).mean().item()
+    return score_loader(model, loader, device, num_classes)[1]
 
 
 def train_model(
@@ -488,8 +567,8 @@ def train_model(
         # the final epoch is often not the best model for minority classes, and
         # minority classes are the clinically interesting ones.
         if val_loader is not None:
-            val_bal = balanced_accuracy(model, val_loader, device, num_classes)
-            msg += f"  val_balanced_acc={val_bal:.4f}"
+            val_top1, val_bal = score_loader(model, val_loader, device, num_classes)
+            msg += f"  val_top1={val_top1:.4f}  val_balanced_acc={val_bal:.4f}"
             if val_bal > best_score:
                 best_score = val_bal
                 best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -591,7 +670,9 @@ def get_or_train(
 
     # Get num_classes first (load one batch from the eval loader if train fails)
     try:
-        train_loader, num_classes = get_train_loader(dataset, batch_size, data_root)
+        train_loader, num_classes = get_train_loader(
+            dataset, batch_size, data_root, seed=seed,
+        )
     except Exception as e:
         print(f"  [train] WARNING: could not load train split for {dataset}: {e}")
         print(f"  [train] Skipping training — no checkpoint saved.")
@@ -645,13 +726,15 @@ def main() -> None:
     parser.add_argument("--dataset", required=True,
                         choices=["mnist", "cifar10", "cifar100", "pets", "oxford_pets",
                                  "stanford_dogs", "cub200", "ham10000", "brain_tumor",
-                                 "colored_mnist", "colored_cifar10", "texture_mnist"])
+                                 "colored_mnist", "colored_cifar10", "texture_mnist",
+                                 "planted_patch", "imagenet9", "waterbirds"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
-                        choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
-                                 "efficientnet_v2_s",
+                        choices=["resnet18", "resnet34", "resnet50", "mobilenet_v2",
+                                 "efficientnet_b0", "efficientnet_v2_s",
                                  "vit_b_16", "vit_b_32"])
     parser.add_argument("--epochs", dest="num_epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--freeze_backbone", action="store_true", default=True,
                         help="Linear probe: freeze backbone, train head only (default)")
@@ -679,6 +762,7 @@ def main() -> None:
         lr=args.lr,
         freeze_backbone=args.freeze_backbone,
         batch_size=args.batch_size,
+        seed=args.seed,
         force=args.force,
         balanced=args.balanced,
     )

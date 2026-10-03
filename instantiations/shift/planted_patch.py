@@ -178,6 +178,23 @@ class PlantedPatchCIFAR(Dataset):
         }
 
 
+class PlantedPatchClassifier(Dataset):
+    """The image with both patches present. Moved and removed are evaluation environments.
+
+    Patch positions use ``patch_seed`` and stay fixed across model seeds.
+    """
+
+    def __init__(self, split: str = "val", patch_seed: int = 0, **kwargs):
+        self.inner = PlantedPatchCIFAR(split=split, seed=patch_seed, **kwargs)
+
+    def __len__(self) -> int:
+        return len(self.inner)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        item = self.inner[index]
+        return item["present"], int(item["label"])
+
+
 def env_batch_planted(
     present: torch.Tensor,
     moved: torch.Tensor,

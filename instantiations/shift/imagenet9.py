@@ -118,6 +118,20 @@ class ImageNet9Pairs(Dataset):
         return image.clamp(0, 1)
 
 
+class ImageNet9Classifier(Dataset):
+    """The original ImageNet-9 image and its class. Mixes are evaluation environments."""
+
+    def __init__(self, split: str = "val", image_size: int = 224, **kwargs):
+        self.inner = ImageNet9Pairs(split=split, image_size=image_size, **kwargs)
+
+    def __len__(self) -> int:
+        return len(self.inner)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        item = self.inner[index]
+        return item["original"], int(item["label"])
+
+
 def env_batch_imagenet9(
     original: torch.Tensor,
     mixed_same: torch.Tensor,

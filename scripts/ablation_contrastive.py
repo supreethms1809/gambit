@@ -51,8 +51,8 @@ class SmallCNN(nn.Module):
 
 
 TV_INPUT_SIZE = 224
-MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
-                 "efficientnet_v2_s", "vit_b_16", "vit_b_32"]
+MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "resnet50", "mobilenet_v2",
+                 "efficientnet_b0", "efficientnet_v2_s", "vit_b_16", "vit_b_32"]
 DATASET_CHOICES = [
     "mnist", "cifar10", "cifar100", "pets", "oxford_pets", "stanford_dogs",
     "cub200", "ham10000", "brain_tumor",
@@ -106,6 +106,9 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif model_name == "resnet34":
         model = models.resnet34(weights=weights)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+    elif model_name == "resnet50":
+        model = models.resnet50(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif model_name == "mobilenet_v2":
         model = models.mobilenet_v2(weights=weights)
