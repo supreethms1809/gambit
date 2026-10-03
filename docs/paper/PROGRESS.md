@@ -12,7 +12,7 @@ Branch: `paper/p1-degenerate`. Formulation pull request: https://github.com/supr
 | S03 | done | `46b1bfe` | Provenance in `save_json`, `NormalizedModel`, `--final` refuses a dirty tree. |
 | S04 | done | `da589bb` | `evaluation/` scorer. Eval scripts import it. Throughput measured; see below. |
 | S05 | done | `fd447a1`, `3b979ae` | One overlap weight, shared-sparse default 0.25, shift mass target, equation audit. |
-| S06 | done | | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
+| S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | todo | | Dataset prep. Next session. Ask before any download. |
 | S08–S28 | todo | | Not started. |
 
