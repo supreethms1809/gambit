@@ -53,7 +53,10 @@ class SmallCNN(nn.Module):
 TV_INPUT_SIZE = 224
 MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
                  "efficientnet_v2_s", "vit_b_16", "vit_b_32"]
-DATASET_CHOICES = ["mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor"]
+DATASET_CHOICES = [
+    "mnist", "cifar10", "cifar100", "pets", "oxford_pets", "stanford_dogs",
+    "cub200", "ham10000", "brain_tumor",
+]
 
 
 def _load_state_dict(checkpoint: str):
@@ -73,6 +76,9 @@ MEDICAL_EVAL_ROOTS = {
 DATASET_NUM_CLASSES = {
     "mnist": 10,
     "cifar10": 10,
+    "cifar100": 100,
+    "oxford_pets": 37,
+    "cub200": 200,
     "pets": 2,
     "stanford_dogs": 120,
     "ham10000": 7,
@@ -207,6 +213,16 @@ def _get_eval_loader(
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
         ds = ImageFolder(root=str(data_root / root_rel), transform=t)
         num_classes = len(ds.classes)
+    elif dataset in {"cifar100", "oxford_pets", "cub200"}:
+        from evaluation.paper_datasets import open_unsplit
+
+        target_size = image_size if image_size is not None else 224
+        t = transforms.Compose([
+            transforms.Resize((target_size, target_size)),
+            transforms.ToTensor(),
+        ])
+        ds = open_unsplit(dataset, split, data_root, transform=t)
+        num_classes = len(set(ds.targets))
     elif dataset in MEDICAL_EVAL_ROOTS:
         target_size = image_size if image_size is not None else 224
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])

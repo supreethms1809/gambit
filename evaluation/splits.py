@@ -117,6 +117,29 @@ def imagefolder_three_way(
     return {"train": train, "val": val, "test": test}
 
 
+def per_class_val_carve(
+    indices: Sequence[int],
+    label_of: Mapping[int, str],
+    *,
+    val_fraction: float = VAL_FRACTION_OF_TRAIN,
+    seed: int = VAL_CARVE_SEED,
+) -> tuple[list[int], list[int]]:
+    """Hold out ``val_fraction`` of the images inside each class.
+
+    Each image is its own group, so the cut is by image. Every class with at
+    least two images stays on both sides.
+    """
+    group_of = {int(i): str(i) for i in indices}
+    by_class = {int(i): str(label_of[int(i)]) for i in indices}
+    return carve_grouped(
+        list(indices),
+        group_of,
+        val_fraction=val_fraction,
+        seed=seed,
+        by_class=by_class,
+    )
+
+
 def torchvision_train_val(
     n_train: int,
     *,

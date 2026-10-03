@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p1-degenerate`. Formulation pull request: https://github.com/supreethms1809/gambit/pull/2
+Branch: `paper/p2-datasets`. Degenerate-check pull request: https://github.com/supreethms1809/gambit/pull/3
 
 ## Stage status
 
@@ -13,8 +13,9 @@ Branch: `paper/p1-degenerate`. Formulation pull request: https://github.com/supr
 | S04 | done | `da589bb` | `evaluation/` scorer. Eval scripts import it. Throughput measured; see below. |
 | S05 | done | `fd447a1`, `3b979ae` | One overlap weight, shared-sparse default 0.25, shift mass target, equation audit. |
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
-| S07 | todo | | Dataset prep. Next session. Ask before any download. |
-| S08–S28 | todo | | Not started. |
+| S07 | done | | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
+| S08 | todo | | Shift datasets. Next session. |
+| S09–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -30,13 +31,16 @@ Branch: `paper/p1-degenerate`. Formulation pull request: https://github.com/supr
 - 2026-10-03. These changes invalidate the ablation `suff` and `overlap` columns, any contrastive run that applied both overlap weights, and any shared mask trained at `lambda_shared_sparse=0`. The map is `docs/paper/EQUATION_AUDIT.md`.
 - 2026-10-03. The ID-OOD gap is a model property on the full image. It is not a column of the shift method table.
 - 2026-10-03. Degenerate checks used the val split, seed 0, 48 images, 50 steps, ResNet-18 checkpoints already on disk. CIFAR-10 `results/paper_rerun/checkpoints/cifar10_resnet18_pt_lp_ep15_lr0.001_seed0.pt` (raw input). HAM10000 `examples/out/checkpoints/ham10000_resnet18.pt` (raw input). `lambda_mass` stays 0.1. A 16-image sweep did not find a weight pair that closes D1, D2, D3, and D5 together without collapsing the CIFAR kept logit. Phase 4 has to select those weights under the thresholds in `evaluation/degenerate.py`.
+- 2026-10-03. The paper pet dataset is `oxford_pets`, the 37-breed Oxford-IIIT Pet set. `pets` remains the 2-class cats-vs-dogs folder and is not a paper dataset.
+- 2026-10-03. CIFAR-100, Oxford-IIIT Pet, and CUB-200 use the official test split. Val is 10% of each class inside the official train pool, seed 43. Script counts: CIFAR-100 45000/5000/10000 (100 classes, 450/50/100). Oxford-IIIT Pet 3311/369/3669 (37 breeds). CUB-200 5394/600/5794 (200 classes). Every class is on all three sides.
+- 2026-10-03. ImageNet-S was not downloaded. The public release is a split of ImageNet-1k plus segmentation masks, and ImageNet-1k is not on this machine.
 
 ## Open issues
 
 - Stored numbers under `results/` are pre-audit. The ablation tables are invalid: they used a class-ordered prefix, and pets/dogs eval included training images. Do not quote them.
 - S05 invalidates stored ablation `suff` and `overlap` columns. Those files were already pre-audit.
 - `docs/paper/EVAL_PLAN.md` does not exist. The test split stays locked.
-- S07 datasets (CIFAR-100, Oxford-IIIT Pet-37, CUB-200, ImageNet-S) are not downloaded. Ask before downloading.
+- ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - No background jobs are running.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
@@ -48,14 +52,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
 
-## Exit check (S06)
+## Exit check (S07)
 
 ```
-59 passed, 8 warnings in 2.07s
+64 passed, 8 warnings in 2.68s
 ```
 
-Degenerate report: `results/paper/degenerate/REPORT.md`. Closed on this run: D1 on HAM10000, D2 on HAM10000, D3 on CIFAR-10, D4 on both, D6 on both, D7 in the reporting code. Open, and left open on purpose: CIFAR-10 D1 and D2, D5 on both, HAM10000 D3. The report has the measurements and the 16-image weight sweep.
+Loaders open a raw `[0, 1]` batch for CIFAR-100, Oxford-IIIT Pet, and CUB-200. `tests/test_s07_datasets.py` checks that every class is in train, val, and test.
 
 ## Next session
 
-Stage **S07**. Dataset prep for CIFAR-100, Oxford-IIIT Pet-37, CUB-200, and an ImageNet-S subset: loaders, split files, per-class counts. Ask before downloading anything. Do not pass `--final`. The test split stays locked.
+Stage **S08**. Shift datasets: Waterbirds pairs, ImageNet-9 backgrounds, the two-patch planted variant, and a check of the existing ColoredMNIST loader. Val only for any smoke run. Do not pass `--final`. ImageNet-1k is still not on disk.
