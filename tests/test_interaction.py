@@ -128,6 +128,22 @@ def test_real_vision_grid_with_attention():
     print("PASS: real VisionGridUnitSpace + attention")
 
 
+def test_explain_moves_interaction_to_the_input_device():
+    explainer = _make_explainer("attention")
+    calls = []
+    real_to = explainer.interaction.to
+
+    def _wrapped(device, *args, **kwargs):
+        calls.append(torch.device(device) if not isinstance(device, torch.device) else device)
+        return real_to(device, *args, **kwargs)
+
+    explainer.interaction.to = _wrapped
+    explainer.explain(torch.rand(2, 3, 28, 28))
+    assert calls, "interaction.to was not called"
+    assert calls[-1].type == explainer.device.type
+    assert next(explainer.interaction.parameters()).device.type == explainer.device.type
+
+
 def test_interaction_changes_contrastive_masks():
     """Pass: attention-conditioned path in allocator changes masks."""
     torch.manual_seed(7)
@@ -197,5 +213,6 @@ if __name__ == "__main__":
     test_swap_flag_transformer()
     test_explicit_noop()
     test_real_vision_grid_with_attention()
+    test_explain_moves_interaction_to_the_input_device()
     test_interaction_changes_contrastive_masks()
     print("All interaction flag swaps OK.")

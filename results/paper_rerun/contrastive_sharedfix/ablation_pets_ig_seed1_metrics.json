@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": 0.00041304394602775574,
+      "overlap": 0.060527804642915725,
+      "sparse": 1.0,
+      "suff": -0.30745075225830076
+    },
+    "naive_contrastive": {
+      "margin": 0.016254205629229544,
+      "overlap": 0.0,
+      "sparse": 1.0,
+      "suff": -0.28555807828903196
+    },
+    "optimized": {
+      "margin": 2.24341938495636,
+      "overlap": 0.0033265753462910653,
+      "sparse": 1.248234248161316,
+      "suff": 0.9084229278564453
+    }
+  },
+  "batch_size": 16,
+  "dataset": "pets",
+  "evidence": "ig",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lambda_shared_sparse": 0.25,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_pets_ig_seed1",
+  "use_shared": false
+}

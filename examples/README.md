@@ -40,6 +40,10 @@ PYTHONPATH=. python /Users/ssuresh/gambit/examples/contrastive_explanation.py \
 - **`cifar10`** — CIFAR-10 test set (32×32, 10 classes). Uses `data/cifar-10-batches-py` (or `data` as root).
 - **`pets`** — PetImages Cat vs Dog (resized to 64×64, 2 classes). Uses `data/PetImages` (Cat/ and Dog/ subdirs).
 - **`stanford_dogs`** — Stanford Dogs breeds (120 classes). Uses `data/stanford_dogs/images/Images` (class subdirs from ImageFolder).
+- **`ham10000`** — HAM10000 dermoscopic skin lesions (7 classes, incl. melanoma vs nevus). Uses `data/ham10000/{train,val}/<dx>/`; build it with `scripts/prepare_ham10000.py`.
+- **`brain_tumor`** — Cheng et al. brain tumor MRI (3 classes: glioma, meningioma, pituitary). Uses `data/brain_tumor/{Training,Testing}/<class>/`; build it with `scripts/prepare_brain_tumor.py` (patient-grouped splits).
+
+The medical datasets are pre-split, so train and val never share a lesion or patient. See [`docs/MEDICAL_DATASETS.md`](../docs/MEDICAL_DATASETS.md) for download and setup.
 
 Default: `--dataset cifar10`, `--batch_size 4`, `--num_alloc_steps 25`, `--max_viz_classes 3`, `--interaction none`, `--game_mode mixed`. If the dataset is not found, a random batch is used and a message is printed.
 

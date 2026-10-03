@@ -1,0 +1,25 @@
+{
+  "batch_size": 16,
+  "game_config": {
+    "lambda_disjoint": 0.2,
+    "lambda_gap": 1.0,
+    "lambda_mean": 1.0,
+    "lambda_shortcut": 0.0,
+    "lambda_sparse": 0.05,
+    "lambda_var": 0.5
+  },
+  "game_mode": "mixed",
+  "id_ood_gap": 5.202648487091064,
+  "num_images": 400,
+  "num_steps": 40,
+  "run_name": "shift_colored_mnist_mixed_seed1",
+  "scalar_metrics": {
+    "disjoint": 0.7052756094932556,
+    "loss": -0.8183516573905945,
+    "rob_mean": 1.2388482737541198,
+    "rob_var": 0.018146063052117824,
+    "sho_gap": 0.12080394595861435,
+    "sho_mean": 0.14537355691194534,
+    "sparse": 7.823447742462158
+  }
+}

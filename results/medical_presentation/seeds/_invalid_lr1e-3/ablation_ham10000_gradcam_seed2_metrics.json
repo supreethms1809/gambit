@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -6.8764352607727055,
+      "overlap": 0.3813361585140228,
+      "sparse": 0.9930000042915345,
+      "suff": 0.43141680836677554
+    },
+    "naive_contrastive": {
+      "margin": -6.873788070678711,
+      "overlap": 0.21180691063404083,
+      "sparse": 0.9930000042915345,
+      "suff": 0.439701042175293
+    },
+    "optimized": {
+      "margin": -3.3902986812591553,
+      "overlap": 0.06674742460250854,
+      "sparse": 1.0118689560890197,
+      "suff": 1.1190276265144348
+    }
+  },
+  "batch_size": 16,
+  "dataset": "ham10000",
+  "evidence": "gradcam",
+  "game_mode": "mixed",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.1,
+  "lr": 0.2,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 50,
+  "pretrained": true,
+  "run_name": "ablation_ham10000_gradcam_seed2",
+  "use_shared": true
+}

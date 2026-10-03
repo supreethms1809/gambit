@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": 0.05603531673550606,
+      "overlap": 0.001015565823763609,
+      "sparse": 1.0,
+      "suff": 0.21705125242471696
+    },
+    "naive_contrastive": {
+      "margin": 0.05667313609272242,
+      "overlap": 0.0,
+      "sparse": 1.0,
+      "suff": 0.21735753893852233
+    },
+    "optimized": {
+      "margin": 2.214724612236023,
+      "overlap": 0.000473841093480587,
+      "sparse": 1.3099618530273438,
+      "suff": 1.3170498323440551
+    }
+  },
+  "batch_size": 16,
+  "dataset": "pets",
+  "evidence": "gradcam",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lambda_shared_sparse": 0.25,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_pets_gradcam_seed2",
+  "use_shared": false
+}

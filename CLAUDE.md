@@ -32,7 +32,11 @@ PYTHONPATH=. python examples/contrastive_explanation_ig.py --dataset cifar10
 PYTHONPATH=. python scripts/eval_robust_shortcut.py --game_mode mixed
 ```
 
-Datasets live in `data/` (git-ignored). Available: `mnist`, `cifar10`, `pets`, `stanford_dogs`. If the dataset is not found, a random batch is used as fallback.
+Datasets live in `data/` (git-ignored). Available: `mnist`, `cifar10`, `pets`, `stanford_dogs`, `ham10000`, `brain_tumor`. If the dataset is not found, a random batch is used as fallback.
+
+Results and analysis for the medical experiments — including known measurement problems — are in `docs/MEDICAL_RESULTS.md`.
+
+The two medical datasets (`ham10000` skin lesions, 7 classes; `brain_tumor` brain MRI, 3 classes) use a pre-split `<root>/<split>/<class>/` layout with **grouped splits** — by lesion for HAM10000, by patient for brain tumor — so near-duplicate images never span train and val. Build them with `scripts/prepare_ham10000.py` and `scripts/prepare_brain_tumor.py`. Both write segmentation/tumor masks that `scripts/eval_localization.py` uses to score whether allocated masks land on the actual pathology. See `docs/MEDICAL_DATASETS.md`.
 
 ## Running Tests
 

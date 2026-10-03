@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -1.4431269454956055,
+      "overlap": 0.04908512115478516,
+      "sparse": 1.0,
+      "suff": 0.05766805050894618
+    },
+    "naive_contrastive": {
+      "margin": -1.4411085891723632,
+      "overlap": 0.006899051927030086,
+      "sparse": 1.0,
+      "suff": 0.05830997824668884
+    },
+    "optimized": {
+      "margin": -0.9043272972106934,
+      "overlap": 0.012216904908418655,
+      "sparse": 0.99901451587677,
+      "suff": 0.23758916556835175
+    }
+  },
+  "batch_size": 16,
+  "dataset": "brain_tumor",
+  "evidence": "gradcam",
+  "game_mode": "mixed",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.1,
+  "lr": 0.2,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 50,
+  "pretrained": true,
+  "run_name": "ablation_brain_tumor_gradcam_seed2",
+  "use_shared": true
+}

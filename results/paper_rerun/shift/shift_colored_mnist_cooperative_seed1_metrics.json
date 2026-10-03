@@ -1,0 +1,25 @@
+{
+  "batch_size": 16,
+  "game_config": {
+    "lambda_disjoint": 0.0,
+    "lambda_gap": 0.0,
+    "lambda_mean": 1.0,
+    "lambda_shortcut": 1.0,
+    "lambda_sparse": 0.05,
+    "lambda_var": 0.5
+  },
+  "game_mode": "cooperative",
+  "id_ood_gap": 5.248258361816406,
+  "num_images": 400,
+  "num_steps": 40,
+  "run_name": "shift_colored_mnist_cooperative_seed1",
+  "scalar_metrics": {
+    "disjoint": 11.375493240356445,
+    "loss": -1.9243667459487914,
+    "rob_mean": 1.3127838468551636,
+    "rob_var": 0.024830558225512504,
+    "sho_gap": 0.19960359752178192,
+    "sho_mean": 1.3147825241088866,
+    "sparse": 13.815686645507812
+  }
+}

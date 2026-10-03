@@ -1,0 +1,39 @@
+{
+  "checkpoint": "examples/out/checkpoints/stanford_dogs_resnet18.pt",
+  "dataset": "stanford_dogs",
+  "model": "resnet18",
+  "grid": [
+    7,
+    7
+  ],
+  "game_mode": "mixed",
+  "lambda_sparse": 0.05,
+  "num_steps": 40,
+  "lr": 0.3,
+  "seed": 0,
+  "num_styles": 3,
+  "n": 200,
+  "background_swap_pred_flip_rate": 0.11057692307692307,
+  "checkpoint_sensitivity_all_vs_one_region": 13.21575847038856,
+  "objective": {
+    "loss": -16.430363508371208,
+    "rob_mean": 14.392240304213304,
+    "rob_var": 0.48208018908133876,
+    "sho_gap": 3.5703502618349514,
+    "sho_mean": 1.0083087596755762,
+    "disjoint": 2.7641577353844275,
+    "sparse": 14.767109137315016
+  },
+  "in_box": {
+    "robust": 0.6534469723701477,
+    "shortcut": 0.5138587951660156,
+    "base_evidence": 0.712155818939209,
+    "box_area_fraction": 0.5595999360084534
+  },
+  "robust_minus_shortcut": {
+    "delta": 0.13958817720413208,
+    "t": 15.108222007751465,
+    "win_rate": 0.8700000047683716,
+    "n": 200
+  }
+}

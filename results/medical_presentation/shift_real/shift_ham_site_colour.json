@@ -1,0 +1,42 @@
+{
+  "checkpoint": "examples/out/checkpoints/ham10000_resnet18.pt",
+  "dataset": "ham10000",
+  "model": "resnet18",
+  "grid": [
+    7,
+    7
+  ],
+  "game_mode": "mixed",
+  "num_steps": 40,
+  "lr": 0.3,
+  "seed": 0,
+  "lambda_sparse": 1.0,
+  "sites": [
+    "vidir_molemax",
+    "vidir_modern",
+    "rosendahl"
+  ],
+  "nuisance": "colour",
+  "n": 400,
+  "objective": {
+    "loss": 1.600628695487976,
+    "rob_mean": 0.9159610021114349,
+    "rob_var": 0.037742548920214176,
+    "sho_gap": 0.4102200347185135,
+    "sho_mean": 0.18897502556443213,
+    "disjoint": 0.18228492259979248,
+    "sparse": 2.871481475830078
+  },
+  "in_lesion": {
+    "robust": 0.32745361328125,
+    "shortcut": 0.3000345826148987,
+    "base_evidence": 0.4903942048549652,
+    "lesion_area_fraction": 0.2745875120162964
+  },
+  "robust_minus_shortcut": {
+    "delta": 0.02741904743015766,
+    "t": 5.382755279541016,
+    "win_rate": 0.4325000047683716,
+    "n": 400
+  }
+}

@@ -10,11 +10,13 @@ Uses the full CDEA pipeline for contrastive explanations:
 Visualization: for one sample, shows input image, per-hypothesis mask heatmaps,
 and "keep" views (what the model sees when retaining each hypothesis's regions).
 
-Datasets (from data/): mnist, cifar10, pets (PetImages: Cat vs Dog), stanford_dogs (120 breeds).
+Datasets (from data/): mnist, cifar10, pets (PetImages: Cat vs Dog), stanford_dogs (120 breeds),
+ham10000 (7 skin lesion classes), brain_tumor (4 brain MRI classes).
+See docs/MEDICAL_DATASETS.md for how to obtain and lay out the medical datasets.
 
 Run from repo root:
   # Explain with a pretrained or random model:
-  PYTHONPATH=. python examples/contrastive_explanation.py [--dataset mnist|cifar10|pets|stanford_dogs] [--model resnet18|...] [--pretrained]
+  PYTHONPATH=. python examples/contrastive_explanation.py [--dataset mnist|cifar10|pets|stanford_dogs|ham10000|brain_tumor] [--model resnet18|...] [--pretrained]
 
   # Train the model on the dataset, then run contrastive explanation (recommended for interpretable masks):
   PYTHONPATH=. python examples/contrastive_explanation.py --dataset cifar10 --train --epochs 10 [--checkpoint path.pt]
@@ -53,6 +55,40 @@ from instantiations.contrastive.allocator import OptimizationAllocator
 DATA_ROOT = REPO / "data"
 STANFORD_DOGS_IMAGES_ROOT = DATA_ROOT / "stanford_dogs" / "images" / "Images"
 
+# Medical datasets use a pre-split <root>/<split>/<class>/ layout, so train and val
+# never share a patient/lesion. ham10000 splits come from scripts/prepare_ham10000.py;
+# brain_tumor ships pre-split as Training/ and Testing/.
+MEDICAL_SPLIT_ROOTS = {
+    "ham10000": (DATA_ROOT / "ham10000" / "train", DATA_ROOT / "ham10000" / "val"),
+    "brain_tumor": (DATA_ROOT / "brain_tumor" / "Training", DATA_ROOT / "brain_tumor" / "Testing"),
+}
+
+# HAM10000 folders are the dataset's diagnosis abbreviations; expand for readable figures.
+HAM10000_LABELS = {
+    "akiec": "actinic keratosis",
+    "bcc": "basal cell carcinoma",
+    "bkl": "benign keratosis",
+    "df": "dermatofibroma",
+    "mel": "melanoma",
+    "nv": "melanocytic nevus",
+    "vasc": "vascular lesion",
+}
+
+DATASET_CHOICES = ["mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor"]
+MODEL_CHOICES = ["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
+                 "efficientnet_v2_s", "convnext_tiny", "vit_b_16", "vit_b_32"]
+
+# Used only when the dataset files are missing and we fall back to a random batch.
+DATASET_NUM_CLASSES = {
+    "mnist": 10,
+    "cifar10": 10,
+    "pets": 2,
+    "stanford_dogs": 120,
+    "ham10000": 7,
+    "brain_tumor": 3,  # Cheng et al.: meningioma / glioma / pituitary (no "no tumor" class)
+}
+DATASET_INPUT_SIZE = {"mnist": 28, "cifar10": 32, "pets": 64}
+
 # Default input size for torchvision models (e.g. ResNet expects 224x224 for ImageNet-style)
 TV_INPUT_SIZE = 224
 
@@ -61,6 +97,21 @@ def _format_stanford_dogs_label(name: str) -> str:
     """Convert folder names like 'n02085620-Chihuahua' to a readable label."""
     if "-" in name:
         name = name.split("-", 1)[1]
+    return name.replace("_", " ")
+
+
+def _wrap_title(text: str, width: int = 24) -> str:
+    """Wrap a panel title so long class names don't run into the next column."""
+    import textwrap
+    return "\n".join(textwrap.wrap(text, width=width)) or text
+
+
+def _format_medical_label(dataset_name: str, name: str) -> str:
+    """Expand medical class-folder names into readable labels."""
+    if dataset_name == "ham10000":
+        return HAM10000_LABELS.get(name, name)
+    if name == "notumor":
+        return "no tumor"
     return name.replace("_", " ")
 
 
@@ -87,8 +138,27 @@ def get_torchvision_model(name: str, num_classes: int, pretrained: bool = False)
         weights = "IMAGENET1K_V1" if pretrained else None
         model = models.efficientnet_b0(weights=weights)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif name == "efficientnet_v2_s":
+        # Modern CNN backbone. Its last Conv2d is the final 1x1 projection with a
+        # 7x7 spatial output, so GradCAM's automatic target-layer pick is the canonical
+        # one and the grid stays 7x7 — results remain comparable to the resnet baselines.
+        weights = "IMAGENET1K_V1" if pretrained else None
+        model = models.efficientnet_v2_s(weights=weights)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif name == "convnext_tiny":
+        weights = "IMAGENET1K_V1" if pretrained else None
+        model = models.convnext_tiny(weights=weights)
+        model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
+    elif name in ("vit_b_16", "vit_b_32"):
+        # ViT gives a finer unit space: 224/16 = 14x14 patches, versus 7x7 for the CNNs
+        # (see scripts/train_backbone.model_grid_size). That matters wherever the target
+        # is small relative to a cell — on brain tumor ~70% of tumors are smaller than a
+        # single 7x7 cell, so a coarse grid cannot resolve them at all.
+        weights = "IMAGENET1K_V1" if pretrained else None
+        model = getattr(models, name)(weights=weights)
+        model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
     else:
-        raise ValueError("model must be one of: resnet18, resnet34, mobilenet_v2, efficientnet_b0")
+        raise ValueError("model must be one of: " + ", ".join(MODEL_CHOICES))
     return model
 
 
@@ -146,8 +216,18 @@ def _load_batch_with_labels(
         loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
         class_names = [_format_stanford_dogs_label(c) for c in ds.classes]
         num_classes = len(class_names)
+    elif dataset_name in MEDICAL_SPLIT_ROOTS:
+        # Explain held-out images: use the val/test split.
+        t = transforms.Compose([
+            transforms.Resize((TV_INPUT_SIZE, TV_INPUT_SIZE)),
+            transforms.ToTensor(),
+        ])
+        ds = ImageFolder(root=str(MEDICAL_SPLIT_ROOTS[dataset_name][1]), transform=t)
+        loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
+        class_names = [_format_medical_label(dataset_name, c) for c in ds.classes]
+        num_classes = len(class_names)
     else:
-        raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
+        raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
 
     x, y = next(iter(loader))
     x = x.to(device)
@@ -221,12 +301,94 @@ def _get_dataloaders(
         n_val = max(1, n // 5)
         n_train = n - n_val
         train_ds, val_ds = torch.utils.data.random_split(full_ds, [n_train, n_val])
+    elif dataset_name in MEDICAL_SPLIT_ROOTS:
+        # Label-preserving augmentation: dermoscopy and axial MRI have no canonical
+        # orientation, so flips/rotations are safe and curb overfitting on ~8k images.
+        t_train = transforms.Compose([
+            transforms.Resize((tv_size, tv_size)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(20),
+            transforms.ToTensor(),
+        ])
+        t_val = transforms.Compose([
+            transforms.Resize((tv_size, tv_size)),
+            transforms.ToTensor(),
+        ])
+        train_root, val_root = MEDICAL_SPLIT_ROOTS[dataset_name]
+        train_ds = ImageFolder(root=str(train_root), transform=t_train)
+        val_ds = ImageFolder(root=str(val_root), transform=t_val)
+        if train_ds.classes != val_ds.classes:
+            raise ValueError(
+                f"{dataset_name}: train and val class folders differ "
+                f"({train_ds.classes} vs {val_ds.classes}); label ids would not match"
+            )
+        class_names = [_format_medical_label(dataset_name, c) for c in train_ds.classes]
+        num_classes = len(class_names)
     else:
-        raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
+        raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     return train_loader, val_loader, class_names, num_classes
+
+
+def _train_label_counts(loader: DataLoader, num_classes: int) -> torch.Tensor:
+    """Per-class example counts for a loader's dataset, without decoding images."""
+    ds = loader.dataset
+    if hasattr(ds, "targets"):
+        targets = list(ds.targets)
+    elif isinstance(ds, torch.utils.data.Subset) and hasattr(ds.dataset, "targets"):
+        targets = [ds.dataset.targets[i] for i in ds.indices]
+    else:  # last resort: decodes the split once
+        targets = [int(y) for _, y in ds]
+    return torch.bincount(torch.tensor(targets, dtype=torch.long), minlength=num_classes).float()
+
+
+def inverse_frequency_weights(
+    loader: DataLoader,
+    num_classes: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Inverse-frequency class weights, normalized to mean 1.
+
+    On imbalanced medical datasets (HAM10000 is ~67% melanocytic nevus) unweighted
+    cross-entropy converges to predicting the majority class, which makes both the
+    accuracy number and the resulting Grad-CAM evidence meaningless.
+    """
+    counts = _train_label_counts(loader, num_classes)
+    weights = counts.sum() / (num_classes * counts.clamp_min(1.0))
+    weights = weights * (num_classes / weights.sum())  # mean weight 1 -> loss scale unchanged
+    weights[counts == 0] = 0.0
+    return weights.to(device)
+
+
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    num_classes: int,
+) -> Tuple[float, float, torch.Tensor]:
+    """Return (top1_accuracy, balanced_accuracy, per_class_recall)."""
+    model.eval()
+    correct_per_class = torch.zeros(num_classes)
+    total_per_class = torch.zeros(num_classes)
+    with torch.no_grad():
+        for x, y in loader:
+            x, y = x.to(device), y.to(device)
+            pred = model(x).argmax(dim=1)
+            for cls in y.unique():
+                sel = y == cls
+                correct_per_class[cls] += (pred[sel] == cls).sum().item()
+                total_per_class[cls] += sel.sum().item()
+    total = total_per_class.sum().item()
+    top1 = correct_per_class.sum().item() / total if total else 0.0
+    seen = total_per_class > 0
+    recall = torch.zeros(num_classes)
+    recall[seen] = correct_per_class[seen] / total_per_class[seen]
+    balanced = recall[seen].mean().item() if seen.any() else 0.0
+    return top1, balanced, recall
 
 
 def train_model(
@@ -236,16 +398,34 @@ def train_model(
     device: torch.device,
     epochs: int = 10,
     lr: float = 1e-3,
+    num_classes: int | None = None,
+    class_weights: torch.Tensor | None = None,
+    select_metric: str = "acc",
+    class_names: list[str] | None = None,
 ) -> Tuple[nn.Module, float]:
     """
-    Train model with cross-entropy; report train loss and val accuracy each epoch.
-    Returns (model with best val accuracy weights, best_val_acc).
+    Train model with cross-entropy; report train loss and val metrics each epoch.
+
+    ``class_weights`` enables weighted cross-entropy for imbalanced datasets.
+    ``select_metric`` picks the checkpoint by "acc" (top-1) or "balanced"
+    (macro-averaged recall) — use "balanced" whenever the classes are skewed,
+    since top-1 there mostly measures the majority-class prior.
+
+    Returns (model with best-scoring weights, best score under select_metric).
     """
+    if select_metric not in {"acc", "balanced"}:
+        raise ValueError("select_metric must be 'acc' or 'balanced'")
+    if num_classes is None:
+        num_classes = int(getattr(model, "num_classes", 0)) or len(class_names or [])
+        if not num_classes:
+            raise ValueError("num_classes could not be inferred; pass it explicitly")
+
     model = model.to(device).train()
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    best_val_acc = 0.0
+    best_score = 0.0
     best_state: dict | None = None
+    best_recall: torch.Tensor | None = None
 
     for epoch in range(epochs):
         model.train()
@@ -262,26 +442,26 @@ def train_model(
             n_batches += 1
         train_loss = running_loss / max(n_batches, 1)
 
-        model.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
-                logits = model(x)
-                pred = logits.argmax(dim=1)
-                correct += (pred == y).sum().item()
-                total += y.size(0)
-        val_acc = correct / total if total else 0.0
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        val_acc, val_balanced, recall = evaluate(model, val_loader, device, num_classes)
+        score = val_balanced if select_metric == "balanced" else val_acc
+        if score > best_score:
+            best_score = score
+            best_recall = recall.clone()
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
-        print("Epoch %d/%d  train_loss=%.4f  val_acc=%.4f" % (epoch + 1, epochs, train_loss, val_acc))
+        print("Epoch %d/%d  train_loss=%.4f  val_acc=%.4f  val_balanced_acc=%.4f"
+              % (epoch + 1, epochs, train_loss, val_acc, val_balanced))
 
     if best_state is not None:
         model.load_state_dict(best_state)
     model = model.to(device).eval()
-    return model, best_val_acc
+
+    if best_recall is not None and class_names is not None:
+        print("\nPer-class recall at best %s (%.4f):" % (select_metric, best_score))
+        for i, name in enumerate(class_names):
+            print("  %-24s %.4f" % (name, best_recall[i].item()))
+
+    return model, best_score
 
 
 def save_checkpoint(
@@ -324,6 +504,20 @@ def load_checkpoint(
     return model, dataset_name, class_names, num_classes
 
 
+def checkpoint_metadata(path: Path) -> dict:
+    """Read a checkpoint's metadata without building the model.
+
+    Callers that need the grid size (which depends on the backbone) would
+    otherwise have to guess it or load the model twice.
+    """
+    ck = torch.load(Path(path), map_location="cpu", weights_only=True)
+    return {
+        "dataset": ck["dataset"],
+        "model_name": ck["model_name"],
+        "num_classes": ck["num_classes"],
+    }
+
+
 def _mask_to_image(m: torch.Tensor, grid_h: int, grid_w: int, h: int, w: int) -> torch.Tensor:
     """Upsample region mask (R,) or (K, R) to (H, W) or (K, H, W) for display."""
     if m.dim() == 1:
@@ -333,6 +527,52 @@ def _mask_to_image(m: torch.Tensor, grid_h: int, grid_w: int, h: int, w: int) ->
     pm = m.view(-1, 1, grid_h, grid_w)
     pm = F.interpolate(pm, size=(h, w), mode="bilinear", align_corners=False)
     return pm.squeeze(1)
+
+
+def select_viz_samples(
+    n: int,
+    probs: torch.Tensor | None,
+    y_true: torch.Tensor | None,
+    batch_size: int,
+) -> list[int]:
+    """
+    Pick n batch indices to render figures for.
+
+    Correctly classified samples come first, then one per distinct predicted class
+    before any class repeats, most confident first within that. Class diversity is
+    weighted above confidence deliberately: on a skewed dataset like HAM10000 the
+    most confident samples are nearly all the majority class, so ranking by
+    confidence alone yields five near-identical figures.
+    """
+    if n <= 1 or probs is None or batch_size == 0:
+        return [0]
+    n = min(n, batch_size)
+    p = probs.detach().cpu()
+    pred = p.argmax(dim=1)
+    conf = p.max(dim=1).values
+    correct = None
+    if isinstance(y_true, torch.Tensor):
+        correct = (pred == y_true.detach().cpu())
+
+    order = sorted(
+        range(batch_size),
+        key=lambda i: (0 if (correct is None or bool(correct[i])) else 1, -float(conf[i])),
+    )
+    chosen: list[int] = []
+    seen: set[int] = set()
+    for i in order:
+        cls = int(pred[i].item())
+        if cls not in seen:
+            chosen.append(i)
+            seen.add(cls)
+        if len(chosen) == n:
+            return chosen
+    for i in order:  # fewer distinct classes than requested — top up by rank
+        if len(chosen) == n:
+            break
+        if i not in chosen:
+            chosen.append(i)
+    return chosen[:n]
 
 
 def visualize_contrastive(
@@ -346,6 +586,7 @@ def visualize_contrastive(
     probs: torch.Tensor | None = None,
     max_viz_classes: int = 3,
     out_path: Path | None = None,
+    evidence_raw: torch.Tensor | None = None,
 ) -> None:
     """
     Compact contrastive explanation figure:
@@ -382,7 +623,11 @@ def visualize_contrastive(
     labels_show = labels[:show_k]
 
     n_cols = max(2, show_k)
-    fig, axes = plt.subplots(3, n_cols, figsize=(3.0 * n_cols, 6.2))
+    # 5 rows: input/summary, evidence overlay, evidence mask alone,
+    # contrastive overlay, contrastive mask alone. The "alone" rows show the raw
+    # allocated mask on black, so mask structure can be read without the image
+    # texture underneath it.
+    fig, axes = plt.subplots(5, n_cols, figsize=(3.0 * n_cols, 15.0))
     if n_cols == 1:
         axes = axes.reshape(-1, 1)
     for ax in axes.flat:
@@ -442,21 +687,57 @@ def visualize_contrastive(
     for c in range(2, n_cols):
         axes[0, c].set_axis_off()
 
-    # Row 1: evidence maps for shown classes
+    # Rows 1-2: evidence maps for shown classes, overlaid then on their own.
+    #
+    # Prefer the pre-normalization evidence on a scale shared across the class panels.
+    # The normalized evidence rescales every class to sum 1, which not only hides that
+    # a p~0 foil carries far less evidence than the winner, it inverts the peaks: a
+    # concentrated weak foil ends up brighter than a broad confident winner. Falling
+    # back to per-panel scaling when raw evidence is unavailable keeps old callers working.
+    ev_raw = evidence_raw[sample_idx].detach().cpu() if evidence_raw is not None else None
     ev = evidence[sample_idx].detach().cpu() if evidence is not None else None
+    ev_src = ev_raw if ev_raw is not None else ev
+    shared_scale = ev_raw is not None
+
+    heats: list[np.ndarray | None] = []
+    mass_share: list[float | None] = []
+    if ev_src is not None:
+        total_mass = float(ev_src[:show_k].clamp_min(0).sum().item()) + 1e-12
+        for k in range(show_k):
+            hk = _mask_to_image(ev_src[k], grid_h, grid_w, H, W).numpy()
+            if hk.ndim == 3:
+                hk = hk[0]
+            heats.append(hk)
+            mass_share.append(float(ev_src[k].clamp_min(0).sum().item()) / total_mass)
+        g_max = max(float(np.max(h)) for h in heats) + 1e-12
+        for k in range(show_k):
+            if shared_scale:
+                heats[k] = np.clip(heats[k] / g_max, 0, 1) ** 0.5
+            else:
+                h_min, h_max = float(heats[k].min()), float(heats[k].max())
+                heats[k] = (np.clip((heats[k] - h_min) / (h_max - h_min + 1e-8), 0, 1) ** 0.5
+                            if h_max > h_min + 1e-8 else heats[k] * 0.0)
+    else:
+        heats = [None] * show_k
+        mass_share = [None] * show_k
+
+    scale_note = " [shared scale]" if shared_scale else " [per-panel scale]"
     for k in range(show_k):
+        heat_ev = heats[k]
+        share_txt = "" if mass_share[k] is None else f" ({mass_share[k] * 100:.0f}% of evidence)"
+
         ax = axes[1, k]
         ax.imshow(img)
-        if ev is not None:
-            ev_k = ev[k]
-            heat_ev = _mask_to_image(ev_k, grid_h, grid_w, H, W).numpy()
-            if heat_ev.ndim == 3:
-                heat_ev = heat_ev[0]
-            h_min, h_max = float(heat_ev.min()), float(heat_ev.max())
-            if h_max > h_min + 1e-8:
-                heat_ev = np.clip((heat_ev - h_min) / (h_max - h_min + 1e-8), 0, 1) ** 0.5
+        if heat_ev is not None:
             ax.imshow(heat_ev, cmap="hot", alpha=0.45, vmin=0, vmax=1)
-        ax.set_title("Evidence: " + labels_show[k], fontsize=10)
+        ax.set_title(_wrap_title("Evidence: " + labels_show[k] + share_txt), fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax = axes[2, k]
+        ax.imshow(heat_ev if heat_ev is not None else np.zeros((H, W)),
+                  cmap="hot", vmin=0, vmax=1)
+        ax.set_title(_wrap_title("Evidence mask only: " + labels_show[k] + scale_note), fontsize=9)
         ax.set_xticks([])
         ax.set_yticks([])
 
@@ -479,18 +760,27 @@ def visualize_contrastive(
     if shared_explicit_up is not None:
         all_shared = np.maximum(all_shared, shared_explicit_up)
     s_global = float(np.max(all_shared)) + 1e-8
+    uniques, shareds = [], []
     for k in range(show_k):
-        ax = axes[2, k]
         m0 = masks_upsampled[k]
         if shared_explicit_up is not None:
-            unique_k = np.clip(m0, 0, 1).astype(np.float32)
-            shared_k = np.clip(shared_explicit_up, 0, 1).astype(np.float32)
+            uniques.append(np.clip(m0, 0, 1).astype(np.float32))
+            shareds.append(np.clip(shared_explicit_up, 0, 1).astype(np.float32))
         else:
             others = np.delete(masks_upsampled, k, axis=0)
             m_others = np.max(others, axis=0) if others.size > 0 else np.zeros_like(m0)
-            unique_k = np.clip(m0 - m_others, 0, 1).astype(np.float32)
-            shared_k = np.minimum(m0, np.maximum(m_others, 0)).astype(np.float32)
-        u_max = float(np.max(unique_k)) + 1e-8
+            uniques.append(np.clip(m0 - m_others, 0, 1).astype(np.float32))
+            shareds.append(np.minimum(m0, np.maximum(m_others, 0)).astype(np.float32))
+    # Strongest unique mask anywhere in the figure. Per-panel normalisation alone
+    # divides by a near-zero max for classes with negligible unique evidence, which
+    # stretches pure noise to full saturation; flooring against the global max keeps
+    # those panels dark, which is what "no unique evidence" should look like.
+    u_global = float(max(np.max(u) for u in uniques)) + 1e-8
+
+    for k in range(show_k):
+        unique_k, shared_k = uniques[k], shareds[k]
+        u_raw = float(np.max(unique_k))
+        u_max = max(u_raw, 0.25 * u_global) + 1e-8
         unique_norm = (np.clip(unique_k / u_max, 0, 1) ** 0.5).astype(np.float32)
         shared_norm = (np.clip(shared_k / s_global, 0, 1) ** 0.5).astype(np.float32)
         overlay = np.zeros((H, W, 4), dtype=np.float32)
@@ -498,20 +788,33 @@ def visualize_contrastive(
         overlay[:, :, 1] = unique_norm
         overlay[:, :, 2] = 0
         overlay[:, :, 3] = 0.5 * (unique_norm + shared_norm)
-        ax.imshow(img)
-        ax.imshow(overlay)
+
         title = "Contrastive: " + labels_show[k]
         if shared_explicit_up is not None:
             title += " (explicit shared)"
-        if u_max < 1e-6:
+        if u_raw < 0.05 * u_global:
             title += " (≈shared only)"
-        ax.set_title(title, fontsize=10)
+
+        ax = axes[3, k]
+        ax.imshow(img)
+        ax.imshow(overlay)
+        ax.set_title(_wrap_title(title), fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        # Same red/green channels, fully opaque on black: the mask by itself.
+        ax = axes[4, k]
+        mask_only = np.zeros((H, W, 3), dtype=np.float32)
+        mask_only[:, :, 0] = shared_norm
+        mask_only[:, :, 1] = unique_norm
+        ax.imshow(mask_only)
+        ax.set_title(_wrap_title("Mask only: " + labels_show[k]), fontsize=9)
         ax.set_xticks([])
         ax.set_yticks([])
 
     for c in range(show_k, n_cols):
-        axes[1, c].set_axis_off()
-        axes[2, c].set_axis_off()
+        for r in (1, 2, 3, 4):
+            axes[r, c].set_axis_off()
 
     legend_handles = [
         Patch(facecolor="#ff4500", alpha=0.55, label="Evidence heatmap (brighter = higher)"),
@@ -670,15 +973,19 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["mnist", "cifar10", "pets", "stanford_dogs"],
+        choices=DATASET_CHOICES,
         default="cifar10",
-        help="Dataset in data/: mnist, cifar10, pets (PetImages), or stanford_dogs",
+        help="Dataset in data/: mnist, cifar10, pets (PetImages), stanford_dogs, "
+             "ham10000 (skin lesions), or brain_tumor (brain MRI)",
     )
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--max_viz_classes", type=int, default=3,
                         help="Maximum top classes to display in the figure (reduces visual clutter)")
+    parser.add_argument("--num_viz_samples", type=int, default=1,
+                        help="How many sample figures to save. >1 writes _s1.._sN files, "
+                             "chosen to span distinct predicted classes. Needs --batch_size >= N")
     parser.add_argument("--num_alloc_steps", type=int, default=25, help="Allocation optimization steps (fewer preserves evidence structure with untrained model)")
-    parser.add_argument("--model", type=str, default="resnet18", choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"],
+    parser.add_argument("--model", type=str, default="resnet18", choices=MODEL_CHOICES,
                         help="Torchvision model name")
     parser.add_argument("--interaction", type=str, default="none", choices=["none", "attention", "transformer"],
                         help="Hypothesis interaction module over top-K tokens")
@@ -748,6 +1055,15 @@ def main():
     parser.add_argument("--pretrained", action="store_true", help="Use pretrained ImageNet weights (final layer still replaced for num_classes)")
     parser.add_argument("--train", action="store_true", help="Train the model on the dataset first; save checkpoint then run explanation")
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs when --train")
+    parser.add_argument("--num_workers", type=int, default=0,
+                        help="DataLoader workers when --train (raise for JPEG-heavy datasets)")
+    parser.add_argument(
+        "--balanced_training",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Class-weighted loss + balanced-accuracy model selection. "
+             "Default: on for medical datasets, off otherwise",
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate when --train")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to save (when --train) or load model checkpoint; default when training: examples/out/checkpoints/<dataset>_<model>.pt")
     args = parser.parse_args()
@@ -772,6 +1088,11 @@ def main():
         parser.error("--lambda_mass must be >= 0")
     if args.max_viz_classes <= 0:
         parser.error("--max_viz_classes must be > 0")
+    if args.num_viz_samples <= 0:
+        parser.error("--num_viz_samples must be > 0")
+    if args.num_viz_samples > args.batch_size:
+        parser.error(f"--num_viz_samples {args.num_viz_samples} needs --batch_size >= "
+                     f"{args.num_viz_samples} (got {args.batch_size})")
     if not (0.0 <= args.interaction_attn_mix <= 1.0):
         parser.error("--interaction_attn_mix must be in [0, 1]")
     if not (0.0 <= args.interaction_weight_blend <= 1.0):
@@ -845,11 +1166,29 @@ def main():
         # Train then use trained model for explanation
         print("Training...")
         train_loader, val_loader, class_names, num_classes = _get_dataloaders(
-            args.dataset, args.batch_size, tv_size=TV_INPUT_SIZE
+            args.dataset, args.batch_size, tv_size=TV_INPUT_SIZE, num_workers=args.num_workers
         )
+        # Medical datasets are heavily skewed; default them to weighted loss and
+        # balanced-accuracy model selection unless the user overrides.
+        balanced = args.balanced_training
+        if balanced is None:
+            balanced = args.dataset in MEDICAL_SPLIT_ROOTS
+        class_weights = None
+        if balanced:
+            class_weights = inverse_frequency_weights(train_loader, num_classes, device)
+            print("Class-weighted loss (inverse frequency):")
+            for name, w in zip(class_names, class_weights.tolist()):
+                print("  %-24s %.3f" % (name, w))
         model = get_torchvision_model(args.model, num_classes, pretrained=args.pretrained)
-        model, best_acc = train_model(model, train_loader, val_loader, device, epochs=args.epochs, lr=args.lr)
-        print("Best val accuracy: %.4f" % best_acc)
+        model, best_acc = train_model(
+            model, train_loader, val_loader, device,
+            epochs=args.epochs, lr=args.lr,
+            num_classes=num_classes,
+            class_weights=class_weights,
+            select_metric="balanced" if balanced else "acc",
+            class_names=class_names,
+        )
+        print("Best val %s: %.4f" % ("balanced accuracy" if balanced else "accuracy", best_acc))
         save_checkpoint(Path(args.checkpoint), model, args.dataset, args.model, num_classes)
     elif args.checkpoint is not None:
         # Load trained model from checkpoint
@@ -860,12 +1199,7 @@ def main():
         try:
             _, class_names, num_classes = _load_batch(args.dataset, args.batch_size, device)
         except Exception:
-            if args.dataset == "pets":
-                num_classes = 2
-            elif args.dataset == "stanford_dogs":
-                num_classes = 120
-            else:
-                num_classes = 10
+            num_classes = DATASET_NUM_CLASSES.get(args.dataset, 10)
             class_names = [str(i) for i in range(num_classes)]
         model = get_torchvision_model(args.model, num_classes, pretrained=args.pretrained)
 
@@ -880,18 +1214,8 @@ def main():
         x, y_true, class_names, num_classes = _load_batch_with_labels(dataset_for_batch, args.batch_size, device)
     except FileNotFoundError as e:
         print("Dataset not found in data/. Using random batch. Error:", e)
-        if dataset_for_batch == "mnist":
-            hw = 28
-            num_classes = 10
-        elif dataset_for_batch == "cifar10":
-            hw = 32
-            num_classes = 10
-        elif dataset_for_batch == "pets":
-            hw = 64
-            num_classes = 2
-        else:
-            hw = TV_INPUT_SIZE
-            num_classes = 120
+        hw = DATASET_INPUT_SIZE.get(dataset_for_batch, TV_INPUT_SIZE)
+        num_classes = DATASET_NUM_CLASSES.get(dataset_for_batch, 10)
         x = torch.rand(args.batch_size, 3, hw, hw, device=device)
         y_true = torch.randint(0, num_classes, (args.batch_size,), device=device)
         class_names = [str(i) for i in range(num_classes)]
@@ -997,21 +1321,31 @@ def main():
         print("(Mask variance is low; explanations may look diffuse. Check checkpoint quality or adjust allocation settings.)")
 
     x_cpu = x.detach().cpu()
-    out_path = REPO / "examples" / "out" / f"contrastive_explanation_{args.dataset}.png"
     evidence_for_viz = explanation.extras.get("evidence")
+    evidence_raw_for_viz = explanation.extras.get("evidence_raw")
     probs_for_viz = explanation.extras.get("probs")
-    visualize_contrastive(
-        sample_idx=0,
-        x=x_cpu,
-        explanation=explanation,
-        unit_space=unit_space,
-        class_names=class_names,
-        y_true=y_true.detach().cpu(),
-        evidence=evidence_for_viz,
+    viz_indices = select_viz_samples(
+        n=args.num_viz_samples,
         probs=probs_for_viz,
-        max_viz_classes=args.max_viz_classes,
-        out_path=out_path,
+        y_true=y_true,
+        batch_size=x_cpu.shape[0],
     )
+    for rank, idx in enumerate(viz_indices):
+        suffix = "" if len(viz_indices) == 1 else f"_s{rank + 1}"
+        out_path = REPO / "examples" / "out" / f"contrastive_explanation_{args.dataset}{suffix}.png"
+        visualize_contrastive(
+            sample_idx=idx,
+            x=x_cpu,
+            explanation=explanation,
+            unit_space=unit_space,
+            class_names=class_names,
+            y_true=y_true.detach().cpu(),
+            evidence=evidence_for_viz,
+            evidence_raw=evidence_raw_for_viz,
+            probs=probs_for_viz,
+            max_viz_classes=args.max_viz_classes,
+            out_path=out_path,
+        )
     save_contrastive_reports(
         explanation=explanation,
         class_names=class_names,

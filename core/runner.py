@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Protocol
 import torch
+import torch.nn as nn
 from .types import Tensor, HypothesisSet, EnvBatch, Explanation
 from .unit_space import EvidenceUnitSpace
 from .interaction import InteractionModel
@@ -75,13 +76,25 @@ class CDEAExplainer:
 
         hypotheses = self.selector.select(logits, probs)
         evidence = self.base_evidence.explain(x, self.model, hypotheses)
+        # Keep the pre-normalization evidence: _normalize rescales every hypothesis to
+        # sum 1, which is what the allocator wants but discards all cross-hypothesis
+        # magnitude. Reporting and visualization need the raw scale to show that a
+        # near-zero-probability foil carries far less evidence than the winner.
+        evidence_raw = evidence
         if self.normalize_evidence:
             evidence = self._normalize(evidence)
 
         tokens = self._build_tokens(x, evidence, hypotheses)
         attn = None
         if self.interaction is not None and tokens is not None:
-            tokens, attn = self.interaction(tokens, hypotheses.mask)
+            # The interaction module is constructed on CPU. Leaving it there while
+            # tokens live on MPS/CUDA raises, or silently computes on the wrong device.
+            if isinstance(self.interaction, nn.Module):
+                self.interaction.to(tokens.device)
+            token_mask = hypotheses.mask
+            if isinstance(token_mask, torch.Tensor) and token_mask.device != tokens.device:
+                token_mask = token_mask.to(tokens.device)
+            tokens, attn = self.interaction(tokens, token_mask)
 
         masks = self.allocator.allocate(
             x=x,
@@ -104,4 +117,4 @@ class CDEAExplainer:
             attn=attn,
             env=env,
         )
-        return Explanation(hypotheses=hypotheses, masks=masks, metrics=metrics, extras={"tokens": tokens, "attn": attn, "evidence": evidence, "probs": probs})
+        return Explanation(hypotheses=hypotheses, masks=masks, metrics=metrics, extras={"tokens": tokens, "attn": attn, "evidence": evidence, "evidence_raw": evidence_raw, "probs": probs})

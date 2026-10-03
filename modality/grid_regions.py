@@ -33,10 +33,25 @@ class VisionGridUnitSpace(EvidenceUnitSpace):
         return self._num_units
 
     def _region_to_pixel_mask(self, m: Tensor, h: int, w: int) -> Tensor:
-        """Convert region mask (B, R) to pixel mask (B, 1, H, W)."""
+        """Convert region mask (B, R) to pixel mask (B, 1, H, W).
+
+        The mask is a blend weight: ``keep`` computes ``m*x + (1-m)*baseline`` and
+        ``remove`` the complement, so values outside [0, 1] are not a stronger mask —
+        they extrapolate *past* x, away from the baseline, producing pixels the model
+        has never seen. Callers can legitimately hand us a sum: ``ContrastiveObjective``
+        evaluates sufficiency on ``m_unique + m_shared``, and each term is an independent
+        sigmoid, so nothing bounds the total. Measured on brain tumor that overflows on
+        0.01-0.30% of entries (max 1.16), small but not zero, and it is silent.
+
+        Clamping here rather than at each call site keeps the invariant with the type that
+        owns it. The zero gradient above 1.0 is wanted too: it stops the allocator pushing
+        more mass into an already-saturated region in the expectation of further effect.
+        """
         B, R = m.shape
         assert R == self._num_units
-        # (B, R) -> (B, 1, grid_h, grid_w)
+        m = m.clamp(0.0, 1.0)
+        # (B, R) -> (B, 1, grid_h, grid_w). Bilinear upsampling is a convex combination,
+        # so a clamped input stays clamped and there is no need to re-clamp after.
         pm = m.view(B, 1, self.grid_h, self.grid_w)
         # Upsample to input spatial size
         pm = F.interpolate(pm, size=(h, w), mode="bilinear", align_corners=False)

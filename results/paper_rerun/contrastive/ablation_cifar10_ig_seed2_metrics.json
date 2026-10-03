@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -2.068495898246765,
+      "overlap": 0.5248199665546417,
+      "sparse": 1.0,
+      "suff": 0.264858340471983
+    },
+    "naive_contrastive": {
+      "margin": -2.0634970331192015,
+      "overlap": 0.29511204719543455,
+      "sparse": 1.0,
+      "suff": 0.26530234336853026
+    },
+    "optimized": {
+      "margin": -1.2422073674201966,
+      "overlap": 0.014125656187534332,
+      "sparse": 1.0321985578536987,
+      "suff": 0.8369239354133606
+    }
+  },
+  "batch_size": 16,
+  "dataset": "cifar10",
+  "evidence": "ig",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_cifar10_ig_seed2",
+  "use_shared": false
+}

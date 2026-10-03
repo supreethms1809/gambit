@@ -1,0 +1,50 @@
+---
+description: Paper-run workflow. Read PROGRESS.md first and follow the session protocol.
+alwaysApply: true
+---
+
+# Paper workflow
+
+Read `docs/paper/PROGRESS.md` before editing. Specs are in `docs/paper/PLAN.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
+
+Environment, from the repo root:
+
+```bash
+source /opt/anaconda3/etc/profile.d/conda.sh && conda activate marl
+PYTHONPATH=. python -m pytest tests/
+```
+
+## Session start
+
+1. `git pull`
+2. Read `docs/paper/PROGRESS.md` and the stage card in `docs/paper/PLAN.md`.
+3. `git status` must be clean before new work.
+4. Run the tests.
+5. Check background jobs listed in `PROGRESS.md`.
+
+## Session end
+
+1. Tests pass.
+2. Small commits, each pushed. `git add <specific paths>` only. Never `git add -A` or `git add .`.
+3. Update `PROGRESS.md`, including the Next session block, and push that too.
+
+If a stage overruns, stop at a commit boundary, split the stage in `PROGRESS.md`, and record where it stopped.
+
+## Commits
+
+- One logical change per commit, with its test. `PYTHONPATH=. python -m pytest tests/` passes before every commit.
+- Push after every commit. Branch names: `paper/p0-hygiene`, `paper/p1-formulation`, `paper/p2-baselines`, `paper/p3-eval-plan`, `paper/p4-selection`, `paper/p5-final-runs`, `paper/p6-results`, `paper/p7-writing`.
+- Code and results never share a commit. A results commit names the code hash and the command.
+- A commit that changes numbers says which results it invalidates.
+
+## Hard prohibitions
+
+- Never run with `--final` or read the test split before the `eval-plan-frozen` tag.
+- Never edit `docs/paper/EVAL_PLAN.md` after it is frozen.
+- Never type or edit a result number by hand.
+- Never weaken or delete a test to make it pass.
+- Never change a baseline's algorithm. Patches may change only API or device.
+- Never merge your own baseline PR.
+- Ask before downloading any dataset or package.
+
+Long jobs use `nohup` or `tmux`, write a done marker per cell, and are recorded in `PROGRESS.md` with PID and log path. Use `caffeinate -i` on macOS. Do not use a cloud agent for anything that reads `data/` or checkpoints.

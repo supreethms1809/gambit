@@ -1,6 +1,9 @@
 # CDEA Prelims Docs Index
 
-Use these files as starter sections for your prelim thesis proposal.
+**Start here:** `/Users/ssuresh/gambit/docs/GAMBIT_PROJECT_NOTES.md` — the consolidated
+record of every experiment and result in the project, including which numbers are current,
+which are superseded, and which have been retracted. The files below are the prelim-proposal
+starter sections; read the project notes first for what is actually established.
 
 1. Implementation overview:
    - `/Users/ssuresh/gambit/docs/PRELIMS_IMPLEMENTATION_OVERVIEW.md`
@@ -16,6 +19,8 @@ Use these files as starter sections for your prelim thesis proposal.
    - `/Users/ssuresh/gambit/docs/CDEA_BLOCK_DIAGRAM.md`
 7. Paper-ready LaTeX algorithms:
    - `/Users/ssuresh/gambit/docs/PRELIMS_ALGORITHMS_LATEX.tex`
+8. Full project notes (all experiments and results):
+   - `/Users/ssuresh/gambit/docs/GAMBIT_PROJECT_NOTES.md`
 
 Suggested writing order:
 
@@ -25,3 +30,5 @@ Suggested writing order:
 4. Use limitations/milestones as your "Future Work and Research Plan" section.
 5. Use the new-instantiation guide when adding your next game variant.
 6. Copy the block diagram and algorithm snippets into your prelim method section.
+7. Take empirical claims from the project notes, not from the paper drafts — the drafts'
+   results sections predate the training-normalization fix and are stale.

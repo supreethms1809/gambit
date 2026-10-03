@@ -29,6 +29,10 @@ from base_evidence.integrated_gradients_regions import IntegratedGradientsRegion
 from instantiations.contrastive.objective import ContrastiveObjective
 from instantiations.contrastive.allocator import OptimizationAllocator
 from examples.contrastive_explanation import (
+    DATASET_CHOICES,
+    MODEL_CHOICES,
+    DATASET_INPUT_SIZE,
+    DATASET_NUM_CLASSES,
     TV_INPUT_SIZE,
     _get_dataloaders,
     _load_batch,
@@ -36,6 +40,7 @@ from examples.contrastive_explanation import (
     get_torchvision_model,
     load_checkpoint,
     save_contrastive_reports,
+    select_viz_samples,
     save_checkpoint,
     train_model,
     visualize_contrastive,
@@ -44,13 +49,16 @@ from examples.contrastive_explanation import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Contrastive explanation example (Integrated Gradients evidence)")
-    parser.add_argument("--dataset", type=str, choices=["mnist", "cifar10", "pets", "stanford_dogs"], default="cifar10")
+    parser.add_argument("--dataset", type=str, choices=DATASET_CHOICES, default="cifar10")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--max_viz_classes", type=int, default=3,
                         help="Maximum top classes to display in the figure (reduces visual clutter)")
+    parser.add_argument("--num_viz_samples", type=int, default=1,
+                        help="How many sample figures to save. >1 writes _s1.._sN files, "
+                             "chosen to span distinct predicted classes. Needs --batch_size >= N")
     parser.add_argument("--num_alloc_steps", type=int, default=25)
     parser.add_argument("--model", type=str, default="resnet18",
-                        choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0"])
+                        choices=MODEL_CHOICES)
     parser.add_argument("--interaction", type=str, default="none", choices=["none", "attention", "transformer"])
     parser.add_argument("--interaction_dim", type=int, default=64)
     parser.add_argument("--interaction_heads", type=int, default=4)
@@ -113,6 +121,11 @@ def main() -> None:
         parser.error("--lambda_mass must be >= 0")
     if args.max_viz_classes <= 0:
         parser.error("--max_viz_classes must be > 0")
+    if args.num_viz_samples <= 0:
+        parser.error("--num_viz_samples must be > 0")
+    if args.num_viz_samples > args.batch_size:
+        parser.error(f"--num_viz_samples {args.num_viz_samples} needs --batch_size >= "
+                     f"{args.num_viz_samples} (got {args.batch_size})")
     if not (0.0 <= args.interaction_attn_mix <= 1.0):
         parser.error("--interaction_attn_mix must be in [0, 1]")
     if not (0.0 <= args.interaction_weight_blend <= 1.0):
@@ -197,12 +210,7 @@ def main() -> None:
         try:
             _, class_names, num_classes = _load_batch(args.dataset, args.batch_size, device)
         except Exception:
-            if args.dataset == "pets":
-                num_classes = 2
-            elif args.dataset == "stanford_dogs":
-                num_classes = 120
-            else:
-                num_classes = 10
+            num_classes = DATASET_NUM_CLASSES.get(args.dataset, 10)
             class_names = [str(i) for i in range(num_classes)]
         model = get_torchvision_model(args.model, num_classes, pretrained=args.pretrained)
 
@@ -216,18 +224,8 @@ def main() -> None:
         x, y_true, class_names, num_classes = _load_batch_with_labels(dataset_for_batch, args.batch_size, device)
     except FileNotFoundError as e:
         print("Dataset not found in data/. Using random batch. Error:", e)
-        if dataset_for_batch == "mnist":
-            hw = 28
-            num_classes = 10
-        elif dataset_for_batch == "cifar10":
-            hw = 32
-            num_classes = 10
-        elif dataset_for_batch == "pets":
-            hw = 64
-            num_classes = 2
-        else:
-            hw = TV_INPUT_SIZE
-            num_classes = 120
+        hw = DATASET_INPUT_SIZE.get(dataset_for_batch, TV_INPUT_SIZE)
+        num_classes = DATASET_NUM_CLASSES.get(dataset_for_batch, 10)
         x = torch.rand(args.batch_size, 3, hw, hw, device=device)
         y_true = torch.randint(0, num_classes, (args.batch_size,), device=device)
         class_names = [str(i) for i in range(num_classes)]
@@ -321,19 +319,28 @@ def main() -> None:
             p_pl = float(split_plus0[k].item())
             print("  %s: shared-only=%.4f shared+unique=%.4f delta=%+.4f" % (lbl, p_sh, p_pl, p_pl - p_sh))
 
-    out_path = REPO / "examples" / "out" / f"contrastive_explanation_ig_{args.dataset}.png"
-    visualize_contrastive(
-        sample_idx=0,
-        x=x.detach().cpu(),
-        explanation=explanation,
-        unit_space=unit_space,
-        class_names=class_names,
-        y_true=y_true.detach().cpu(),
-        evidence=explanation.extras.get("evidence"),
+    viz_indices = select_viz_samples(
+        n=args.num_viz_samples,
         probs=explanation.extras.get("probs"),
-        max_viz_classes=args.max_viz_classes,
-        out_path=out_path,
+        y_true=y_true,
+        batch_size=x.shape[0],
     )
+    for rank, idx in enumerate(viz_indices):
+        suffix = "" if len(viz_indices) == 1 else f"_s{rank + 1}"
+        out_path = REPO / "examples" / "out" / f"contrastive_explanation_ig_{args.dataset}{suffix}.png"
+        visualize_contrastive(
+            sample_idx=idx,
+            x=x.detach().cpu(),
+            explanation=explanation,
+            unit_space=unit_space,
+            class_names=class_names,
+            y_true=y_true.detach().cpu(),
+            evidence=explanation.extras.get("evidence"),
+            evidence_raw=explanation.extras.get("evidence_raw"),
+            probs=explanation.extras.get("probs"),
+            max_viz_classes=args.max_viz_classes,
+            out_path=out_path,
+        )
     save_contrastive_reports(
         explanation=explanation,
         class_names=class_names,

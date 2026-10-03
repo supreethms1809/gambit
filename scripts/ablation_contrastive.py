@@ -21,7 +21,8 @@ if str(REPO) not in sys.path:
 from core.types import Tensor, HypothesisSet
 from core.hypotheses import TopMSelector
 from core.device import get_device
-from core.reporting import save_json, save_rows_csv
+from core.reporting import config_hash, refuse_final_if_dirty, save_json, save_rows_csv
+from evaluation.splits import MissingSplitError, SplitLockedError
 from modality.grid_regions import VisionGridUnitSpace
 from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
@@ -51,7 +52,32 @@ class SmallCNN(nn.Module):
 
 TV_INPUT_SIZE = 224
 MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
-                 "vit_b_16", "vit_b_32"]
+                 "efficientnet_v2_s", "vit_b_16", "vit_b_32"]
+DATASET_CHOICES = ["mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor"]
+
+
+def _load_state_dict(checkpoint: str):
+    """Read either checkpoint format: a raw state_dict (train_backbone.py) or a
+    metadata-wrapped dict (examples/contrastive_explanation.py save_checkpoint)."""
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if isinstance(state, dict) and "state_dict" in state:
+        return state["state_dict"]
+    return state
+
+# Medical datasets ship pre-split; evaluate on the held-out split (relative to data_root).
+# Keep in sync with MEDICAL_SPLIT_ROOTS in examples/contrastive_explanation.py.
+MEDICAL_EVAL_ROOTS = {
+    "ham10000": Path("ham10000") / "val",
+    "brain_tumor": Path("brain_tumor") / "Testing",
+}
+DATASET_NUM_CLASSES = {
+    "mnist": 10,
+    "cifar10": 10,
+    "pets": 2,
+    "stanford_dogs": 120,
+    "ham10000": 7,
+    "brain_tumor": 3,
+}
 
 
 def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
@@ -81,6 +107,13 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
     elif model_name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=weights)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif model_name == "efficientnet_v2_s":
+        # Its last Conv2d is the final 1x1 projection with a 7x7 spatial output, so
+        # GradCAM's automatic target-layer pick is the canonical one and the grid
+        # stays 7x7 — comparable to the resnet baselines. Mirrors the builder in
+        # examples/contrastive_explanation.py, which trained these checkpoints.
+        model = models.efficientnet_v2_s(weights=weights)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
     elif model_name == "vit_b_16":
         model = models.vit_b_16(weights=weights)
         model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
@@ -90,10 +123,39 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
     else:
         raise ValueError(f"model_name must be one of: {', '.join(MODEL_CHOICES)}")
     if checkpoint is not None:
-        state = torch.load(checkpoint, map_location="cpu")
+        state = _load_state_dict(checkpoint)
         model.load_state_dict(state)
         print(f"  [model] loaded checkpoint: {checkpoint}")
     return model
+
+
+def _finalize_eval_dataset(
+    dataset_name: str,
+    ds,
+    *,
+    split: str,
+    final: bool,
+    config_hash: Optional[str],
+    num_images: Optional[int],
+    seed: int,
+):
+    """Apply the recorded split, then a seeded subset. Never a class-ordered prefix."""
+    from torch.utils.data import Subset
+
+    from evaluation.sampling import seeded_subset
+    from evaluation.splits import load_indices
+
+    indices = load_indices(
+        dataset_name,
+        split,
+        final=final,
+        config_hash=config_hash,
+        n_items=len(ds),
+    )
+    ds = Subset(ds, indices)
+    if num_images is not None:
+        ds = seeded_subset(ds, num_images, seed)
+    return ds
 
 
 def _get_eval_loader(
@@ -101,6 +163,12 @@ def _get_eval_loader(
     batch_size: int,
     data_root: Path,
     image_size: Optional[int] = None,
+    *,
+    seed: int = 0,
+    num_images: Optional[int] = None,
+    split: str = "val",
+    final: bool = False,
+    config_hash: Optional[str] = None,
 ):
     try:
         from torch.utils.data import DataLoader
@@ -109,33 +177,49 @@ def _get_eval_loader(
     except ImportError as e:
         raise ImportError("torchvision is required for dataset loading") from e
 
+    from evaluation.splits import load_spec
+
     resize = transforms.Resize((image_size, image_size)) if image_size is not None else None
+    spec = load_spec(dataset)
+    root_rel = spec["roots"][split]
 
     if dataset == "mnist":
         ops = [transforms.ToTensor(), transforms.Lambda(lambda t: t.repeat(3, 1, 1))]
         if resize is not None:
             ops.append(resize)
         t = transforms.Compose(ops)
-        ds = MNIST(root=str(data_root), train=False, download=False, transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), 10
-    if dataset == "cifar10":
+        ds = MNIST(root=str(data_root), train=root_rel == "train", download=False, transform=t)
+        num_classes = 10
+    elif dataset == "cifar10":
         ops = [transforms.ToTensor()]
         if resize is not None:
             ops.append(resize)
         t = transforms.Compose(ops)
-        ds = CIFAR10(root=str(data_root), train=False, download=False, transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), 10
-    if dataset == "pets":
+        ds = CIFAR10(root=str(data_root), train=root_rel == "train", download=False, transform=t)
+        num_classes = 10
+    elif dataset == "pets":
         target_size = image_size if image_size is not None else 64
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
-        ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    if dataset == "stanford_dogs":
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    elif dataset == "stanford_dogs":
         target_size = image_size if image_size is not None else 224
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
-        ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    elif dataset in MEDICAL_EVAL_ROOTS:
+        target_size = image_size if image_size is not None else 224
+        t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    else:
+        raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
+
+    ds = _finalize_eval_dataset(
+        dataset, ds, split=split, final=final, config_hash=config_hash,
+        num_images=num_images, seed=seed,
+    )
+    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), num_classes
 
 
 def _fallback_random_loader(
@@ -162,13 +246,13 @@ def _fallback_random_loader(
 
     if image_size is not None:
         h, w = image_size, image_size
-        num_classes = 2 if dataset == "pets" else (120 if dataset == "stanford_dogs" else 10)
+        num_classes = DATASET_NUM_CLASSES.get(dataset, 10)
     elif dataset == "mnist":
         h, w, num_classes = 28, 28, 10
     elif dataset == "pets":
         h, w, num_classes = 64, 64, 2
-    elif dataset == "stanford_dogs":
-        h, w, num_classes = 224, 224, 120
+    elif dataset in DATASET_NUM_CLASSES and dataset != "cifar10":
+        h, w, num_classes = 224, 224, DATASET_NUM_CLASSES[dataset]
     else:
         h, w, num_classes = 32, 32, 10
 
@@ -229,17 +313,26 @@ def run_ablation(
     ig_steps: int = 8,
     lambda_disjoint: float = 0.5,
     lambda_mass: float = 2.0,
+    lambda_shared_sparse: float = 0.0,
     data_root: str | None = None,
     export_prefix: str | None = None,
     checkpoint: Optional[str] = None,
+    game_mode: str | None = None,
+    num_steps: int = 40,
+    lr: float = 0.3,
+    out_dir: str | Path | None = None,
+    seed: int = 0,
+    split: str = "val",
+    final: bool = False,
 ):
     from core.runner import CDEAExplainer
     from core.allocator import EvidenceAsMaskAllocator
+    from core.game_modes import resolve_contrastive_game
     from instantiations.contrastive.objective import ContrastiveObjective
     from instantiations.contrastive.allocator import OptimizationAllocator
 
-    if dataset not in {"mnist", "cifar10", "pets", "stanford_dogs"}:
-        raise ValueError("dataset must be one of: mnist, cifar10, pets, stanford_dogs")
+    if dataset not in set(DATASET_CHOICES):
+        raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
     if evidence not in {"gradcam", "ig"}:
         raise ValueError("evidence must be 'gradcam' or 'ig'")
     if model_name not in MODEL_CHOICES:
@@ -253,6 +346,22 @@ def run_ablation(
     evidence_kind = evidence
 
     data_root_path = Path(data_root) if data_root is not None else (REPO / "data")
+    refuse_final_if_dirty(final)
+    run_config = {
+        "dataset": dataset,
+        "evidence": evidence,
+        "model_name": model_name,
+        "split": split,
+        "seed": seed,
+        "num_images": num_images,
+        "lambda_disjoint": lambda_disjoint,
+        "lambda_mass": lambda_mass,
+        "lambda_shared_sparse": lambda_shared_sparse,
+        "game_mode": game_mode,
+        "num_steps": num_steps,
+        "lr": lr,
+    }
+    run_hash = config_hash(run_config)
     device = get_device()
     use_torchvision_backbone = model_name != "smallcnn"
     input_size = TV_INPUT_SIZE if use_torchvision_backbone else None
@@ -264,7 +373,12 @@ def run_ablation(
         grid_h, grid_w = 7, 7
     unit_space = VisionGridUnitSpace(grid_h, grid_w)
     try:
-        loader, num_classes = _get_eval_loader(dataset, batch_size, data_root_path, image_size=input_size)
+        loader, num_classes = _get_eval_loader(
+            dataset, batch_size, data_root_path, image_size=input_size,
+            seed=seed, num_images=num_images, split=split, final=final, config_hash=run_hash,
+        )
+    except (SplitLockedError, MissingSplitError, RuntimeError):
+        raise
     except Exception as e:
         print("Dataset load failed for", dataset, "using random fallback:", e)
         loader, num_classes = _fallback_random_loader(dataset, batch_size, num_images or 200, image_size=input_size)
@@ -277,14 +391,27 @@ def run_ablation(
     else:
         provider = IntegratedGradientsRegionsProvider(grid_h, grid_w, steps=ig_steps, baseline="zero")
 
+    # Game preset drives use_shared / margin / overlap / partition. Defaulting to
+    # None keeps this script's historical behaviour (no shared mask, no partition
+    # term); passing --game_mode mixed makes it match eval_localization.py so the
+    # separation and validation results describe one configuration rather than two.
+    game_cfg = resolve_contrastive_game(game_mode) if game_mode else None
     objective = ContrastiveObjective(
         lambda_suff=1.0,
-        lambda_margin=1.0,
+        lambda_margin=game_cfg.lambda_margin if game_cfg else 1.0,
         lambda_sparse=0.05,
-        lambda_overlap=0.2,
+        lambda_overlap=game_cfg.lambda_overlap if game_cfg else 0.2,
         lambda_mass=lambda_mass,
+        lambda_shared_sparse=lambda_shared_sparse,
     )
-    opt_allocator = OptimizationAllocator(objective, num_steps=40, lr=0.3, lambda_disjoint=lambda_disjoint)
+    opt_allocator = OptimizationAllocator(
+        objective,
+        num_steps=num_steps,
+        lr=lr,
+        use_shared=game_cfg.use_shared if game_cfg else False,
+        lambda_disjoint=game_cfg.lambda_disjoint if game_cfg else lambda_disjoint,
+        lambda_partition=game_cfg.lambda_partition if game_cfg else 0.0,
+    )
     base_allocator = EvidenceAsMaskAllocator()
 
     try:
@@ -385,16 +512,27 @@ def run_ablation(
     print(f"{'naive_contrastive':<22} {naive_agg.get('suff', 0):>8.4f} {naive_agg.get('margin', 0):>8.4f} {naive_agg.get('overlap', 0):>8.4f} {naive_agg.get('sparse', 0):>8.4f}")
     print(f"{'optimized':<22} {opt_agg.get('suff', 0):>8.4f} {opt_agg.get('margin', 0):>8.4f} {opt_agg.get('overlap', 0):>8.4f} {opt_agg.get('sparse', 0):>8.4f}")
 
-    # Quantitative improvement: overlap reduction at comparable sufficiency
+    # Quantitative improvement: overlap reduction, reported alongside what happened
+    # to sufficiency and to the mass budget.
     if base_agg and opt_agg:
         overlap_red = base_agg["overlap"] - opt_agg["overlap"]
-        suff_diff = abs(opt_agg["suff"] - base_agg["suff"])
-        print(f"\nOverlap reduction (optimized vs base): {overlap_red:.4f}")
-        print(f"Sufficiency difference (optimized vs base): {suff_diff:.4f} (comparable if small)")
-        print("\n--- Pass: at least one quantitative improvement ---")
-        print(f"At comparable sufficiency (diff={suff_diff:.4f}), optimized reduces overlap by {overlap_red:.4f} (base={base_agg['overlap']:.4f} -> optimized={opt_agg['overlap']:.4f}).")
+        suff_delta = opt_agg["suff"] - base_agg["suff"]
+        sparse_ratio = opt_agg.get("sparse", 0.0) / max(base_agg.get("sparse", 0.0), 1e-8)
+        print(f"\nOverlap reduction (optimized vs base): {overlap_red:.4f} "
+              f"({base_agg['overlap']:.4f} -> {opt_agg['overlap']:.4f})")
+        # An overlap drop is only meaningful if sufficiency did not fall and the mask
+        # budget did not grow — otherwise the masks got cleaner by getting weaker or
+        # by simply spending more highlight. Report both rather than asserting
+        # "comparable sufficiency", which is false whenever the delta is large.
+        print(f"Sufficiency change: {suff_delta:+.4f} "
+              f"({base_agg['suff']:.4f} -> {opt_agg['suff']:.4f})")
+        print(f"Mask budget ratio (optimized/base sparse): {sparse_ratio:.4f} "
+              f"(~1.0 means the budget was held)")
+        verdict = "PASS" if (suff_delta >= 0 and sparse_ratio <= 1.05) else "CHECK"
+        print(f"\n--- {verdict}: overlap fell by {overlap_red:.4f} with sufficiency "
+              f"{suff_delta:+.4f} at {sparse_ratio:.2f}x budget ---")
 
-    out_dir = REPO / "scripts" / "out"
+    out_dir = Path(out_dir) if out_dir is not None else (REPO / "scripts" / "out")
     out_dir.mkdir(parents=True, exist_ok=True)
     if export_prefix is None:
         if dataset == "cifar10" and evidence_kind == "gradcam":
@@ -417,15 +555,25 @@ def run_ablation(
         "ig_steps": int(ig_steps) if evidence_kind == "ig" else None,
         "lambda_disjoint": float(lambda_disjoint),
         "lambda_mass": float(lambda_mass),
+        "lambda_shared_sparse": float(lambda_shared_sparse),
         "num_images": count,
         "batch_size": int(batch_size),
+        # Recorded so a run can be checked against eval_localization.py's config
+        # rather than assumed to match it.
+        "game_mode": game_mode,
+        "use_shared": bool(opt_allocator.use_shared),
+        "lambda_margin": float(objective.lambda_margin),
+        "lambda_overlap": float(objective.lambda_overlap),
+        "lambda_partition": float(opt_allocator.lambda_partition),
+        "num_steps": int(num_steps),
+        "lr": float(lr),
         "aggregates": {
             "base_evidence": base_agg,
             "naive_contrastive": naive_agg,
             "optimized": opt_agg,
         },
     }
-    save_json(summary_json, summary)
+    save_json(summary_json, summary, config_hash=run_hash, device=device)
 
     agg_rows = []
     for method, agg in [("base_evidence", base_agg), ("naive_contrastive", naive_agg), ("optimized", opt_agg)]:
@@ -452,20 +600,46 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Run CDEA contrastive ablation")
-    parser.add_argument("--dataset", type=str, default="cifar10", choices=["mnist", "cifar10", "pets", "stanford_dogs"])
+    parser.add_argument("--dataset", type=str, default="cifar10", choices=DATASET_CHOICES)
     parser.add_argument("--evidence", type=str, default="gradcam", choices=["gradcam", "ig"])
     parser.add_argument("--model", dest="model_name", type=str, default="resnet18", choices=MODEL_CHOICES)
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--num_images", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Seed for the eval subset. Does not change the train/val/test split.")
+    parser.add_argument("--split", type=str, default="val", choices=["train", "val", "test"],
+                        help="val is the only split used for decisions. test requires --final.")
+    parser.add_argument("--final", action="store_true",
+                        help="Allow the test split. Refuses a dirty tree and an unfrozen eval plan.")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--ig_steps", type=int, default=8)
     parser.add_argument("--lambda_disjoint", type=float, default=0.5)
     parser.add_argument("--lambda_mass", type=float, default=2.0)
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
+                        help="L1 penalty on the shared mask. At 0.0 it is in no penalty "
+                             "term at all and inflates to blanket ~46%% of the grid. Note "
+                             "that sufficiency is measured on keep(x, unique + shared), so "
+                             "a blanket inflates it while the reported `sparse` budget "
+                             "counts unique mass only. See docs/MEDICAL_RESULTS.md 9a.")
     parser.add_argument("--data_root", type=str, default=None)
     parser.add_argument("--export_prefix", type=str, default=None)
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Trained weights to load; without this the model is untrained "
+                             "and the evidence (and so the ablation) is uninformative")
+    parser.add_argument("--game_mode", type=str, default=None,
+                        choices=["cooperative", "mixed", "competitive"],
+                        help="Contrastive game preset. Omit for this script's historical "
+                             "config (no shared mask); use 'mixed' to match eval_localization.py")
+    parser.add_argument("--num_steps", type=int, default=40,
+                        help="Allocator optimization steps (eval_localization.py uses 50)")
+    parser.add_argument("--lr", type=float, default=0.3,
+                        help="Allocator learning rate (eval_localization.py uses 0.2)")
+    parser.add_argument("--out_dir", type=str, default=None,
+                        help="Directory for result CSV/JSON (default: scripts/out)")
     args = parser.parse_args()
 
     run_ablation(
+        checkpoint=args.checkpoint,
         num_images=args.num_images,
         batch_size=args.batch_size,
         dataset=args.dataset,
@@ -475,6 +649,14 @@ if __name__ == "__main__":
         ig_steps=args.ig_steps,
         lambda_disjoint=args.lambda_disjoint,
         lambda_mass=args.lambda_mass,
+        lambda_shared_sparse=args.lambda_shared_sparse,
         data_root=args.data_root,
         export_prefix=args.export_prefix,
+        game_mode=args.game_mode,
+        num_steps=args.num_steps,
+        lr=args.lr,
+        out_dir=args.out_dir,
+        seed=args.seed,
+        split=args.split,
+        final=bool(args.final),
     )

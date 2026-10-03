@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -1.7875637435913085,
+      "overlap": 0.2994670593738556,
+      "sparse": 1.0,
+      "suff": 0.08488475736230612
+    },
+    "naive_contrastive": {
+      "margin": -1.798703134059906,
+      "overlap": 0.14911171287298203,
+      "sparse": 1.0,
+      "suff": 0.1611956237256527
+    },
+    "optimized": {
+      "margin": -0.512251193523407,
+      "overlap": 0.05431290298700333,
+      "sparse": 1.1354199790954589,
+      "suff": 1.1595775008201599
+    }
+  },
+  "batch_size": 16,
+  "dataset": "brain_tumor",
+  "evidence": "ig",
+  "game_mode": "mixed",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.1,
+  "lr": 0.2,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 50,
+  "pretrained": true,
+  "run_name": "ablation_brain_tumor_ig_seed1",
+  "use_shared": true
+}

@@ -5,7 +5,7 @@ Train or fine-tune a ResNet backbone for each dataset before running GAMBIT expe
 
 Strategy
 --------
-- **Contrastive datasets** (mnist, cifar10, pets, stanford_dogs):
+- **Contrastive datasets** (mnist, cifar10, pets, stanford_dogs, ham10000, brain_tumor):
   Linear probe by default — freeze ImageNet backbone, train only the output head.
   Typically 10 epochs is sufficient for the head to learn the class boundaries.
   Pass ``freeze_backbone=False`` for full fine-tuning (slower, higher accuracy).
@@ -27,6 +27,7 @@ Usage (standalone)::
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -38,6 +39,24 @@ REPO = Path(__file__).resolve().parent.parent
 
 TV_INPUT_SIZE = 224
 COLORED_MNIST_CORRELATION = 0.9
+
+# Medical datasets ship pre-split; train on the train split only (relative to data_root).
+# Keep in sync with MEDICAL_SPLIT_ROOTS in examples/contrastive_explanation.py.
+MEDICAL_TRAIN_ROOTS = {
+    "ham10000": Path("ham10000") / "train",
+    "brain_tumor": Path("brain_tumor") / "Training",
+}
+
+# These folders are the paper TEST split (the old grouped holdout). Checkpoint
+# selection must not read them. Val is a grouped carve inside the train folder,
+# recorded in data/splits/.
+LEGACY_TEST_ROOTS = {
+    "ham10000": Path("ham10000") / "val",
+    "brain_tumor": Path("brain_tumor") / "Testing",
+}
+PAPER_SPLIT_DATASETS = {
+    "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
+}
 
 
 def model_grid_size(model_name: str) -> tuple:
@@ -55,8 +74,24 @@ def model_grid_size(model_name: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def _make_tv_transforms(image_size: int, grayscale_to_rgb: bool = False,
-                         augment: bool = True):
-    """Return a torchvision transform for training."""
+                        augment: bool = True, normalize: bool = False):
+    """Return a torchvision transform for training.
+
+    ``normalize`` defaults to **False**, and that is deliberate. Every evaluation and
+    explanation path in this repo — ablation_contrastive, eval_localization,
+    eval_decomposition, eval_robust_shortcut, and examples/contrastive_explanation —
+    feeds raw [0, 1] tensors with no normalization. Training with ImageNet statistics
+    while evaluating without them is a distribution shift severe enough to look like a
+    broken model: measured here, a fine-tuned ResNet-18 scored 0.337 on brain tumor
+    (chance 0.333) evaluated raw versus 0.948 normalized, and a CIFAR-10 linear probe
+    scored 0.389 raw versus 0.816 normalized.
+
+    The unnormalized convention is the one to keep, because the interventions the
+    objective is built on are defined in [0, 1] pixel space: VisionGridUnitSpace's
+    blur/mean baselines and Integrated Gradients' ``baseline="zero"`` all mean
+    something different once inputs are standardized. Pass ``normalize=True`` only if
+    the consuming pipeline normalizes too.
+    """
     from torchvision import transforms
     ops = []
     if grayscale_to_rgb:
@@ -65,9 +100,37 @@ def _make_tv_transforms(image_size: int, grayscale_to_rgb: bool = False,
     if augment:
         ops.append(transforms.RandomHorizontalFlip())
     ops.append(transforms.ToTensor())
-    ops.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                    std=[0.229, 0.224, 0.225]))
+    if normalize:
+        ops.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225]))
     return transforms.Compose(ops)
+
+
+def _paper_subset(ds, dataset: str, split: str):
+    """Indices from data/splits. Test is refused here: training never requests it."""
+    from torch.utils.data import Subset
+
+    from evaluation.splits import load_indices
+
+    if split == "test":
+        raise RuntimeError("training and checkpoint selection cannot read the test split")
+    indices = load_indices(dataset, split, final=False, n_items=len(ds))
+    return Subset(ds, indices)
+
+
+def _subset_targets(ds) -> Optional[list]:
+    """Labels of a dataset or a Subset, without a pass over the images."""
+    from torch.utils.data import Subset
+
+    if isinstance(ds, Subset):
+        inner = _subset_targets(ds.dataset)
+        if inner is None:
+            return None
+        return [inner[i] for i in ds.indices]
+    targets = getattr(ds, "targets", None)
+    if targets is None:
+        return None
+    return [int(t) for t in targets]
 
 
 def get_train_loader(
@@ -77,7 +140,7 @@ def get_train_loader(
     image_size: int = TV_INPUT_SIZE,
 ) -> Tuple[torch.utils.data.DataLoader, int]:
     """Return (train_loader, num_classes) for the given dataset."""
-    from torch.utils.data import DataLoader, Subset, random_split
+    from torch.utils.data import DataLoader
     from torchvision.datasets import MNIST, CIFAR10, ImageFolder
 
     if dataset == "mnist":
@@ -86,32 +149,39 @@ def get_train_loader(
             transforms.Grayscale(num_output_channels=3),
             transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
+            # No Normalize: every eval/explanation path here consumes raw [0,1].
         ])
         ds = MNIST(root=str(data_root), train=True, download=True, transform=t)
+        ds = _paper_subset(ds, "mnist", "train")
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     if dataset == "cifar10":
         t = _make_tv_transforms(image_size, augment=True)
         ds = CIFAR10(root=str(data_root), train=True, download=True, transform=t)
+        ds = _paper_subset(ds, "cifar10", "train")
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     if dataset == "pets":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
-        n_train = int(0.8 * len(ds))
-        train_ds, _ = random_split(ds, [n_train, len(ds) - n_train],
-                                   generator=torch.Generator().manual_seed(42))
-        return DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, "pets", "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset == "stanford_dogs":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
-        n_train = int(0.8 * len(ds))
-        train_ds, _ = random_split(ds, [n_train, len(ds) - n_train],
-                                   generator=torch.Generator().manual_seed(42))
-        return DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, "stanford_dogs", "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+
+    if dataset in MEDICAL_TRAIN_ROOTS:
+        # Pre-split medical datasets: train on the train/Training split only.
+        t = _make_tv_transforms(image_size, augment=True)
+        ds = ImageFolder(root=str(data_root / MEDICAL_TRAIN_ROOTS[dataset]), transform=t)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, dataset, "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset == "colored_cifar10":
         from instantiations.shift.biased_data import ColoredCIFAR10
@@ -130,8 +200,7 @@ def get_train_loader(
                 x, y = self.inner[i]
                 x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
                                   mode="bilinear", align_corners=False).squeeze(0)
-                x = transforms.functional.normalize(
-                    x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                # No normalization: the explanation pipeline consumes raw [0,1].
                 return x, y
 
         ds = _ResizeWrapper(base_ds)
@@ -154,8 +223,7 @@ def get_train_loader(
                 x, y = self.inner[i]
                 x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
                                   mode="bilinear", align_corners=False).squeeze(0)
-                x = transforms.functional.normalize(
-                    x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                # No normalization: the explanation pipeline consumes raw [0,1].
                 return x, y
 
         ds = _ResizeWrapper(base_ds)
@@ -167,11 +235,10 @@ def get_train_loader(
         # ColoredMNIST returns float tensors in [0,1] already; just resize + normalize
         base_ds = ColoredMNIST(root=str(data_root), train=True, download=True,
                                correlation=COLORED_MNIST_CORRELATION)
-        # Wrap to apply resize + normalize
+        # Resize only — no Normalize, to match the [0,1] convention the
+        # explanation interventions are defined in.
         norm = transforms.Compose([
             transforms.Resize((image_size, image_size)),  # applied to PIL, but here tensors
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
         ])
 
         class _ResizeWrapper(torch.utils.data.Dataset):
@@ -186,15 +253,14 @@ def get_train_loader(
                 # x is (3, 28, 28); resize to (3, image_size, image_size)
                 x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
                                   mode="bilinear", align_corners=False).squeeze(0)
-                x = transforms.functional.normalize(
-                    x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                # No normalization: the explanation pipeline consumes raw [0,1].
                 return x, y
 
         ds = _ResizeWrapper(base_ds)
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     raise ValueError(f"Unknown dataset: {dataset}. "
-                     f"Choices: mnist, cifar10, pets, stanford_dogs, "
+                     f"Choices: mnist, cifar10, pets, stanford_dogs, ham10000, brain_tumor, "
                      f"colored_mnist, colored_cifar10, texture_mnist")
 
 
@@ -216,6 +282,13 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = True) -> 
         m.classifier[1] = nn.Linear(m.last_channel, num_classes)
     elif model_name == "efficientnet_b0":
         m = models.efficientnet_b0(weights=weights)
+        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+    elif model_name == "efficientnet_v2_s":
+        # Its last Conv2d is the final 1x1 projection with a 7x7 spatial output, so
+        # GradCAM's automatic target-layer pick is the canonical one and the grid stays
+        # 7x7 — comparable to the resnet baselines. Mirrors the builder in
+        # examples/contrastive_explanation.py, which already offered this backbone.
+        m = models.efficientnet_v2_s(weights=weights)
         m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
     elif model_name == "vit_b_16":
         m = models.vit_b_16(weights=weights)
@@ -239,6 +312,84 @@ def _freeze_backbone(model: nn.Module) -> None:
 # Training loop
 # ---------------------------------------------------------------------------
 
+def get_val_loader(
+    dataset: str,
+    batch_size: int,
+    data_root: Path,
+    image_size: int = TV_INPUT_SIZE,
+) -> Optional[torch.utils.data.DataLoader]:
+    """Val split used for checkpoint selection. This is not the test split."""
+    from torch.utils.data import DataLoader
+    from torchvision.datasets import CIFAR10, ImageFolder, MNIST
+
+    from evaluation.splits import load_spec
+
+    if dataset not in PAPER_SPLIT_DATASETS:
+        return None
+    spec = load_spec(dataset)
+    root_rel = spec["roots"]["val"]
+    legacy_test = LEGACY_TEST_ROOTS.get(dataset)
+    if legacy_test is not None and Path(root_rel) == legacy_test:
+        raise RuntimeError(f"{dataset} val root points at the test folder {legacy_test}")
+    t = _make_tv_transforms(image_size, augment=False)
+    if dataset == "mnist":
+        ds = MNIST(root=str(data_root), train=True, download=False, transform=t)
+    elif dataset == "cifar10":
+        ds = CIFAR10(root=str(data_root), train=True, download=False, transform=t)
+    else:
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+    ds = _paper_subset(ds, dataset, "val")
+    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
+
+
+def inverse_frequency_weights(
+    loader: torch.utils.data.DataLoader,
+    num_classes: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Inverse-frequency class weights, normalized to mean 1.
+
+    HAM10000 is ~67% melanocytic nevus. Unweighted cross-entropy converges to
+    predicting the majority class, which makes both the accuracy number and the
+    resulting Grad-CAM evidence meaningless.
+    """
+    counts = torch.zeros(num_classes)
+    ds = getattr(loader, "dataset", None)
+    targets = _subset_targets(ds)
+    if targets is not None:  # ImageFolder / Subset labels, without a data pass
+        counts = torch.bincount(torch.as_tensor(targets), minlength=num_classes).float()
+    else:
+        for _, y in loader:
+            counts += torch.bincount(y.cpu(), minlength=num_classes).float()
+    weights = counts.sum() / (num_classes * counts.clamp_min(1.0))
+    weights = weights * (num_classes / weights.sum())  # mean 1 -> loss scale unchanged
+    weights[counts == 0] = 0.0
+    return weights.to(device)
+
+
+def balanced_accuracy(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    num_classes: int,
+) -> float:
+    """Macro-averaged recall over classes present in *loader*."""
+    correct = torch.zeros(num_classes)
+    seen = torch.zeros(num_classes)
+    model.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            pred = model(x.to(device)).argmax(1).cpu()
+            for c in range(num_classes):
+                m = y == c
+                seen[c] += m.sum()
+                correct[c] += (pred[m] == c).sum()
+    present = seen > 0
+    if not bool(present.any()):
+        return 0.0
+    return (correct[present] / seen[present]).mean().item()
+
+
 def train_model(
     model: nn.Module,
     train_loader: torch.utils.data.DataLoader,
@@ -246,6 +397,9 @@ def train_model(
     lr: float = 1e-3,
     freeze_backbone: bool = True,
     device: Optional[torch.device] = None,
+    class_weights: Optional[torch.Tensor] = None,
+    val_loader: Optional[torch.utils.data.DataLoader] = None,
+    num_classes: Optional[int] = None,
 ) -> nn.Module:
     """Fine-tune *model* in-place and return it.
 
@@ -256,6 +410,10 @@ def train_model(
         lr:              Learning rate for Adam.
         freeze_backbone: If True, only the output head is trained (linear probe).
         device:          Torch device (auto-detected if None).
+        class_weights:   Per-class cross-entropy weights for imbalanced data.
+        val_loader:      If given, the returned model is the epoch with the best
+                         balanced accuracy rather than simply the last epoch.
+        num_classes:     Required alongside ``val_loader``.
 
     Returns:
         The trained model in eval() mode.
@@ -282,6 +440,15 @@ def train_model(
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
+    if class_weights is not None:
+        class_weights = class_weights.to(device)
+        print("  [train] class-weighted loss (inverse frequency)")
+    if val_loader is not None and num_classes is None:
+        raise ValueError("num_classes is required when val_loader is given")
+
+    best_score = -1.0
+    best_state: Optional[dict] = None
+
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
@@ -291,7 +458,7 @@ def train_model(
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             logits = model(x)
-            loss = F.cross_entropy(logits, y)
+            loss = F.cross_entropy(logits, y, weight=class_weights)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -300,8 +467,42 @@ def train_model(
         scheduler.step()
         avg_loss = total_loss / max(len(train_loader), 1)
         acc = correct / max(n_total, 1)
-        print(f"  [train] epoch {epoch + 1:>2}/{num_epochs}  "
-              f"loss={avg_loss:.4f}  acc={acc:.3f}")
+        msg = (f"  [train] epoch {epoch + 1:>2}/{num_epochs}  "
+               f"loss={avg_loss:.4f}  acc={acc:.3f}")
+
+        # Select on balanced accuracy, not on the last epoch: with a skewed dataset
+        # the final epoch is often not the best model for minority classes, and
+        # minority classes are the clinically interesting ones.
+        if val_loader is not None:
+            val_bal = balanced_accuracy(model, val_loader, device, num_classes)
+            msg += f"  val_balanced_acc={val_bal:.4f}"
+            if val_bal > best_score:
+                best_score = val_bal
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                msg += "  *"
+        print(msg)
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print(f"  [train] restored best epoch (val_balanced_acc={best_score:.4f})")
+
+        # A model at chance is not a weak model, it is a failed run — and it flows
+        # downstream silently, because every explanation method will happily produce
+        # confident-looking attributions for a network that learned nothing. The usual
+        # cause is too high a learning rate for full fine-tuning of a pretrained
+        # backbone: 1e-3 with Adam wipes the pretrained features in the first epoch.
+        chance = 1.0 / max(num_classes, 1)
+        if best_score <= chance * 1.15:
+            warnings.warn(
+                f"Training finished at balanced accuracy {best_score:.4f}, at or near "
+                f"chance ({chance:.4f}) for {num_classes} classes. Any explanation built "
+                f"on this checkpoint is meaningless. If this is a full fine-tune of a "
+                f"pretrained backbone, lr={lr:g} is likely too high — try 1e-4.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            print(f"  [train] *** WARNING: balanced accuracy {best_score:.4f} is at "
+                  f"chance ({chance:.4f}) — this checkpoint is unusable ***")
 
     model.eval()
     return model
@@ -323,6 +524,7 @@ def get_or_train(
     batch_size: int = 32,
     seed: int = 0,
     force: bool = False,
+    balanced: Optional[bool] = None,
 ) -> Path:
     """Return path to a trained checkpoint, training if not already cached.
 
@@ -330,7 +532,8 @@ def get_or_train(
     different configs are cached separately.
 
     Args:
-        dataset:         One of mnist | cifar10 | pets | stanford_dogs | colored_mnist.
+        dataset:         One of mnist | cifar10 | pets | stanford_dogs | ham10000 |
+                         brain_tumor | colored_mnist.
         model_name:      Backbone architecture (resnet18, resnet34, …).
         pretrained:      Start from ImageNet weights.
         data_root:       Root directory for dataset files.
@@ -341,6 +544,8 @@ def get_or_train(
         batch_size:      Training batch size.
         seed:            Random seed for weight init and data shuffling.
         force:           Re-train even if a checkpoint exists.
+        balanced:        Class-weighted loss + balanced-accuracy model selection.
+                         Defaults to on for the medical datasets, off elsewhere.
 
     Returns:
         Path to the saved ``.pt`` checkpoint file.
@@ -353,7 +558,12 @@ def get_or_train(
 
     mode_tag = "lp" if freeze_backbone else "ft"   # linear-probe vs fine-tune
     pre_tag  = "pt" if pretrained else "rand"
-    ckpt_name = f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}_seed{seed}.pt"
+    # The learning rate belongs in the name: it is the difference between a working
+    # fine-tune and one that converges to chance, and without it a re-run at a
+    # corrected lr silently returns the broken checkpoint from the cache.
+    lr_tag = f"lr{lr:g}"
+    ckpt_name = (f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}"
+                 f"_{lr_tag}_seed{seed}.pt")
     ckpt_path = ckpt_dir / ckpt_name
 
     if ckpt_path.exists() and not force:
@@ -375,10 +585,39 @@ def get_or_train(
 
     torch.manual_seed(seed)
     model = _build_model(model_name, num_classes, pretrained=pretrained)
-    model = train_model(model, train_loader, num_epochs=num_epochs, lr=lr,
-                        freeze_backbone=freeze_backbone)
 
-    torch.save(model.state_dict(), ckpt_path)
+    # Skewed medical datasets need class-weighted loss and balanced-accuracy model
+    # selection, or training collapses onto the majority class (HAM10000 is ~67%
+    # melanocytic nevus). Without this a seed sweep would silently produce weaker
+    # models than the ones the reported numbers came from.
+    if balanced is None:
+        balanced = dataset in MEDICAL_TRAIN_ROOTS
+    class_weights = None
+    # Every paper dataset selects the checkpoint on val. Class weights stay on
+    # for the skewed medical sets only. The loss, Adam, and cosine schedule
+    # are unchanged; only which images are train versus val changed.
+    val_loader = get_val_loader(dataset, batch_size, data_root) if dataset in PAPER_SPLIT_DATASETS else None
+    if val_loader is None and dataset in PAPER_SPLIT_DATASETS:
+        print(f"  [train] WARNING: no val split for {dataset}; keeping the last epoch")
+    if balanced:
+        from core.device import get_device
+        class_weights = inverse_frequency_weights(train_loader, num_classes, get_device())
+
+    model = train_model(model, train_loader, num_epochs=num_epochs, lr=lr,
+                        freeze_backbone=freeze_backbone,
+                        class_weights=class_weights, val_loader=val_loader,
+                        num_classes=num_classes if val_loader is not None else None)
+
+    # Metadata-wrapped so eval_localization.py / eval_decomposition.py can load these
+    # directly. scripts/ablation_contrastive.py reads either format.
+    torch.save({
+        "state_dict": model.state_dict(),
+        "dataset": dataset,
+        "model_name": model_name,
+        "num_classes": num_classes,
+        "seed": seed,
+        "balanced": bool(balanced),
+    }, ckpt_path)
     print(f"  [train] checkpoint saved: {ckpt_path}")
     return ckpt_path
 
@@ -391,9 +630,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train GAMBIT backbone checkpoints")
     parser.add_argument("--dataset", required=True,
                         choices=["mnist", "cifar10", "pets", "stanford_dogs",
+                                 "ham10000", "brain_tumor",
                                  "colored_mnist", "colored_cifar10", "texture_mnist"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
                         choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",
+                                 "efficientnet_v2_s",
                                  "vit_b_16", "vit_b_32"])
     parser.add_argument("--epochs", dest="num_epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -405,6 +646,13 @@ def main() -> None:
     parser.add_argument("--no-pretrained", dest="pretrained", action="store_false", default=True)
     parser.add_argument("--force", action="store_true", help="Re-train even if checkpoint exists")
     parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument("--ckpt_dir", type=str, default=None,
+                        help="Directory to save checkpoints (default: scripts/out/checkpoints)")
+    parser.add_argument("--balanced", dest="balanced", action="store_true", default=None,
+                        help="Class-weighted loss + balanced-accuracy selection "
+                             "(default: on for medical datasets)")
+    parser.add_argument("--no-balanced", dest="balanced", action="store_false",
+                        help="Plain cross-entropy, keep the last epoch")
     args = parser.parse_args()
 
     ckpt = get_or_train(
@@ -412,11 +660,13 @@ def main() -> None:
         model_name=args.model_name,
         pretrained=args.pretrained,
         data_root=Path(args.data_root) if args.data_root else None,
+        ckpt_dir=Path(args.ckpt_dir) if args.ckpt_dir else None,
         num_epochs=args.num_epochs,
         lr=args.lr,
         freeze_backbone=args.freeze_backbone,
         batch_size=args.batch_size,
         force=args.force,
+        balanced=args.balanced,
     )
     print(f"\nDone. Checkpoint: {ckpt}")
 

@@ -194,3 +194,38 @@ if __name__ == "__main__":
     test_integrated_gradients_regions_provider()
     test_explain_returns_explanation()
     print("All pass conditions OK.")
+
+
+def test_keep_remove_clamp_out_of_range_masks():
+    """keep/remove must not extrapolate when handed a mask outside [0, 1].
+
+    Both are blends against a baseline, so a value above 1 does not mean "keep harder" —
+    it drives the baseline term negative and pushes pixels past the original image, off
+    the data manifold. Callers legitimately produce such masks: ContrastiveObjective
+    evaluates sufficiency on m_unique + m_shared, and each term is an independent sigmoid,
+    so nothing bounds the sum.
+    """
+    torch.manual_seed(0)
+    unit_space = VisionGridUnitSpace(7, 7, baseline="mean")
+    x = torch.rand(2, 3, 28, 28)
+    lo, hi = float(x.min()), float(x.max())
+
+    # A mask summing well past 1, as m_unique + m_shared can.
+    m_over = torch.full((2, 49), 1.8)
+    kept = unit_space.keep(x, m_over)
+    removed = unit_space.remove(x, m_over)
+    for name, out in (("keep", kept), ("remove", removed)):
+        assert float(out.min()) >= lo - 1e-5, f"{name} undershot the input range"
+        assert float(out.max()) <= hi + 1e-5, f"{name} overshot the input range"
+
+    # At exactly 1.0 keep is the identity and remove is the pure baseline; anything
+    # larger must be indistinguishable from 1.0 rather than more extreme.
+    m_one = torch.ones(2, 49)
+    assert torch.allclose(unit_space.keep(x, m_one), kept, atol=1e-6)
+    assert torch.allclose(unit_space.remove(x, m_one), removed, atol=1e-6)
+
+    # Negative masks clamp to 0: keep -> all baseline, remove -> identity.
+    m_neg = torch.full((2, 49), -0.5)
+    assert torch.allclose(unit_space.remove(x, m_neg), x, atol=1e-6)
+    assert torch.allclose(unit_space.keep(x, m_neg), unit_space.keep(x, torch.zeros(2, 49)),
+                          atol=1e-6)
