@@ -249,7 +249,7 @@ def run_shift_matrix(
     ckpt_dir: Optional[Path] = None,
     data_root: Optional[Path] = None,
     out_dir: Optional[Path] = None,
-) -> List[Dict]:
+) -> Tuple[List[Dict], Dict]:
     """Run robust-shortcut eval for every (game_mode, seed) combo.
 
     When ``train=True`` a separate checkpoint is trained for each seed,
@@ -262,6 +262,7 @@ def run_shift_matrix(
         data_root = REPO / "data"
 
     per_seed: Dict[int, Dict[str, Dict]] = {}
+    model_gaps: Dict[int, List[float]] = {}
 
     for seed in seeds:
         torch.manual_seed(seed)
@@ -304,13 +305,14 @@ def run_shift_matrix(
                     dataset_name=dataset_name,
                     out_dir=str(out_dir) if out_dir else None,
                 )
-                per_seed[seed][mode] = {**mean_metrics, "id_ood_gap": mean_gap}
+                per_seed[seed][mode] = mean_metrics
+                model_gaps.setdefault(seed, []).append(mean_gap)
             except Exception as exc:
                 print(f"[WARN] shift/{dataset_name}/{mode}/seed{seed} failed: {exc}")
                 per_seed[seed][mode] = {}
 
     agg_rows = []
-    all_shift_metrics = SHIFT_METRICS + ["id_ood_gap"]
+    all_shift_metrics = list(SHIFT_METRICS)
     for mode in game_modes:
         metric_lists: Dict[str, List[float]] = {m: [] for m in all_shift_metrics}
         for seed in seeds:
@@ -329,10 +331,25 @@ def run_shift_matrix(
 
     csv_name = f"summary_shift_{dataset_name}.csv"
     json_name = f"summary_shift_{dataset_name}.json"
+    gap_means = [sum(v) / len(v) for v in model_gaps.values() if v]
+    gap_mean, gap_std = _mean_std(gap_means)
+    model_property = {
+        "dataset": dataset_name,
+        "id_ood_gap_mean": gap_mean,
+        "id_ood_gap_std": gap_std,
+    }
     save_rows_csv(OUT / csv_name, agg_rows)
-    save_json(OUT / json_name, {"rows": agg_rows, "seeds": seeds, "dataset": dataset_name})
+    save_json(
+        OUT / json_name,
+        {
+            "rows": agg_rows,
+            "seeds": seeds,
+            "dataset": dataset_name,
+            "model_properties": model_property,
+        },
+    )
     print(f"\nShift summary saved to {OUT / csv_name}")
-    return agg_rows
+    return agg_rows, model_property
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +363,7 @@ def write_report(
     datasets: List[str],
     evidence_types: List[str],
     model_name: str = "resnet18",
+    model_properties: Optional[List[Dict]] = None,
 ) -> Path:
     n_seeds = len(seeds)
     seed_note = f"n={n_seeds} seed{'s' if n_seeds > 1 else ''} ({seeds[0]})" if n_seeds == 1 else f"mean ± std, n={n_seeds} seeds {seeds}"
@@ -506,10 +524,11 @@ def write_report(
 
     lines += [
         "Columns: Rob Mean ↑ (robust sufficiency across envs), Rob Var ↓ (stability),",
-        "Sho Gap ↑ (shortcut is ID-specific), Disjoint ↓ (mask separation), Sparse ↓, ID-OOD Gap ↑.",
+        "Sho Gap ↑ (shortcut is ID-specific), Disjoint ↓ (mask separation), Sparse ↓.",
+        "The ID-OOD gap is a property of the model on the full image. It is not a column of this table.",
         "",
-        "| Dataset | Game Mode | Rob Mean ↑ | Rob Var ↓ | Sho Gap ↑ | Disjoint ↓ | Sparse ↓ | ID-OOD Gap ↑ |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Dataset | Game Mode | Rob Mean ↑ | Rob Var ↓ | Sho Gap ↑ | Disjoint ↓ | Sparse ↓ |",
+        "|---|---|---|---|---|---|---|",
     ]
     for row in shift_rows:
         lines.append(
@@ -519,8 +538,22 @@ def write_report(
             f"| {_fmt(row.get('rob_var_mean', float('nan')), row.get('rob_var_std', 0.0), n_seeds=n_seeds)} "
             f"| {_fmt(row.get('sho_gap_mean', float('nan')), row.get('sho_gap_std', 0.0), n_seeds=n_seeds)} "
             f"| {_fmt(row.get('disjoint_mean', float('nan')), row.get('disjoint_std', 0.0), n_seeds=n_seeds)} "
-            f"| {_fmt(row.get('sparse_mean', float('nan')), row.get('sparse_std', 0.0), n_seeds=n_seeds)} "
-            f"| {_fmt(row.get('id_ood_gap_mean', float('nan')), row.get('id_ood_gap_std', 0.0), n_seeds=n_seeds)} |"
+            f"| {_fmt(row.get('sparse_mean', float('nan')), row.get('sparse_std', 0.0), n_seeds=n_seeds)} |"
+        )
+    lines.append("")
+    lines += [
+        "### Model property: ID-OOD gap",
+        "",
+        "Labeled-class logit on the in-distribution image minus the mean over the other environments.",
+        "No explanation mask is applied.",
+        "",
+        "| Dataset | ID-OOD gap |",
+        "|---|---|",
+    ]
+    for prop in model_properties or []:
+        lines.append(
+            f"| {prop.get('dataset', '')} "
+            f"| {_fmt(prop.get('id_ood_gap_mean', float('nan')), prop.get('id_ood_gap_std', 0.0), n_seeds=n_seeds)} |"
         )
     lines.append("")
 
@@ -674,6 +707,7 @@ def main() -> None:
 
     contrastive_rows: List[Dict] = []
     shift_rows: List[Dict] = []
+    model_properties: List[Dict] = []
 
     if not args.skip_contrastive:
         contrastive_rows = run_contrastive_matrix(
@@ -704,7 +738,7 @@ def main() -> None:
     if not args.skip_shift:
         shift_rows = []
         for shift_ds in args.shift_datasets:
-            rows = run_shift_matrix(
+            rows, model_property = run_shift_matrix(
                 game_modes=args.shift_game_modes,
                 seeds=args.seeds,
                 num_images=args.shift_num_images if hasattr(args, "shift_num_images") else args.num_images,
@@ -722,6 +756,7 @@ def main() -> None:
                 out_dir=Path(args.out_dir) if args.out_dir else None,
             )
             shift_rows.extend(rows)
+            model_properties.append(model_property)
 
     write_report(
         contrastive_rows=contrastive_rows,
@@ -730,6 +765,7 @@ def main() -> None:
         datasets=args.datasets,
         evidence_types=args.evidence_types,
         model_name=args.model_name,
+        model_properties=model_properties,
     )
 
 

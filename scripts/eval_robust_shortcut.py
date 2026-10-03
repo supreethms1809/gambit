@@ -27,7 +27,7 @@ from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from instantiations.shift.objective import RobustShortcutObjective
 from instantiations.shift.allocator import RobustShortcutOptimizationAllocator
 from instantiations.shift.biased_data import (
-    ColoredMNIST, env_batch_colored_mnist, compute_id_ood_gap,
+    ColoredMNIST, env_batch_colored_mnist, model_id_ood_gap,
     build_biased_dataset, get_env_batch_fn, BIASED_DATASETS,
 )
 
@@ -295,7 +295,7 @@ def run_eval(
             x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, masks=masks, evidence=evidence, env=env
         )
         all_metrics.append({k: v.item() if hasattr(v, "item") else v for k, v in metrics.items()})
-        gap = compute_id_ood_gap(model, env, unit_space, masks["shortcut"], y)
+        gap = model_id_ood_gap(model, env, y)
         id_ood_gaps.append(gap)
         if not saved_viz:
             _save_mask_visualization(
@@ -325,7 +325,7 @@ def run_eval(
     print("Metrics: rob_mean=%.4f rob_var=%.4f sho_gap=%.4f disjoint=%.4f sparse=%.4f" % (
         mean_metrics["rob_mean"], mean_metrics["rob_var"], mean_metrics["sho_gap"],
         mean_metrics["disjoint"], mean_metrics["sparse"]))
-    print("ID-OOD gap (shortcut mask, quantitative): %.4f" % mean_gap)
+    print("Model property, ID-OOD gap on the full image: %.4f" % mean_gap)
     print("Qualitative: robust mask -> object/digit regions; shortcut mask -> color/background cue.")
     print("Pass: robust tracks object, shortcut tracks background; ID-OOD gap reported.")
 
@@ -350,14 +350,13 @@ def run_eval(
             "lambda_sparse": float(game_cfg.lambda_sparse),
         },
         "scalar_metrics": mean_metrics,
-        "id_ood_gap": float(mean_gap),
+        "model_properties": {"id_ood_gap": float(mean_gap)},
     }
     save_json(summary_json, summary)
 
     scalar_row = {
         "run_name": export_prefix,
         "game_mode": game_cfg.mode,
-        "id_ood_gap": float(mean_gap),
         "lambda_mean": float(game_cfg.lambda_mean),
         "lambda_var": float(game_cfg.lambda_var),
         "lambda_gap": float(game_cfg.lambda_gap),
@@ -372,8 +371,6 @@ def run_eval(
     for idx, m in enumerate(all_metrics):
         row = {"batch_idx": idx}
         row.update(m)
-        if idx < len(id_ood_gaps):
-            row["id_ood_gap"] = float(id_ood_gaps[idx])
         per_batch_rows.append(row)
     save_rows_csv(per_batch_csv, per_batch_rows)
 

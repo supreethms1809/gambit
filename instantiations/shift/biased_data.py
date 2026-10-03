@@ -368,6 +368,23 @@ def get_env_batch_fn(name: str) -> Callable:
 # Shared metric: ID-OOD gap
 # ---------------------------------------------------------------------------
 
+def model_id_ood_gap(
+    model: torch.nn.Module,
+    env: EnvBatch,
+    y: torch.Tensor,
+) -> float:
+    """Logit gap of the labeled class between the in-distribution image and the others.
+
+    The full image is scored. No explanation mask enters, so the number is a
+    property of the model on this environment pair and not a method result.
+    """
+    with torch.no_grad():
+        z_id = model(env.xs[0]).gather(1, y.unsqueeze(1)).squeeze(1)
+        z_ood = [model(xe).gather(1, y.unsqueeze(1)).squeeze(1) for xe in env.xs[1:]]
+        z_ood_mean = torch.stack(z_ood, dim=0).mean(dim=0)
+    return (z_id - z_ood_mean).mean().item()
+
+
 def compute_id_ood_gap(
     model: torch.nn.Module,
     env: EnvBatch,
