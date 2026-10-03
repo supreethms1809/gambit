@@ -75,6 +75,11 @@ class CDEAExplainer:
 
         hypotheses = self.selector.select(logits, probs)
         evidence = self.base_evidence.explain(x, self.model, hypotheses)
+        # Keep the pre-normalization evidence: _normalize rescales every hypothesis to
+        # sum 1, which is what the allocator wants but discards all cross-hypothesis
+        # magnitude. Reporting and visualization need the raw scale to show that a
+        # near-zero-probability foil carries far less evidence than the winner.
+        evidence_raw = evidence
         if self.normalize_evidence:
             evidence = self._normalize(evidence)
 
@@ -104,4 +109,4 @@ class CDEAExplainer:
             attn=attn,
             env=env,
         )
-        return Explanation(hypotheses=hypotheses, masks=masks, metrics=metrics, extras={"tokens": tokens, "attn": attn, "evidence": evidence, "probs": probs})
+        return Explanation(hypotheses=hypotheses, masks=masks, metrics=metrics, extras={"tokens": tokens, "attn": attn, "evidence": evidence, "evidence_raw": evidence_raw, "probs": probs})

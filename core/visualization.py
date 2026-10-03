@@ -372,10 +372,13 @@ def show_explanation_gallery(
     title: str = "CDEA Contrastive Explanation Gallery",
     out_path: Optional[Path] = None,
 ):
-    """Multi-sample gallery: Input | Evidence heatmaps | Unique/Shared overlays.
+    """Multi-sample gallery with two rows per image.
 
-    Each row = one image from the batch.
-    Columns = [Input] [Evidence × K] [Allocated mask × K]
+    For each sample in the batch:
+      Row 1 (masks):    Input | Evidence mask × K | Allocation mask × K
+      Row 2 (overlays): Input | Evidence overlay × K | Allocation overlay × K
+
+    Columns: [Input] [Evidence_cls1 … Evidence_clsK] [Alloc_cls1 … Alloc_clsK]
 
     Color code (colorblind-safe):
         Blue   = unique evidence (class-specific)
@@ -423,28 +426,38 @@ def show_explanation_gallery(
         return (class_names[cls_id] if class_names and cls_id < len(class_names)
                 else f"cls {cls_id}")
 
-    # Layout: Input | Evidence×K | Mask×K
-    # Group evidence columns together, then mask columns together.
+    # Columns: Input | Evidence×K | Allocation×K
     n_cols = 1 + 2 * K
+    # 2 rows per sample: masks row + overlay row
+    n_rows = 2 * n
 
-    # Column headers — short labels, class name only (no long descriptions)
-    col_headers = ["Input"]
-    for k in range(K):
-        col_headers.append(f"Evidence")
-    for k in range(K):
-        col_headers.append(f"Allocation")
-
-    # Build subplot titles: only first row gets headers
-    subplot_titles = []
+    # Build subplot titles — only first sample's mask row gets column headers
+    subplot_titles: List[str] = []
     for b in range(n):
-        for c in range(n_cols):
-            subplot_titles.append(col_headers[c] if b == 0 else "")
+        for _sub_row in range(2):  # 0=mask, 1=overlay
+            for c in range(n_cols):
+                if b == 0 and _sub_row == 0:
+                    # First row: column headers
+                    if c == 0:
+                        subplot_titles.append("Input")
+                    elif c <= K:
+                        subplot_titles.append("Evidence")
+                    else:
+                        subplot_titles.append("Allocation")
+                else:
+                    subplot_titles.append("")
+
+    row_titles: List[str] = []
+    for b in range(n):
+        row_titles.append(f"Sample {b} — mask")
+        row_titles.append(f"Sample {b} — overlay")
 
     fig = make_subplots(
-        rows=n, cols=n_cols,
+        rows=n_rows, cols=n_cols,
         subplot_titles=subplot_titles,
+        row_titles=row_titles,
         horizontal_spacing=0.015,
-        vertical_spacing=0.08 if n <= 4 else 0.05,
+        vertical_spacing=0.03,
     )
 
     for b in range(n):
@@ -453,19 +466,10 @@ def show_explanation_gallery(
         m_shared_b = (mask_to_image(m_shared_all[b], gh, gw, H, W)
                       if m_shared_all is not None else None)
 
-        # --- Col 1: Input image ---
-        # Build annotation text with true label and predicted label
-        hover_parts = []
-        if true_labels is not None:
-            true_id = int(true_labels[b].item())
-            hover_parts.append(f"True: {_name(true_id)}")
-        if probs is not None:
-            pred_id = int(probs[b].argmax().item())
-            pred_p = float(probs[b, pred_id])
-            hover_parts.append(f"Pred: {_name(pred_id)} ({pred_p:.0%})")
-        hover_text = "<br>".join(hover_parts) if hover_parts else "Input"
+        row_mask = 2 * b + 1      # plotly rows are 1-indexed
+        row_over = 2 * b + 2
 
-        # Burn true/pred labels onto the image as a text annotation
+        # --- Input column ---
         img_annotated = _annotate_labels(
             img,
             true_name=(_name(int(true_labels[b].item())) if true_labels is not None else None),
@@ -474,10 +478,15 @@ def show_explanation_gallery(
             correct=((int(true_labels[b].item()) == int(probs[b].argmax().item()))
                      if true_labels is not None and probs is not None else None),
         )
+        # Input in mask row
         fig.add_trace(
-            go.Image(z=img_annotated,
-                     hovertemplate=f"<b>{hover_text}</b><extra></extra>"),
-            row=b + 1, col=1,
+            go.Image(z=img_annotated, hovertemplate="<b>Input</b><extra></extra>"),
+            row=row_mask, col=1,
+        )
+        # Input repeated in overlay row
+        fig.add_trace(
+            go.Image(z=img_annotated, hovertemplate="<b>Input</b><extra></extra>"),
+            row=row_over, col=1,
         )
 
         for k in range(K):
@@ -485,33 +494,55 @@ def show_explanation_gallery(
             cls_name = _name(cls_id)
             cls_prob = (f" ({float(probs[b, cls_id]):.0%})"
                         if probs is not None else "")
+            label = f"{cls_name}{cls_prob}"
 
             # --- Evidence columns (col 2 … K+1) ---
             if evidence_all is not None:
                 ev_k = mask_to_image(evidence_all[b, k], gh, gw, H, W)
-                composited_ev = _composite_heatmap(img, ev_k)
+                # Mask row: raw heatmap (no image underneath)
+                ev_colored = _apply_hot_cmap(ev_k / (ev_k.max() + 1e-8))
+                ev_colored = _burn_text(ev_colored, label, position="top")
+                # Overlay row: heatmap composited on image
+                ev_overlay = _composite_heatmap(img, ev_k)
+                ev_overlay = _burn_text(ev_overlay, label, position="top")
             else:
-                composited_ev = _to_uint8(img)
-            # Burn class name onto evidence image
-            composited_ev = _burn_text(composited_ev, f"{cls_name}{cls_prob}",
-                                       position="top")
+                ev_colored = _to_uint8(img)
+                ev_overlay = _to_uint8(img)
+
             fig.add_trace(
-                go.Image(z=composited_ev,
-                         hovertemplate=f"<b>{cls_name}: evidence</b><extra></extra>"),
-                row=b + 1, col=1 + k + 1,
+                go.Image(z=ev_colored,
+                         hovertemplate=f"<b>{cls_name}: evidence mask</b><extra></extra>"),
+                row=row_mask, col=1 + k + 1,
+            )
+            fig.add_trace(
+                go.Image(z=ev_overlay,
+                         hovertemplate=f"<b>{cls_name}: evidence overlay</b><extra></extra>"),
+                row=row_over, col=1 + k + 1,
             )
 
             # --- Allocation columns (col K+2 … 2K+1) ---
             mk, sh = _unique_shared_from_masks(m_unique_b, k, m_shared_b)
-            composited_ov = _composite_overlay(img, mk, sh)
-            composited_ov = _burn_text(composited_ov, f"{cls_name}{cls_prob}",
-                                        position="top")
+            # Mask row: raw allocation mask (unique/shared overlay on black)
+            alloc_rgba = overlay_rgba(mk, sh, alpha=1.0)
+            alloc_mask = (alloc_rgba[..., :3] * 255).clip(0, 255).astype(np.uint8)
+            alloc_mask = _burn_text(alloc_mask, label, position="top")
+            # Overlay row: allocation composited on image
+            alloc_overlay = _composite_overlay(img, mk, sh)
+            alloc_overlay = _burn_text(alloc_overlay, label, position="top")
+
             fig.add_trace(
-                go.Image(z=composited_ov,
+                go.Image(z=alloc_mask,
                          hovertemplate=(
                              f"<b>{cls_name}: "
                              f"blue=unique / orange=shared</b><extra></extra>")),
-                row=b + 1, col=1 + K + k + 1,
+                row=row_mask, col=1 + K + k + 1,
+            )
+            fig.add_trace(
+                go.Image(z=alloc_overlay,
+                         hovertemplate=(
+                             f"<b>{cls_name}: "
+                             f"blue=unique / orange=shared</b><extra></extra>")),
+                row=row_over, col=1 + K + k + 1,
             )
 
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
@@ -524,14 +555,14 @@ def show_explanation_gallery(
         "<span style='color:#FF9100; font-weight:bold'>■ shared</span> &nbsp;"
         "<span style='color:#9C27B0; font-weight:bold'>■ both</span>"
     )
-    total_w = max(n_cols * 220, 700)
+    total_w = max(n_cols * 240, 700)
     fig.update_layout(
         title_text=f"{title}<br><sup>{legend_html}</sup>",
         title_x=0.5,
-        height=max(260 * n + 80, 340),
+        height=max(240 * n_rows + 80, 400),
         width=total_w,
         showlegend=False,
-        margin=dict(l=10, r=10, t=90, b=20),
+        margin=dict(l=80, r=10, t=90, b=20),
     )
 
     if out_path is not None:
@@ -582,6 +613,8 @@ def show_gradcam_vs_ig(
 
     # Interleave columns per class: Input | [Ev_k  Ov_k] × K
     n_cols = 1 + 2 * K
+    # Two rows per provider: overlay row + mask-only row
+    n_rows = 2 * n_providers
 
     def _lbl(k: int) -> str:
         cls_id = int(hyp_ids[k].item())
@@ -593,18 +626,34 @@ def show_gradcam_vs_ig(
         col_titles.append(f"{_lbl(k)}  — where model looks")
         col_titles.append(f"{_lbl(k)}  — unique vs shared")
 
+    col_titles_mask = [""]
+    for k in range(K):
+        col_titles_mask.append(f"{_lbl(k)}  — evidence (mask)")
+        col_titles_mask.append(f"{_lbl(k)}  — allocation (mask)")
+
     subplot_titles = []
     for p_idx in range(n_providers):
+        # Overlay row titles
         for c_idx in range(n_cols):
             subplot_titles.append(col_titles[c_idx] if p_idx == 0 else "")
+        # Mask-only row titles
+        for c_idx in range(n_cols):
+            subplot_titles.append(col_titles_mask[c_idx] if p_idx == 0 else "")
 
-    fig = make_subplots(rows=n_providers, cols=n_cols,
+    row_titles = []
+    for pname in provider_names:
+        row_titles.append(pname)
+        row_titles.append(f"{pname} (masks)")
+
+    fig = make_subplots(rows=n_rows, cols=n_cols,
                         subplot_titles=subplot_titles,
-                        row_titles=provider_names,
+                        row_titles=row_titles,
                         horizontal_spacing=0.01,
-                        vertical_spacing=0.08)
+                        vertical_spacing=0.04)
 
-    for row, pname in enumerate(provider_names):
+    for p_idx, pname in enumerate(provider_names):
+        overlay_row = 2 * p_idx + 1
+        mask_row = 2 * p_idx + 2
         expl = explanations[pname]
         m_unique = expl.masks["unique"][sample_idx].detach().cpu()
         m_shared_t = expl.masks.get("shared")
@@ -614,16 +663,25 @@ def show_gradcam_vs_ig(
         ev_t = expl.extras.get("evidence")
         ev_b = ev_t[sample_idx].detach().cpu() if ev_t is not None else None
 
+        # --- Overlay row: Input + evidence overlay + allocation overlay ---
         fig.add_trace(
             go.Image(z=_to_uint8(img), name="Input",
                      hovertemplate=f"<b>{pname}: Input</b><extra></extra>"),
-            row=row + 1, col=1,
+            row=overlay_row, col=1,
+        )
+
+        # --- Mask-only row: blank first col ---
+        blank = np.ones_like(img)
+        fig.add_trace(
+            go.Image(z=_to_uint8(blank),
+                     hovertemplate=f"<b>{pname}: (blank)</b><extra></extra>"),
+            row=mask_row, col=1,
         )
 
         for k in range(K):
             cls_lbl = _lbl(k)
 
-            # Evidence column (col 2, 4, 6, …)
+            # Evidence column — overlay (col 2, 4, 6, …)
             if ev_b is not None:
                 ev_k = mask_to_image(ev_b[k], gh, gw, H, W)
                 composited_ev = _composite_heatmap(img, ev_k)
@@ -632,7 +690,7 @@ def show_gradcam_vs_ig(
             fig.add_trace(
                 go.Image(z=composited_ev,
                          hovertemplate=f"<b>{pname} — {cls_lbl}: where model looks</b><extra></extra>"),
-                row=row + 1, col=2 + 2 * k,
+                row=overlay_row, col=2 + 2 * k,
             )
 
             # Overlay column (col 3, 5, 7, …)
@@ -641,7 +699,32 @@ def show_gradcam_vs_ig(
             fig.add_trace(
                 go.Image(z=composited_ov,
                          hovertemplate=f"<b>{pname} — {cls_lbl}: blue=unique / orange=shared</b><extra></extra>"),
-                row=row + 1, col=3 + 2 * k,
+                row=overlay_row, col=3 + 2 * k,
+            )
+
+            # --- Mask-only row: evidence mask on white ---
+            if ev_b is not None:
+                ev_k = mask_to_image(ev_b[k], gh, gw, H, W)
+                ev_colored = _apply_hot_cmap(ev_k / (ev_k.max() + 1e-8))
+            else:
+                ev_colored = _to_uint8(blank)
+            fig.add_trace(
+                go.Image(z=ev_colored,
+                         hovertemplate=f"<b>{pname} — {cls_lbl}: evidence mask</b><extra></extra>"),
+                row=mask_row, col=2 + 2 * k,
+            )
+
+            # Mask-only row: allocation mask on white
+            mk, sh = _unique_shared_from_masks(m_unique_b, k, m_shared_b)
+            rgba = overlay_rgba(mk, sh)
+            # Render RGBA onto white background
+            a = rgba[..., 3:4]
+            color = rgba[..., :3]
+            mask_on_white = (np.ones_like(img) * (1 - a) + color * a)
+            fig.add_trace(
+                go.Image(z=_to_uint8(mask_on_white),
+                         hovertemplate=f"<b>{pname} — {cls_lbl}: allocation mask</b><extra></extra>"),
+                row=mask_row, col=3 + 2 * k,
             )
 
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
@@ -656,7 +739,7 @@ def show_gradcam_vs_ig(
     fig.update_layout(
         title_text=f"{title}<br><sup>{legend_html}</sup>",
         title_x=0.5,
-        height=max(300 * n_providers, 320),
+        height=max(300 * n_rows, 320),
         width=(1 + 2 * K) * 260,
         showlegend=False,
         margin=dict(l=80, r=10, t=90, b=20),

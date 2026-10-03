@@ -46,8 +46,24 @@ def save_json(path: Path, data: Mapping[str, Any]) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(to_serializable(dict(data)), f, indent=2, sort_keys=True)
+        # allow_nan=False turns NaN/Infinity into an error rather than the bare
+        # `NaN` literal Python emits by default. That literal is not valid JSON —
+        # JavaScript, jq and most other readers reject the whole file — so a single
+        # undefined std silently poisons a result file. _json_safe maps them to null.
+        json.dump(_json_safe(to_serializable(dict(data))), f, indent=2,
+                  sort_keys=True, allow_nan=False)
     return path
+
+
+def _json_safe(obj: Any) -> Any:
+    """Replace NaN/Infinity with None so the output is valid JSON everywhere."""
+    if isinstance(obj, float):
+        return None if (obj != obj or obj in (float("inf"), float("-inf"))) else obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def save_rows_csv(
