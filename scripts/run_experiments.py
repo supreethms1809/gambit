@@ -100,14 +100,19 @@ def run_contrastive_matrix(
     ig_steps: int,
     lambda_disjoint: float,
     lambda_mass: float,
+    lambda_shared_sparse: float,
     model_name: str = "resnet18",
     pretrained: bool = True,
     train: bool = False,
     train_epochs: int = 10,
+    train_lr: float = 1e-3,
     freeze_backbone: bool = True,
     train_batch_size: int = 32,
     ckpt_dir: Optional[Path] = None,
     data_root: Optional[Path] = None,
+    game_mode: Optional[str] = None,
+    lr: float = 0.3,
+    out_dir: Optional[Path] = None,
 ) -> List[Dict]:
     """Run ablation for every (dataset, evidence, seed) combo. Return aggregated rows.
 
@@ -139,6 +144,7 @@ def run_contrastive_matrix(
                     data_root=data_root,
                     ckpt_dir=ckpt_dir,
                     num_epochs=train_epochs,
+                    lr=train_lr,
                     freeze_backbone=freeze_backbone,
                     batch_size=train_batch_size,
                     seed=seed,
@@ -166,8 +172,13 @@ def run_contrastive_matrix(
                         ig_steps=ig_steps,
                         lambda_disjoint=lambda_disjoint,
                         lambda_mass=lambda_mass,
+                        lambda_shared_sparse=lambda_shared_sparse,
                         export_prefix=prefix,
                         checkpoint=ckpt,
+                        game_mode=game_mode,
+                        num_steps=num_steps,
+                        lr=lr,
+                        out_dir=out_dir,
                     )
                     # run_ablation returns dict method -> list of per-batch dicts
                     per_seed[seed][dataset][evidence] = {
@@ -232,8 +243,10 @@ def run_shift_matrix(
     train: bool = False,
     train_epochs: int = 10,
     train_batch_size: int = 32,
+    train_lr: float = 1e-3,
     ckpt_dir: Optional[Path] = None,
     data_root: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
 ) -> List[Dict]:
     """Run robust-shortcut eval for every (game_mode, seed) combo.
 
@@ -263,6 +276,7 @@ def run_shift_matrix(
                 data_root=data_root,
                 ckpt_dir=ckpt_dir,
                 num_epochs=train_epochs,
+                lr=train_lr,
                 freeze_backbone=False,  # full fine-tune: model must learn the shortcut
                 batch_size=train_batch_size,
                 seed=seed,
@@ -286,6 +300,7 @@ def run_shift_matrix(
                     pretrained=pretrained,
                     checkpoint=seed_checkpoint,
                     dataset_name=dataset_name,
+                    out_dir=str(out_dir) if out_dir else None,
                 )
                 per_seed[seed][mode] = {**mean_metrics, "id_ood_gap": mean_gap}
             except Exception as exc:
@@ -534,7 +549,7 @@ def main() -> None:
     parser.add_argument(
         "--datasets", nargs="+",
         default=["mnist", "cifar10", "pets", "stanford_dogs"],
-        choices=["mnist", "cifar10", "pets", "stanford_dogs"],
+        choices=["mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor"],
     )
     parser.add_argument(
         "--evidence", nargs="+", dest="evidence_types",
@@ -551,6 +566,27 @@ def main() -> None:
                         help="Integrated Gradients interpolation steps")
     parser.add_argument("--lambda_disjoint", type=float, default=0.5)
     parser.add_argument("--lambda_mass", type=float, default=2.0)
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
+                        help="L1 penalty on the shared mask. At 0.0 it is in no penalty term at "
+                             "all and inflates to blanket ~46%% of the grid at 0.99x "
+                             "chance on base-evidence capture. See "
+                             "docs/MEDICAL_RESULTS.md section 9a.")
+    parser.add_argument("--game_mode", type=str, default=None,
+                        choices=["cooperative", "mixed", "competitive"],
+                        help="Contrastive game preset for the ablations. Omit for the "
+                             "historical config (no shared mask); 'mixed' matches "
+                             "eval_localization.py so both describe one configuration.")
+    parser.add_argument("--lr", type=float, default=0.3,
+                        help="Allocator learning rate (eval_localization.py uses 0.2)")
+    parser.add_argument("--out_dir", type=str, default=None,
+                        help="Directory for per-seed result files (default: scripts/out)")
+    parser.add_argument("--ckpt_dir", type=str, default=None,
+                        help="Directory for trained checkpoints "
+                             "(default: scripts/out/checkpoints)")
+    parser.add_argument("--train_lr", type=float, default=1e-3,
+                        help="Training learning rate. Use 1e-4 for full fine-tuning of a "
+                             "pretrained backbone — 1e-3 destroys pretrained features and "
+                             "converges to chance (this is the medical recipe's value).")
     parser.add_argument(
         "--model", dest="model_name", default="resnet18",
         choices=_RUN_EXPERIMENT_MODELS,
@@ -592,6 +628,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Journal summaries follow --out_dir too, so a run's per-seed files and its
+    # rollup stay together instead of splitting across two trees.
+    if args.out_dir:
+        global OUT
+        OUT = Path(args.out_dir) / "journal"
+
     if args.quick:
         args.seeds = [0]
         args.num_images = 32
@@ -621,7 +663,7 @@ def main() -> None:
              if args.train else ""))
     print("=" * 60)
 
-    ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
+    ckpt_dir = Path(args.ckpt_dir) if args.ckpt_dir else (REPO / "scripts" / "out" / "checkpoints")
     data_root = REPO / "data"
 
     if args.train and not args.pretrained:
@@ -641,14 +683,19 @@ def main() -> None:
             ig_steps=args.ig_steps,
             lambda_disjoint=args.lambda_disjoint,
             lambda_mass=args.lambda_mass,
+            lambda_shared_sparse=args.lambda_shared_sparse,
             model_name=args.model_name,
             pretrained=args.pretrained,
             train=args.train,
             train_epochs=args.train_epochs,
+            train_lr=args.train_lr,
             freeze_backbone=args.freeze_backbone,
             train_batch_size=args.train_batch_size,
             ckpt_dir=ckpt_dir,
             data_root=data_root,
+            game_mode=args.game_mode,
+            lr=args.lr,
+            out_dir=Path(args.out_dir) if args.out_dir else None,
         )
 
     if not args.skip_shift:
@@ -666,8 +713,10 @@ def main() -> None:
                 train=args.train,
                 train_epochs=args.train_epochs,
                 train_batch_size=args.train_batch_size,
+                train_lr=args.train_lr,
                 ckpt_dir=ckpt_dir,
                 data_root=data_root,
+                out_dir=Path(args.out_dir) if args.out_dir else None,
             )
             shift_rows.extend(rows)
 
