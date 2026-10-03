@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p0-hygiene`. Pull request: https://github.com/supreethms1809/gambit/pull/1
+Branch: `paper/p1-formulation`. The hygiene pull request is merged: https://github.com/supreethms1809/gambit/pull/1
 
 ## Stage status
 
@@ -11,8 +11,9 @@ Branch: `paper/p0-hygiene`. Pull request: https://github.com/supreethms1809/gamb
 | S02 | done | `93aa355`, `49ffdc7` | Seeded subsets, three-way splits, test lock, interaction moved to the input device. |
 | S03 | done | `46b1bfe` | Provenance in `save_json`, `NormalizedModel`, `--final` refuses a dirty tree. |
 | S04 | done | `da589bb` | `evaluation/` scorer. Eval scripts import it. Throughput measured; see below. |
-| S05 | todo | | Equation audit. Next session. |
-| S06–S28 | todo | | Not started. |
+| S05 | done | `fd447a1`, `3b979ae` | One overlap weight, shared-sparse default 0.25, shift mass target, equation audit. |
+| S06 | todo | | Degenerate-optimum checks D1–D7. Next session. |
+| S07–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -22,11 +23,15 @@ Branch: `paper/p0-hygiene`. Pull request: https://github.com/supreethms1809/gamb
 - 2026-10-03. Checkpoint selection uses that val split for every paper dataset. Medical selection no longer reads the old holdout folders. Adam, cosine schedule, and cross-entropy are unchanged. Class weights for the medical sets are computed from the train subset.
 - 2026-10-03. The throughput benchmark used randomly initialised ResNet-50 and ViT-B/16. Weights do not change the flop count, and ResNet-50 ImageNet weights were not downloaded.
 - 2026-10-03. Provisional image budget, not frozen and not written into an eval plan: contrastive ResNet-50 `n=200`, contrastive ViT `n=64`, shift ResNet-50 `n=128`, shift ViT `n=32`. Revise after one timed CDEA cell. At 24.8 model steps/s, 200 images in batches of 4 is 50 batches; 50 allocator steps is about a minute per method before heavier baselines.
+- 2026-10-03. CDEA means Contrastive Decomposition via Evidence Allocation. The method is Adam on the mask logits for a fixed number of steps, with the classifier frozen. Pairwise overlap has one weight, `lambda_overlap`. `lambda_disjoint` on the contrastive allocator is rejected. The shift game keeps its own product weight.
+- 2026-10-03. Contrastive `kept_logit` is the raw logit \(z_k\). The returned key `suff` is an alias of that number. The shift quantity is the baseline-subtracted kept logit, \(z - z_0\).
+- 2026-10-03. `lambda_shared_sparse` defaults to 0.25, including the script flags that used to pass 0. That closes degenerate route D1. `RobustShortcutObjective.lambda_mass` defaults to 0.1 with target mass `max(1, R / 49)` per mask.
+- 2026-10-03. These changes invalidate the ablation `suff` and `overlap` columns, any contrastive run that applied both overlap weights, and any shared mask trained at `lambda_shared_sparse=0`. The map is `docs/paper/EQUATION_AUDIT.md`.
 
 ## Open issues
 
 - Stored numbers under `results/` are pre-audit. The ablation tables are invalid: they used a class-ordered prefix, and pets/dogs eval included training images. Do not quote them.
-- `lambda_shared_sparse` still defaults to 0. Phase 1 (S05) changes that.
+- S05 invalidates stored ablation `suff` and `overlap` columns. Those files were already pre-audit.
 - `docs/paper/EVAL_PLAN.md` does not exist. The test split stays locked.
 - S07 datasets (CIFAR-100, Oxford-IIIT Pet-37, CUB-200, ImageNet-S) are not downloaded. Ask before downloading.
 - No background jobs are running.
@@ -40,24 +45,22 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
 
-## Exit check (S04)
+## Exit check (S05)
 
 ```
-49 passed, 8 warnings in 1.71s
+55 passed, 8 warnings in 2.19s
 ```
 
-`git log --oneline -5` at the scorer commit:
+`git log --oneline -5`:
 
 ```
-da589bb Score every method with one mask conversion, one removal operator, and one null.
-49ffdc7 Give every dataset a train/val/test split and stop eval from reading a class prefix.
-46b1bfe Record provenance on every result file and normalise images inside the model.
-93aa355 Move the interaction module onto the input device before it runs.
-a449b54 Add the paper plan and the session protocol so the next chat can find the next stage.
+3b979ae Record the equation-to-code map for the joint CDEA loss.
+fd447a1 Count pairwise overlap once and close the shared-mask blanket.
+301b259 Merge pull request #1 from supreethms1809/paper/p0-hygiene
+08ed424 Record the hygiene pull request in the progress log.
+2c500ba Record S01–S04 as done and point the next session at the equation audit.
 ```
 
 ## Next session
 
-Stage **S05**. First step: read `instantiations/contrastive/objective.py`, `instantiations/contrastive/allocator.py`, and `instantiations/shift/objective.py`, and write `docs/paper/EQUATION_AUDIT.md` with a file:line for each term. Do not change a default until that table exists. The overlap term and `_disjoint_penalty` are the same quantity and should become one term. `lambda_shared_sparse` should default above 0 only after the audit says which degenerate route that closes.
-
-The test split is still locked. Do not pass `--final`. Do not download a dataset.
+Stage **S06**. Degenerate-optimum checks D1–D7 on the val split of CIFAR-10 and HAM10000. Write `results/paper/degenerate/` and a short report. Every route is closed, or it is closed by a named constraint and recorded. Val only. Do not pass `--final`. Do not download a dataset. The formulation map is `docs/paper/EQUATION_AUDIT.md`.
