@@ -56,6 +56,7 @@ LEGACY_TEST_ROOTS = {
 }
 PAPER_SPLIT_DATASETS = {
     "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
+    "cifar100", "oxford_pets", "cub200",
 }
 
 
@@ -166,6 +167,15 @@ def get_train_loader(
         ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
         num_classes = len(ds.classes)
         ds = _paper_subset(ds, "pets", "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
+
+    if dataset in {"cifar100", "oxford_pets", "cub200"}:
+        from evaluation.paper_datasets import open_unsplit
+
+        t = _make_tv_transforms(image_size, augment=True)
+        ds = open_unsplit(dataset, "train", data_root, transform=t)
+        num_classes = len(set(ds.targets))
+        ds = _paper_subset(ds, dataset, "train")
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset == "stanford_dogs":
@@ -336,6 +346,10 @@ def get_val_loader(
         ds = MNIST(root=str(data_root), train=True, download=False, transform=t)
     elif dataset == "cifar10":
         ds = CIFAR10(root=str(data_root), train=True, download=False, transform=t)
+    elif dataset in {"cifar100", "oxford_pets", "cub200"}:
+        from evaluation.paper_datasets import open_unsplit
+
+        ds = open_unsplit(dataset, "val", data_root, transform=t)
     else:
         ds = ImageFolder(root=str(data_root / root_rel), transform=t)
     ds = _paper_subset(ds, dataset, "val")
@@ -629,8 +643,8 @@ def get_or_train(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train GAMBIT backbone checkpoints")
     parser.add_argument("--dataset", required=True,
-                        choices=["mnist", "cifar10", "pets", "stanford_dogs",
-                                 "ham10000", "brain_tumor",
+                        choices=["mnist", "cifar10", "cifar100", "pets", "oxford_pets",
+                                 "stanford_dogs", "cub200", "ham10000", "brain_tumor",
                                  "colored_mnist", "colored_cifar10", "texture_mnist"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
                         choices=["resnet18", "resnet34", "mobilenet_v2", "efficientnet_b0",

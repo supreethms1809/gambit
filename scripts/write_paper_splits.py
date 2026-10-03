@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import sys
 from pathlib import Path
+import argparse
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -189,7 +190,91 @@ def _brain_patient_ids() -> dict[str, str]:
     return out
 
 
+def _per_class_torchvision(name: str, train_ds, test_ds, protocol: str, roots: dict) -> dict:
+    from evaluation.paper_datasets import label_list, require_every_class
+    from evaluation.splits import per_class_val_carve
+
+    train_labels = label_list(train_ds)
+    test_labels = label_list(test_ds)
+    n_classes = len(set(train_labels))
+    label_of = {i: train_labels[i] for i in range(len(train_labels))}
+    train_idx, val_idx = per_class_val_carve(range(len(train_ds)), label_of)
+    test_idx = list(range(len(test_ds)))
+    require_every_class(train_labels, train_idx, n_classes, "train")
+    require_every_class(train_labels, val_idx, n_classes, "val")
+    require_every_class(test_labels, test_idx, n_classes, "test")
+    return _spec(
+        name,
+        protocol,
+        roots,
+        {"train": train_idx, "val": val_idx, "test": test_idx},
+        {"train": len(train_ds), "val": len(train_ds), "test": len(test_ds)},
+    )
+
+
+def _cifar100() -> dict:
+    from torchvision.datasets import CIFAR100
+
+    train = CIFAR100(root=str(DATA), train=True, download=False)
+    test = CIFAR100(root=str(DATA), train=False, download=False)
+    return _per_class_torchvision(
+        "cifar100",
+        train,
+        test,
+        "official test set; val is 10% of each class in the official train set",
+        {"train": "train", "val": "train", "test": "test"},
+    )
+
+
+def _oxford_pets() -> dict:
+    from evaluation.paper_datasets import open_unsplit
+
+    train = open_unsplit("oxford_pets", "train", DATA)
+    test = open_unsplit("oxford_pets", "test", DATA)
+    return _per_class_torchvision(
+        "oxford_pets",
+        train,
+        test,
+        "official test.txt; val is 10% of each breed in trainval.txt. This is the 37-breed set, not cats-vs-dogs.",
+        {"train": "oxford-iiit-pet", "val": "oxford-iiit-pet", "test": "oxford-iiit-pet"},
+    )
+
+
+def _cub200() -> dict:
+    from evaluation.paper_datasets import cub_train_flags, label_list, open_unsplit, require_every_class
+    from evaluation.splits import per_class_val_carve
+
+    ds = open_unsplit("cub200", "train", DATA)
+    labels = label_list(ds)
+    flags = cub_train_flags(DATA)
+    if len(flags) != len(ds):
+        raise RuntimeError(f"CUB split file has {len(flags)} rows, images list has {len(ds)}")
+    train_pool = [i for i in range(len(ds)) if flags[i + 1] == 1]
+    test_idx = [i for i in range(len(ds)) if flags[i + 1] == 0]
+    label_of = {i: labels[i] for i in train_pool}
+    train_idx, val_idx = per_class_val_carve(train_pool, label_of)
+    n_classes = 200
+    require_every_class(labels, train_idx, n_classes, "train")
+    require_every_class(labels, val_idx, n_classes, "val")
+    require_every_class(labels, test_idx, n_classes, "test")
+    return _spec(
+        "cub200",
+        "official train_test_split.txt; val is 10% of each class inside the official train images",
+        {"train": "CUB_200_2011", "val": "CUB_200_2011", "test": "CUB_200_2011"},
+        {"train": train_idx, "val": val_idx, "test": test_idx},
+        {"train": len(ds), "val": len(ds), "test": len(ds)},
+    )
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Write data/splits/<dataset>.json")
+    parser.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="Dataset names to write. Default: the original six plus the S07 sets.",
+    )
+    args = parser.parse_args()
     jobs = [
         ("mnist", lambda: _torchvision("mnist")),
         ("cifar10", lambda: _torchvision("cifar10")),
@@ -197,7 +282,16 @@ def main() -> None:
         ("stanford_dogs", lambda: _imagefolder("stanford_dogs", "stanford_dogs/images/Images")),
         ("ham10000", _ham),
         ("brain_tumor", _brain),
+        ("cifar100", _cifar100),
+        ("oxford_pets", _oxford_pets),
+        ("cub200", _cub200),
     ]
+    if args.only:
+        wanted = set(args.only)
+        jobs = [(name, build) for name, build in jobs if name in wanted]
+        missing = wanted - {name for name, _ in jobs}
+        if missing:
+            raise SystemExit(f"unknown dataset: {sorted(missing)}")
     for name, build in jobs:
         print(f"writing {name}")
         spec = build()
