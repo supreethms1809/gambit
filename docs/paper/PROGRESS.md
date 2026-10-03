@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p2-shift-data`.
+Branch: `paper/p2-training`.
 
 ## Stage status
 
@@ -15,7 +15,8 @@ Branch: `paper/p2-shift-data`.
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
 | S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
-| S09–S28 | todo | | Not started. |
+| S09 | launched | `1981031` | Training queue is running. See the background job below. |
+| S10–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -39,6 +40,8 @@ Branch: `paper/p2-shift-data`.
 - 2026-10-03. Planted-patch CIFAR-10 has two patches. The environments are present, moved, and removed, on the CIFAR-10 paper indices. The two-patch recovery metric stays in S17.
 - 2026-10-03. ColoredMNIST OOD views recolor the digit recovered by inverting the label hue. The previous view averaged the colored channels, which scales the digit by the mean of the hue. That invalidates stored ColoredMNIST environment views built the old way. Those runs are pre-audit. Stanford Dogs background restyling is unchanged (`make_env_fn`).
 - 2026-10-03. The val contact sheet was inspected. The same bird sits on a forest photo and a beach photo, with the mask on that bird. The two CIFAR patches move and then disappear. A ColoredMNIST digit keeps its shape across three hues. An ImageNet-9 dog keeps its pose across original, mixed-same, and mixed-rand backgrounds.
+- 2026-10-03. Paper training is an ImageNet linear probe for the contrastive datasets (frozen backbone, Adam, cosine schedule, cross-entropy, lr 1e-3, 15 epochs). Shift datasets are a full fine-tune at lr 1e-4. Checkpoint selection stays val balanced accuracy. ViT-B/16 uses batch 16. ResNet-50 linear probes use batch 32. Shift fine-tunes use batch 16. Waterbirds also uses class-weighted loss. Seeds are 0–4. ImageNet-S is not in the grid.
+- 2026-10-03. ColoredMNIST colors are fixed with seed 43, and training uses the MNIST paper train indices. Older ColoredMNIST checkpoints were fit on the full 60k training pool, including the val images. Those checkpoints are not the paper models.
 
 ## Open issues
 
@@ -48,7 +51,7 @@ Branch: `paper/p2-shift-data`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- No background jobs are running.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. First cell: CIFAR-10 ResNet-50 linear probe, seed 0, on MPS.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -59,14 +62,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
 
-## Exit check (S08)
+## Exit check (S09)
 
 ```
-74 passed, 8 warnings in 9.06s
+80 passed, 8 warnings in 6.01s
 ```
 
-`tests/test_shift_pairs.py` checks the recolor, the disjoint patch move, the ImageNet-9 foreground key, and the on-disk Waterbirds and ImageNet-9 val pairs. The contact sheet is `results/paper/shift_pairs/preview.png` (local, not committed).
+`scripts/model_table.py` scored the existing CIFAR-10 ResNet-18 val checkpoint and wrote `results/paper/model_table/smoke.json`. That file is a check of the script, not a paper-table row.
 
 ## Next session
 
-Stage **S09**. Launch training: 5 seeds × datasets × backbones, in the background, and a script for the model table. Val selection only. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Stage **S10**. Baseline harness. Leave the training queue running and check `results/paper/logs/train/driver.log` before starting. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
