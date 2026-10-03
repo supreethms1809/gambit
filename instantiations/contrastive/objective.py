@@ -24,12 +24,35 @@ class ContrastiveObjective:
         lambda_overlap: float = 0.2,
         lambda_mass: float = 0.1,
         attn_weight_blend: float = 0.5,
+        mass_ref_regions: int = 49,
+        lambda_shared_sparse: float = 0.0,
     ):
         self.lambda_suff = lambda_suff
         self.lambda_margin = lambda_margin
         self.lambda_sparse = lambda_sparse
         self.lambda_overlap = lambda_overlap
         self.lambda_mass = lambda_mass
+        # Normalized evidence sums to ~1.0 whatever the grid, so an unscaled mass
+        # target means the mask covers a constant *absolute* amount — 1/49 of a 7x7
+        # grid but only 1/784 of a 28x28 one, i.e. 16x sparser in relative terms.
+        # Measured consequences of that dilution: HAM10000 localization fell 0.585 ->
+        # 0.446 going 7x7 -> 28x28, and the decomposition's recovery dropped from 84%
+        # to 38% of full spread because keep(x, m) became mostly baseline.
+        #
+        # Scaling the target by R / mass_ref_regions makes the budget a constant
+        # *fraction* of the grid instead. The default reference is 49 (7x7), so every
+        # existing 7x7 result is bit-for-bit unchanged.
+        #
+        # The scale is clamped at >= 1.0, i.e. it only ever grows the budget. Dilution
+        # at fine grids is the measured failure; coarse grids (the 4x4 smallcnn path)
+        # show no such problem, and scaling them *down* would silently change working
+        # results to fix nothing.
+        if mass_ref_regions <= 0:
+            raise ValueError("mass_ref_regions must be > 0")
+        self.mass_ref_regions = mass_ref_regions
+        if lambda_shared_sparse < 0:
+            raise ValueError("lambda_shared_sparse must be >= 0")
+        self.lambda_shared_sparse = lambda_shared_sparse
         if not (0.0 <= attn_weight_blend <= 1.0):
             raise ValueError("attn_weight_blend must be in [0, 1]")
         self.attn_weight_blend = attn_weight_blend
@@ -126,7 +149,44 @@ class ContrastiveObjective:
 
         # Sparsity: L1 of masks (averaged over K then batch)
         sparse_per_batch = m_unique.abs().sum(dim=-1).mean(dim=1)
-        target_mass = evidence.sum(dim=-1).detach()  # (B, K), typically 1.0 after normalization
+
+        # The shared mask appears in m_tot, so growing it always raises sufficiency and
+        # margin — more of the image is kept — but it was in no penalty term at all. Its
+        # only brake was the allocator's partition cap, which never binds on average
+        # (mean region occupancy 0.56 against a cap of 1.0). Left unpenalized it inflates
+        # into content-free background. Measured over 96 HAM10000 val images, 7x7 grid:
+        #
+        #                        lambda_shared_sparse=0.0   =0.25
+        #   shared mass                      22.56 / 49      2.76 / 49
+        #   regions above 0.5                     47.2%           3.5%
+        #   base evidence captured / area    0.99x chance   1.48x chance
+        #
+        # That last row is the artifact itself: at 0.0 the shared mask captures base
+        # evidence at *exactly* its own area fraction, i.e. it is uncorrelated with the
+        # evidence field it is supposed to be allocating. It is a blanket, not a mask.
+        # This is the "evidence appearing where there is nothing" seen in the figures,
+        # and it also made `cdea_shared` scoring at chance on the lesion metric
+        # near-tautological: a blanket covering half the frame scores its area fraction
+        # by construction. The unique masks were never the problem — they sit at 3.4x
+        # chance on both settings.
+        #
+        # Defaults to 0.0 so existing runs reproduce exactly; set it to constrain shared.
+        #
+        # The L1 is divided by mass_scale for the same reason target_mass is multiplied by
+        # it: so the coefficient means a constant *fraction* of the frame rather than a
+        # constant absolute mass. Without this division a value tuned at 7x7 crushes the
+        # shared mask at fine grids — measured on brain tumor at lambda 0.25, shared held
+        # 4.66% of a 7x7 grid but only 0.77% of a 28x28 one, a 6x harsher constraint, while
+        # unique (which is scaled) held 2.0% at both. That made a resolution sweep at fixed
+        # lambda a comparison between two different experiments, and it collapsed
+        # cdea_unique at 28x28 in a way that looked like a finding about the method.
+        mass_scale = max(1.0, m_unique.shape[-1] / float(self.mass_ref_regions))
+        shared_sparse_per_batch = (m_shared_eff.abs().sum(dim=-1) / mass_scale
+                                   if m_shared is not None
+                                   else torch.zeros_like(sparse_per_batch))
+        # (B, K), ~1.0 after normalization, then scaled so the budget is a constant
+        # fraction of the grid rather than a constant absolute mass (see __init__).
+        target_mass = evidence.sum(dim=-1).detach() * mass_scale
         mass_dev_per_batch = (m_unique.sum(dim=-1) - target_mass).abs().mean(dim=1)
 
         # Mask invalid positions for suff and margin
@@ -170,6 +230,7 @@ class ContrastiveObjective:
             - (self.lambda_suff * suff_mean.mean() + self.lambda_margin * margin_mean.mean())
             + self.lambda_overlap * overlap_per_batch.mean()
             + self.lambda_sparse * sparse_per_batch.mean()
+            + self.lambda_shared_sparse * shared_sparse_per_batch.mean()
             + self.lambda_mass * mass_dev_per_batch.mean()
         )
 
@@ -179,6 +240,7 @@ class ContrastiveObjective:
             "margin": margin_mean.mean(),
             "overlap": overlap_per_batch.mean(),
             "sparse": sparse_per_batch.mean(),
+            "shared_sparse": shared_sparse_per_batch.mean(),
             "mass_dev": mass_dev_per_batch.mean(),
             "split_shared_only_logits_topm": split_shared_logits,
             "split_shared_only_probs_topm": split_shared_probs,
