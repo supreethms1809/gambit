@@ -207,7 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 # Others
-data/
+data/*
+!data/splits/
+!data/splits/**
 .claude/
 
 # Generated experiment outputs (run scripts/run_experiments.py to regenerate)
@@ -228,4 +230,5 @@ results/**/models/
 results/**/*.png
 results/**/*.pdf
 results/**/*.sh
+results/paper/logs/
 cdae_extendedAbs/*.docx

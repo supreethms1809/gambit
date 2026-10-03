@@ -47,10 +47,15 @@ MEDICAL_TRAIN_ROOTS = {
     "brain_tumor": Path("brain_tumor") / "Training",
 }
 
-# Held-out splits, used for balanced-accuracy model selection on the medical sets.
-MEDICAL_VAL_ROOTS = {
+# These folders are the paper TEST split (the old grouped holdout). Checkpoint
+# selection must not read them. Val is a grouped carve inside the train folder,
+# recorded in data/splits/.
+LEGACY_TEST_ROOTS = {
     "ham10000": Path("ham10000") / "val",
     "brain_tumor": Path("brain_tumor") / "Testing",
+}
+PAPER_SPLIT_DATASETS = {
+    "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
 }
 
 
@@ -101,6 +106,33 @@ def _make_tv_transforms(image_size: int, grayscale_to_rgb: bool = False,
     return transforms.Compose(ops)
 
 
+def _paper_subset(ds, dataset: str, split: str):
+    """Indices from data/splits. Test is refused here: training never requests it."""
+    from torch.utils.data import Subset
+
+    from evaluation.splits import load_indices
+
+    if split == "test":
+        raise RuntimeError("training and checkpoint selection cannot read the test split")
+    indices = load_indices(dataset, split, final=False, n_items=len(ds))
+    return Subset(ds, indices)
+
+
+def _subset_targets(ds) -> Optional[list]:
+    """Labels of a dataset or a Subset, without a pass over the images."""
+    from torch.utils.data import Subset
+
+    if isinstance(ds, Subset):
+        inner = _subset_targets(ds.dataset)
+        if inner is None:
+            return None
+        return [inner[i] for i in ds.indices]
+    targets = getattr(ds, "targets", None)
+    if targets is None:
+        return None
+    return [int(t) for t in targets]
+
+
 def get_train_loader(
     dataset: str,
     batch_size: int,
@@ -108,7 +140,7 @@ def get_train_loader(
     image_size: int = TV_INPUT_SIZE,
 ) -> Tuple[torch.utils.data.DataLoader, int]:
     """Return (train_loader, num_classes) for the given dataset."""
-    from torch.utils.data import DataLoader, Subset, random_split
+    from torch.utils.data import DataLoader
     from torchvision.datasets import MNIST, CIFAR10, ImageFolder
 
     if dataset == "mnist":
@@ -120,34 +152,36 @@ def get_train_loader(
             # No Normalize: every eval/explanation path here consumes raw [0,1].
         ])
         ds = MNIST(root=str(data_root), train=True, download=True, transform=t)
+        ds = _paper_subset(ds, "mnist", "train")
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     if dataset == "cifar10":
         t = _make_tv_transforms(image_size, augment=True)
         ds = CIFAR10(root=str(data_root), train=True, download=True, transform=t)
+        ds = _paper_subset(ds, "cifar10", "train")
         return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), 10
 
     if dataset == "pets":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
-        n_train = int(0.8 * len(ds))
-        train_ds, _ = random_split(ds, [n_train, len(ds) - n_train],
-                                   generator=torch.Generator().manual_seed(42))
-        return DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, "pets", "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset == "stanford_dogs":
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
-        n_train = int(0.8 * len(ds))
-        train_ds, _ = random_split(ds, [n_train, len(ds) - n_train],
-                                   generator=torch.Generator().manual_seed(42))
-        return DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, "stanford_dogs", "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset in MEDICAL_TRAIN_ROOTS:
         # Pre-split medical datasets: train on the train/Training split only.
         t = _make_tv_transforms(image_size, augment=True)
         ds = ImageFolder(root=str(data_root / MEDICAL_TRAIN_ROOTS[dataset]), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), len(ds.classes)
+        num_classes = len(ds.classes)
+        ds = _paper_subset(ds, dataset, "train")
+        return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0), num_classes
 
     if dataset == "colored_cifar10":
         from instantiations.shift.biased_data import ColoredCIFAR10
@@ -284,18 +318,28 @@ def get_val_loader(
     data_root: Path,
     image_size: int = TV_INPUT_SIZE,
 ) -> Optional[torch.utils.data.DataLoader]:
-    """Return a held-out loader for datasets that ship one, else None."""
+    """Val split used for checkpoint selection. This is not the test split."""
     from torch.utils.data import DataLoader
-    from torchvision.datasets import ImageFolder
+    from torchvision.datasets import CIFAR10, ImageFolder, MNIST
 
-    if dataset not in MEDICAL_VAL_ROOTS:
+    from evaluation.splits import load_spec
+
+    if dataset not in PAPER_SPLIT_DATASETS:
         return None
-    root = data_root / MEDICAL_VAL_ROOTS[dataset]
-    if not root.exists():
-        return None
+    spec = load_spec(dataset)
+    root_rel = spec["roots"]["val"]
+    legacy_test = LEGACY_TEST_ROOTS.get(dataset)
+    if legacy_test is not None and Path(root_rel) == legacy_test:
+        raise RuntimeError(f"{dataset} val root points at the test folder {legacy_test}")
     t = _make_tv_transforms(image_size, augment=False)
-    return DataLoader(ImageFolder(root=str(root), transform=t),
-                      batch_size=batch_size, shuffle=False, num_workers=0)
+    if dataset == "mnist":
+        ds = MNIST(root=str(data_root), train=True, download=False, transform=t)
+    elif dataset == "cifar10":
+        ds = CIFAR10(root=str(data_root), train=True, download=False, transform=t)
+    else:
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+    ds = _paper_subset(ds, dataset, "val")
+    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
 
 def inverse_frequency_weights(
@@ -311,8 +355,8 @@ def inverse_frequency_weights(
     """
     counts = torch.zeros(num_classes)
     ds = getattr(loader, "dataset", None)
-    targets = getattr(ds, "targets", None)
-    if targets is not None:  # ImageFolder exposes labels without a data pass
+    targets = _subset_targets(ds)
+    if targets is not None:  # ImageFolder / Subset labels, without a data pass
         counts = torch.bincount(torch.as_tensor(targets), minlength=num_classes).float()
     else:
         for _, y in loader:
@@ -549,14 +593,15 @@ def get_or_train(
     if balanced is None:
         balanced = dataset in MEDICAL_TRAIN_ROOTS
     class_weights = None
-    val_loader = None
+    # Every paper dataset selects the checkpoint on val. Class weights stay on
+    # for the skewed medical sets only. The loss, Adam, and cosine schedule
+    # are unchanged; only which images are train versus val changed.
+    val_loader = get_val_loader(dataset, batch_size, data_root) if dataset in PAPER_SPLIT_DATASETS else None
+    if val_loader is None and dataset in PAPER_SPLIT_DATASETS:
+        print(f"  [train] WARNING: no val split for {dataset}; keeping the last epoch")
     if balanced:
         from core.device import get_device
         class_weights = inverse_frequency_weights(train_loader, num_classes, get_device())
-        val_loader = get_val_loader(dataset, batch_size, data_root)
-        if val_loader is None:
-            print(f"  [train] WARNING: no held-out split for {dataset}; "
-                  "keeping the last epoch instead of the best")
 
     model = train_model(model, train_loader, num_epochs=num_epochs, lr=lr,
                         freeze_backbone=freeze_backbone,

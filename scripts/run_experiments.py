@@ -167,6 +167,8 @@ def run_contrastive_matrix(
                         batch_size=batch_size,
                         dataset=dataset,
                         evidence=evidence,
+                        seed=seed,
+                        split="val",
                         model_name=model_name,
                         pretrained=pretrained,
                         ig_steps=ig_steps,

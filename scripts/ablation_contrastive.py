@@ -21,7 +21,8 @@ if str(REPO) not in sys.path:
 from core.types import Tensor, HypothesisSet
 from core.hypotheses import TopMSelector
 from core.device import get_device
-from core.reporting import save_json, save_rows_csv
+from core.reporting import config_hash, refuse_final_if_dirty, save_json, save_rows_csv
+from evaluation.splits import MissingSplitError, SplitLockedError
 from modality.grid_regions import VisionGridUnitSpace
 from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
@@ -128,11 +129,46 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
     return model
 
 
+def _finalize_eval_dataset(
+    dataset_name: str,
+    ds,
+    *,
+    split: str,
+    final: bool,
+    config_hash: Optional[str],
+    num_images: Optional[int],
+    seed: int,
+):
+    """Apply the recorded split, then a seeded subset. Never a class-ordered prefix."""
+    from torch.utils.data import Subset
+
+    from evaluation.sampling import seeded_subset
+    from evaluation.splits import load_indices
+
+    indices = load_indices(
+        dataset_name,
+        split,
+        final=final,
+        config_hash=config_hash,
+        n_items=len(ds),
+    )
+    ds = Subset(ds, indices)
+    if num_images is not None:
+        ds = seeded_subset(ds, num_images, seed)
+    return ds
+
+
 def _get_eval_loader(
     dataset: str,
     batch_size: int,
     data_root: Path,
     image_size: Optional[int] = None,
+    *,
+    seed: int = 0,
+    num_images: Optional[int] = None,
+    split: str = "val",
+    final: bool = False,
+    config_hash: Optional[str] = None,
 ):
     try:
         from torch.utils.data import DataLoader
@@ -141,38 +177,49 @@ def _get_eval_loader(
     except ImportError as e:
         raise ImportError("torchvision is required for dataset loading") from e
 
+    from evaluation.splits import load_spec
+
     resize = transforms.Resize((image_size, image_size)) if image_size is not None else None
+    spec = load_spec(dataset)
+    root_rel = spec["roots"][split]
 
     if dataset == "mnist":
         ops = [transforms.ToTensor(), transforms.Lambda(lambda t: t.repeat(3, 1, 1))]
         if resize is not None:
             ops.append(resize)
         t = transforms.Compose(ops)
-        ds = MNIST(root=str(data_root), train=False, download=False, transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), 10
-    if dataset == "cifar10":
+        ds = MNIST(root=str(data_root), train=root_rel == "train", download=False, transform=t)
+        num_classes = 10
+    elif dataset == "cifar10":
         ops = [transforms.ToTensor()]
         if resize is not None:
             ops.append(resize)
         t = transforms.Compose(ops)
-        ds = CIFAR10(root=str(data_root), train=False, download=False, transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), 10
-    if dataset == "pets":
+        ds = CIFAR10(root=str(data_root), train=root_rel == "train", download=False, transform=t)
+        num_classes = 10
+    elif dataset == "pets":
         target_size = image_size if image_size is not None else 64
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
-        ds = ImageFolder(root=str(data_root / "PetImages"), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    if dataset == "stanford_dogs":
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    elif dataset == "stanford_dogs":
         target_size = image_size if image_size is not None else 224
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
-        ds = ImageFolder(root=str(data_root / "stanford_dogs" / "images" / "Images"), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    if dataset in MEDICAL_EVAL_ROOTS:
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    elif dataset in MEDICAL_EVAL_ROOTS:
         target_size = image_size if image_size is not None else 224
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
-        ds = ImageFolder(root=str(data_root / MEDICAL_EVAL_ROOTS[dataset]), transform=t)
-        return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), len(ds.classes)
-    raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
+    else:
+        raise ValueError("dataset must be one of: " + ", ".join(DATASET_CHOICES))
+
+    ds = _finalize_eval_dataset(
+        dataset, ds, split=split, final=final, config_hash=config_hash,
+        num_images=num_images, seed=seed,
+    )
+    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0), num_classes
 
 
 def _fallback_random_loader(
@@ -274,6 +321,9 @@ def run_ablation(
     num_steps: int = 40,
     lr: float = 0.3,
     out_dir: str | Path | None = None,
+    seed: int = 0,
+    split: str = "val",
+    final: bool = False,
 ):
     from core.runner import CDEAExplainer
     from core.allocator import EvidenceAsMaskAllocator
@@ -296,6 +346,22 @@ def run_ablation(
     evidence_kind = evidence
 
     data_root_path = Path(data_root) if data_root is not None else (REPO / "data")
+    refuse_final_if_dirty(final)
+    run_config = {
+        "dataset": dataset,
+        "evidence": evidence,
+        "model_name": model_name,
+        "split": split,
+        "seed": seed,
+        "num_images": num_images,
+        "lambda_disjoint": lambda_disjoint,
+        "lambda_mass": lambda_mass,
+        "lambda_shared_sparse": lambda_shared_sparse,
+        "game_mode": game_mode,
+        "num_steps": num_steps,
+        "lr": lr,
+    }
+    run_hash = config_hash(run_config)
     device = get_device()
     use_torchvision_backbone = model_name != "smallcnn"
     input_size = TV_INPUT_SIZE if use_torchvision_backbone else None
@@ -307,7 +373,12 @@ def run_ablation(
         grid_h, grid_w = 7, 7
     unit_space = VisionGridUnitSpace(grid_h, grid_w)
     try:
-        loader, num_classes = _get_eval_loader(dataset, batch_size, data_root_path, image_size=input_size)
+        loader, num_classes = _get_eval_loader(
+            dataset, batch_size, data_root_path, image_size=input_size,
+            seed=seed, num_images=num_images, split=split, final=final, config_hash=run_hash,
+        )
+    except (SplitLockedError, MissingSplitError, RuntimeError):
+        raise
     except Exception as e:
         print("Dataset load failed for", dataset, "using random fallback:", e)
         loader, num_classes = _fallback_random_loader(dataset, batch_size, num_images or 200, image_size=input_size)
@@ -502,7 +573,7 @@ def run_ablation(
             "optimized": opt_agg,
         },
     }
-    save_json(summary_json, summary)
+    save_json(summary_json, summary, config_hash=run_hash, device=device)
 
     agg_rows = []
     for method, agg in [("base_evidence", base_agg), ("naive_contrastive", naive_agg), ("optimized", opt_agg)]:
@@ -534,6 +605,12 @@ if __name__ == "__main__":
     parser.add_argument("--model", dest="model_name", type=str, default="resnet18", choices=MODEL_CHOICES)
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--num_images", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Seed for the eval subset. Does not change the train/val/test split.")
+    parser.add_argument("--split", type=str, default="val", choices=["train", "val", "test"],
+                        help="val is the only split used for decisions. test requires --final.")
+    parser.add_argument("--final", action="store_true",
+                        help="Allow the test split. Refuses a dirty tree and an unfrozen eval plan.")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--ig_steps", type=int, default=8)
     parser.add_argument("--lambda_disjoint", type=float, default=0.5)
@@ -579,4 +656,7 @@ if __name__ == "__main__":
         num_steps=args.num_steps,
         lr=args.lr,
         out_dir=args.out_dir,
+        seed=args.seed,
+        split=args.split,
+        final=bool(args.final),
     )
