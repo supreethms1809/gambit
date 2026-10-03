@@ -101,20 +101,7 @@ def randomize_(mod: nn.Module, seed: int) -> None:
             m.reset_running_stats()
 
 
-def spearman(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Row-wise Spearman correlation of two (N, R) tensors."""
-    def rank(t: torch.Tensor) -> torch.Tensor:
-        idx = t.argsort(dim=-1)
-        r = torch.zeros_like(t)
-        ar = torch.arange(t.shape[-1], dtype=t.dtype, device=t.device)
-        r.scatter_(-1, idx, ar.expand_as(t))
-        return r
-    ra, rb = rank(a), rank(b)
-    ra = ra - ra.mean(dim=-1, keepdim=True)
-    rb = rb - rb.mean(dim=-1, keepdim=True)
-    num = (ra * rb).sum(dim=-1)
-    den = (ra.norm(dim=-1) * rb.norm(dim=-1)).clamp_min(1e-8)
-    return num / den
+from evaluation.metrics import spearman
 
 
 def main() -> None:

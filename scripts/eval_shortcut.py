@@ -173,27 +173,13 @@ def attack_success(model, ds_all_patched, target: int, device, batch: int = 32) 
 
 
 # --------------------------------------------------------------------------- eval
-def regions_to_pixels(m: torch.Tensor, gh: int, gw: int, h: int, w: int) -> torch.Tensor:
-    return F.interpolate(m.view(m.shape[0], 1, gh, gw), size=(h, w),
-                         mode="bilinear", align_corners=False).squeeze(1)
-
-
-def mass_in(mask_px: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    mask_px = mask_px.clamp_min(0.0)
-    tot = mask_px.sum(dim=(1, 2))
-    return torch.where(tot > 0, (mask_px * target).sum(dim=(1, 2)) / tot.clamp_min(1e-8),
-                       torch.zeros_like(tot))
+from evaluation.masks import mass_in, regions_to_pixels
+from evaluation.nulls import random_translate
 
 
 def roll_masks(m: torch.Tensor, gh: int, gw: int, g: torch.Generator) -> torch.Tensor:
     """Position-scrambling null: same shape, same budget, random location."""
-    B = m.shape[0]
-    grid = m.view(B, gh, gw)
-    off = torch.randint(0, max(gh, gw), (B, 2), generator=g)
-    out = torch.empty_like(grid)
-    for b in range(B):
-        out[b] = torch.roll(grid[b], (int(off[b, 0]) % gh, int(off[b, 1]) % gw), dims=(0, 1))
-    return out.view(B, -1)
+    return random_translate(m, g, gh, gw)
 
 
 def main() -> None:

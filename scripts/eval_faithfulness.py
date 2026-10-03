@@ -58,36 +58,13 @@ from examples.contrastive_explanation import (
     MEDICAL_SPLIT_ROOTS, TV_INPUT_SIZE, checkpoint_metadata, load_checkpoint,
 )
 from scripts.train_backbone import model_grid_size
+from evaluation.masks import regions_to_pixels
+from evaluation.removal import noisy_linear_impute
 
 
 def region_to_pixel(m: torch.Tensor, gh: int, gw: int, H: int, W: int) -> torch.Tensor:
     """(B, R) region mask -> (B, 1, H, W) pixel mask, nearest so holes stay hard-edged."""
-    return F.interpolate(m.view(m.shape[0], 1, gh, gw), size=(H, W), mode="nearest")
-
-
-def noisy_linear_impute(x: torch.Tensor, keep: torch.Tensor, iters: int,
-                        noise: float, gen: torch.Generator) -> torch.Tensor:
-    """Fill `keep == 0` pixels from their neighbours (ROAD's debiasing step).
-
-    Jacobi iteration on the neighbour-average system: each unknown pixel is repeatedly set
-    to the weighted mean of its 8-neighbourhood, with known pixels pinned. Converges to the
-    same fixed point as the paper's sparse solve.
-    """
-    k = torch.tensor([[1.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
-                     device=x.device).view(1, 1, 3, 3) / 8.0
-    C = x.shape[1]
-    kk = k.expand(C, 1, 3, 3)
-    cur = x * keep
-    for _ in range(iters):
-        nb = F.conv2d(F.pad(cur, (1, 1, 1, 1), mode="replicate"), kk, groups=C)
-        # keep is (B,1,H,W); the neighbour-weight map is single-channel by construction.
-        wt = F.conv2d(F.pad(keep, (1, 1, 1, 1), mode="replicate"), k).clamp_min(1e-6)
-        filled = nb / wt.clamp_min(1e-6)
-        cur = x * keep + filled * (1 - keep)
-    if noise > 0:
-        n = torch.randn(cur.shape, generator=gen, device="cpu").to(cur.device) * noise
-        cur = cur + n * (1 - keep)
-    return cur.clamp(0, 1)
+    return regions_to_pixels(m, gh, gw, H, W, mode="nearest").unsqueeze(1)
 
 
 def auc(curve: List[float]) -> float:

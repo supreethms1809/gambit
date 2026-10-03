@@ -93,23 +93,7 @@ from scripts.train_backbone import model_grid_size
 OUT = REPO / "scripts" / "out"
 
 
-def _paired(a: List[float], b: List[float]) -> Dict[str, float]:
-    """Paired difference stats for two per-image score lists."""
-    if not a or len(a) != len(b):
-        return {}
-    d = torch.tensor(a) - torch.tensor(b)
-    n = d.numel()
-    mean_d = d.mean().item()
-    se = (d.std(unbiased=True) / (n ** 0.5)).item() if n > 1 else 0.0
-    return {
-        "delta": mean_d,
-        "se": se,
-        "ci_low": mean_d - 1.96 * se,
-        "ci_high": mean_d + 1.96 * se,
-        "t": mean_d / se if se > 0 else float("nan"),
-        "win_rate": (d > 0).float().mean().item(),
-        "n": n,
-    }
+from evaluation.metrics import paired as _paired
 
 
 def _stat(vals: List[float]) -> Dict[str, float]:

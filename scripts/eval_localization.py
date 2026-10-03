@@ -124,43 +124,9 @@ class SegmentedDataset(torch.utils.data.Dataset):
         return img, label, (seg > 0.5).float()[0]  # (H, W) binary
 
 
-def _regions_to_pixels(m: torch.Tensor, grid_h: int, grid_w: int, h: int, w: int) -> torch.Tensor:
-    """Upsample a region mask (B, R) to pixel space (B, H, W)."""
-    pm = m.view(m.shape[0], 1, grid_h, grid_w)
-    return F.interpolate(pm, size=(h, w), mode="bilinear", align_corners=False).squeeze(1)
-
-
-def target_mass_fraction(mask_px: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Share of mask mass inside the target region, per sample. Both (B, H, W)."""
-    mask_px = mask_px.clamp_min(0.0)
-    total = mask_px.sum(dim=(1, 2))
-    inside = (mask_px * target).sum(dim=(1, 2))
-    return torch.where(total > 0, inside / total.clamp_min(1e-8), torch.zeros_like(total))
-
-
-def random_translate(m: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
-    """Roll each region mask in a batch by an independent random (dy, dx).
-
-    The position-scrambling null. Rolling on the *region* grid (not pixels) wraps
-    rather than crops, so mask shape, total budget and compactness are all exactly
-    preserved and only the location changes. A mask that beats this null is
-    localizing; one that does not is merely being small and centered.
-
-    ``m`` is (B, R) over a grid_h x grid_w grid, flattened row-major.
-    """
-    B, R = m.shape
-    gh = gw = int(round(R ** 0.5))
-    if gh * gw != R:
-        raise ValueError(f"region count {R} is not square; pass an explicit grid")
-    grid = m.view(B, gh, gw)
-    # Draw on CPU so the null is reproducible from --seed regardless of device.
-    offsets = torch.randint(0, max(gh, gw), (B, 2), generator=generator)
-    out = torch.empty_like(grid)
-    for b in range(B):
-        dy = int(offsets[b, 0].item()) % gh
-        dx = int(offsets[b, 1].item()) % gw
-        out[b] = torch.roll(grid[b], shifts=(dy, dx), dims=(0, 1))
-    return out.view(B, R)
+from evaluation.masks import mass_in as target_mass_fraction
+from evaluation.masks import regions_to_pixels as _regions_to_pixels
+from evaluation.nulls import random_translate
 
 
 def main() -> None:
