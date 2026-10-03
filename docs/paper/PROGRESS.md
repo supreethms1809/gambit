@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p0-hygiene`.
+Branch: `paper/p0-hygiene`. Pull request: https://github.com/supreethms1809/gambit/pull/1
 
 ## Stage status
 
