@@ -265,6 +265,55 @@ class WaterbirdsPairs(Dataset):
         }
 
 
+# Train uses the group_DRO correlation. Val is balanced across backgrounds.
+# The draw is fixed, so model seeds change initialization and not the images.
+CONFOUNDER_STRENGTH = 0.95
+CONFOUNDER_SEED = VAL_CARVE_SEED
+
+
+def confounder_uses_water(labels: Sequence[int], split: str, seed: int = CONFOUNDER_SEED) -> list[bool]:
+    """Whether each image is composited on water.
+
+    Training puts a water bird on water with probability ``CONFOUNDER_STRENGTH``.
+    Val uses 0.5. ``seed`` does not follow the model seed.
+    """
+    if split == "train":
+        strength = CONFOUNDER_STRENGTH
+    elif split == "val":
+        strength = 0.5
+    else:
+        raise ValueError("confounder assignment is only defined for train and val")
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    draw = torch.rand(len(labels), generator=generator)
+    return [
+        bool(draw[i] < (strength if int(label) == 1 else 1.0 - strength))
+        for i, label in enumerate(labels)
+    ]
+
+
+class WaterbirdsClassifier(Dataset):
+    """One correlated view per bird, for training a model that can use the background."""
+
+    def __init__(self, split: str = "val", image_size: int = 224, **kwargs):
+        self.pairs = WaterbirdsPairs(split=split, image_size=image_size, **kwargs)
+        self.labels = [
+            int(is_waterbird(self.pairs.birds.samples[cub_index][0]))
+            for cub_index in self.pairs.indices
+        ]
+        self.use_water = confounder_uses_water(self.labels, split)
+        self.groups = [label * 2 + int(water) for label, water in zip(self.labels, self.use_water)]
+        self.targets = self.labels
+
+    def __len__(self) -> int:
+        return len(self.pairs)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        item = self.pairs[index]
+        image = item["water"] if self.use_water[index] else item["land"]
+        return image, self.labels[index]
+
+
 def env_batch_waterbirds(land: torch.Tensor, water: torch.Tensor) -> EnvBatch:
     """``land`` and ``water`` are (B, 3, H, W)."""
     return EnvBatch(xs=[land, water], env_ids=["land", "water"])

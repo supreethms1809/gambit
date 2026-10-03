@@ -163,6 +163,7 @@ class ColoredMNIST(Dataset):
         download: bool = True,
         correlation: float = 1.0,
         num_colors: int = 10,
+        seed: Optional[int] = None,
     ):
         from torchvision.datasets import MNIST
         from torchvision import transforms
@@ -170,13 +171,25 @@ class ColoredMNIST(Dataset):
                            transform=transforms.ToTensor())
         self.correlation = correlation
         self.num_colors = num_colors
+        # A seed fixes the color of each index. Without it, every read draws a
+        # new color, so a val score changes between epochs.
+        self._colors: Optional[torch.Tensor] = None
+        if seed is not None:
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(int(seed))
+            labels = torch.as_tensor(self.mnist.targets).long()
+            agree = torch.rand(len(self.mnist), generator=generator) < correlation
+            random_color = torch.randint(0, num_colors, (len(self.mnist),), generator=generator)
+            self._colors = torch.where(agree, labels, random_color)
 
     def __len__(self) -> int:
         return len(self.mnist)
 
     def __getitem__(self, i: int) -> Tuple[torch.Tensor, int]:
         im, label = self.mnist[i]
-        if torch.rand(1).item() < self.correlation:
+        if self._colors is not None:
+            color_idx = int(self._colors[i].item())
+        elif torch.rand(1).item() < self.correlation:
             color_idx = label
         else:
             color_idx = int(torch.randint(0, self.num_colors, (1,)).item())
