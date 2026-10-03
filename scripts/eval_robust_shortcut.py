@@ -78,7 +78,14 @@ def _build_backbone(model_name: str, num_classes: int, pretrained: bool,
     else:
         raise ValueError(f"model_name must be one of: {TV_MODELS}")
     if checkpoint is not None:
-        state = torch.load(checkpoint, map_location="cpu")
+        # Two checkpoint formats exist in this repo: a raw state_dict, and a
+        # metadata-wrapped {"state_dict", "dataset", "model_name", ...} dict written by
+        # train_backbone.get_or_train and examples/contrastive_explanation.save_checkpoint.
+        # Assuming the raw form here silently broke every shift eval once training
+        # switched to the wrapped one, so accept both.
+        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
         m.load_state_dict(state)
         print(f"  [model] loaded checkpoint: {checkpoint}")
     return m
@@ -181,7 +188,12 @@ def run_eval(
     lambda_shortcut: Optional[float] = None,
     lambda_disjoint: Optional[float] = None,
     lambda_sparse: Optional[float] = None,
+    out_dir: Optional[str] = None,
 ):
+    # Resolved up front: the mask figure is written mid-loop, well before the metrics
+    # files, and hardcoding its path there leaked visualizations into scripts/out/ even
+    # when --out_dir pointed elsewhere.
+    _out_root = Path(out_dir) if out_dir is not None else (REPO / "scripts" / "out")
     if game_mode == "manual":
         game_cfg = resolve_shift_game(
             game_mode,
@@ -290,7 +302,7 @@ def run_eval(
                 x=x,
                 masks=masks,
                 unit_space=unit_space,
-                out_path=REPO / "scripts" / "out" / f"{export_prefix}_masks.png",
+                out_path=_out_root / f"{export_prefix}_masks.png",
                 sample_idx=0,
             )
             saved_viz = True
@@ -317,7 +329,7 @@ def run_eval(
     print("Qualitative: robust mask -> object/digit regions; shortcut mask -> color/background cue.")
     print("Pass: robust tracks object, shortcut tracks background; ID-OOD gap reported.")
 
-    out_dir = REPO / "scripts" / "out"
+    out_dir = _out_root
     out_dir.mkdir(parents=True, exist_ok=True)
     summary_json = out_dir / f"{export_prefix}_metrics.json"
     summary_csv = out_dir / f"{export_prefix}_metrics.csv"
