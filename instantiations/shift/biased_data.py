@@ -101,6 +101,42 @@ def _composite_texture(
 # ColoredMNIST  (original)
 # ---------------------------------------------------------------------------
 
+def _hue_channels(color_idx: torch.Tensor, num_colors: int) -> torch.Tensor:
+    """(B, 3) RGB hues. Same constants as ``colorize_mnist`` so the inverse matches."""
+    hues = color_idx.float() / max(num_colors, 1)
+    r = (1 + torch.cos(2 * 3.14159 * hues)) * 0.5
+    g = (1 + torch.cos(2 * 3.14159 * hues + 2.094)) * 0.5
+    b = (1 + torch.cos(2 * 3.14159 * hues + 4.188)) * 0.5
+    return torch.stack([r, g, b], dim=1)
+
+
+def recover_mnist_gray(
+    x: torch.Tensor,
+    color_idx: int | torch.Tensor,
+    num_colors: int = 10,
+) -> torch.Tensor:
+    """Invert ``colorize_mnist`` when the color index is known.
+
+    ``x`` is (3, H, W) or (B, 3, H, W). The largest hue channel is always at
+    least 0.75 for these ten colors, so the division is stable. Returns the
+    grayscale digit, shape (1, H, W) or (B, 1, H, W).
+    """
+    single = x.dim() == 3
+    if single:
+        x = x.unsqueeze(0)
+    batch = x.shape[0]
+    if isinstance(color_idx, int):
+        color_idx = torch.full((batch,), color_idx, device=x.device, dtype=torch.long)
+    else:
+        color_idx = color_idx.to(device=x.device, dtype=torch.long).view(batch)
+    rgb = _hue_channels(color_idx, num_colors).to(device=x.device)
+    channel = rgb.argmax(dim=1)
+    scale = rgb.gather(1, channel.view(batch, 1)).clamp(min=1e-3)
+    picked = x.gather(1, channel.view(batch, 1, 1, 1).expand(batch, 1, x.shape[2], x.shape[3]))
+    gray = (picked / scale.view(batch, 1, 1, 1)).clamp(0, 1)
+    return gray.squeeze(0) if single else gray
+
+
 def colorize_mnist(im: torch.Tensor, color_idx: int, num_colors: int = 10) -> torch.Tensor:
     """
     im: (B, 1, H, W) or (1, H, W) MNIST digit in [0,1].
@@ -113,11 +149,7 @@ def colorize_mnist(im: torch.Tensor, color_idx: int, num_colors: int = 10) -> to
     device = im.device
     if isinstance(color_idx, int):
         color_idx = torch.full((B,), color_idx, device=device, dtype=torch.long)
-    hues = color_idx.float() / max(num_colors, 1)
-    r = (1 + torch.cos(2 * 3.14159 * hues)) * 0.5
-    g = (1 + torch.cos(2 * 3.14159 * hues + 2.094)) * 0.5
-    b = (1 + torch.cos(2 * 3.14159 * hues + 4.188)) * 0.5
-    rgb = torch.stack([r, g, b], dim=1).view(B, 3, 1, 1)
+    rgb = _hue_channels(color_idx.to(device=device), num_colors).view(B, 3, 1, 1)
     return (im * rgb).clamp(0, 1)
 
 
@@ -157,19 +189,24 @@ def env_batch_colored_mnist(
     y: torch.Tensor,
     num_colors: int = 10,
 ) -> EnvBatch:
-    """xs = [x_id, x_ood1, x_ood2] — same digit, different hue for OOD."""
-    B = x.shape[0]
-    device = x.device
-    y_cpu = y.cpu()
-    x_ood1 = x.clone()
-    x_ood2 = x.clone()
-    for b in range(B):
-        other  = (int(y_cpu[b].item()) + 1) % num_colors
-        other2 = (int(y_cpu[b].item()) + 2) % num_colors
-        g = x[b:b+1].mean(dim=1, keepdim=True)
-        x_ood1[b:b+1] = colorize_mnist(g, other, num_colors)
-        x_ood2[b:b+1] = colorize_mnist(g, other2, num_colors)
-    return EnvBatch(xs=[x, x_ood1, x_ood2], env_ids=["id", "ood1", "ood2"])
+    """xs = [x_id, x_ood1, x_ood2].
+
+    OOD views are the same digit recolored with hue ``label+1`` and ``label+2``.
+    The digit is recovered by inverting the label hue. Averaging the colored
+    channels is not that inverse: it scales the digit by the mean of the hue.
+    """
+    y_cpu = y.detach().cpu()
+    ood1 = []
+    ood2 = []
+    for b in range(x.shape[0]):
+        label = int(y_cpu[b].item()) % num_colors
+        gray = recover_mnist_gray(x[b], label, num_colors)
+        ood1.append(colorize_mnist(gray, (label + 1) % num_colors, num_colors).squeeze(0))
+        ood2.append(colorize_mnist(gray, (label + 2) % num_colors, num_colors).squeeze(0))
+    return EnvBatch(
+        xs=[x, torch.stack(ood1), torch.stack(ood2)],
+        env_ids=["id", "ood1", "ood2"],
+    )
 
 
 # ---------------------------------------------------------------------------
