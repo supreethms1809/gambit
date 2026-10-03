@@ -1,18 +1,32 @@
 """
-Clean ContrastiveObjective: intervention-based tests.
-- Sufficiency: logit of class k on keep(x, m_tot_k)
-- Contrastive margin: z_k - max(z_foil)
-- Overlap penalty among unique masks
-- Sparsity penalty
+Contrastive objective: one joint loss, minimised by gradient descent on the masks.
 
-Optimization minimizes loss => we want to maximize suff and margin, minimize overlap and sparsity.
-So loss = - (lambda_suff * suff + lambda_margin * margin) + lambda_overlap * overlap + lambda_sparse * sparse.
-Metrics move in the right direction: suff increases, margin increases, overlap decreases, sparse decreases.
+- kept logit: z_k on keep(x, m_unique_k + m_shared). This is not baseline-subtracted.
+- margin: kept logit of k minus the strongest other hypothesis under the same keep.
+- overlap: each unordered pair of unique masks once, sum of m_k · m_l. One weight.
+- sparsity: L1 of the unique masks, and a separate L1 on the shared mask.
+- mass: unique-mask mass against a grid-scaled target.
+
+The returned key ``suff`` is an alias of ``kept_logit``. The shift game's
+baseline-subtracted kept logit is a different quantity and is not called suff.
 """
 from __future__ import annotations
 from typing import Any, Dict, Optional
 import torch
 from core.types import Tensor, HypothesisSet, EnvBatch
+
+# Closes the shared-mask blanket: at 0 the shared mask covered about half of HAM10000.
+DEFAULT_LAMBDA_SHARED_SPARSE = 0.25
+
+
+def pairwise_overlap(m_unique: Tensor) -> Tensor:
+    """Per-example overlap. Each unordered pair of unique masks is counted once.
+
+    ``m_unique`` is ``(B, K, R)``. The result is ``(B,)``.
+    """
+    dots = torch.einsum("bkr,blr->bkl", m_unique, m_unique)
+    off_diag = dots.sum(dim=(1, 2)) - dots.diagonal(dim1=1, dim2=2).sum(dim=1)
+    return off_diag * 0.5
 
 
 class ContrastiveObjective:
@@ -25,7 +39,7 @@ class ContrastiveObjective:
         lambda_mass: float = 0.1,
         attn_weight_blend: float = 0.5,
         mass_ref_regions: int = 49,
-        lambda_shared_sparse: float = 0.0,
+        lambda_shared_sparse: float = DEFAULT_LAMBDA_SHARED_SPARSE,
     ):
         self.lambda_suff = lambda_suff
         self.lambda_margin = lambda_margin
@@ -127,7 +141,7 @@ class ContrastiveObjective:
             cls_k = h_ids[:, k].clamp_min(0)
             z_k = logits_keep.gather(1, cls_k.unsqueeze(1)).squeeze(1)
             p_k = probs_keep.gather(1, cls_k.unsqueeze(1)).squeeze(1)
-            suff[:, k] = z_k
+            suff[:, k] = z_k  # kept logit of class k. Not baseline-subtracted.
             split_plus_logits[:, k] = z_k
             split_plus_probs[:, k] = p_k
 
@@ -142,10 +156,7 @@ class ContrastiveObjective:
             z_foil_max = z_foil.max(dim=1).values
             margin[:, k] = z_k - z_foil_max
 
-        # Overlap among unique masks: sum over k<l of (m_k · m_l) per batch (each pair counted once)
-        dots = torch.einsum("bkr,blr->bkl", m_unique, m_unique)
-        off_diag_sum = dots.sum(dim=(1, 2)) - dots.diagonal(dim1=1, dim2=2).sum(dim=1)
-        overlap_per_batch = off_diag_sum * 0.5  # dots is symmetric so off-diag = 2 * sum_{k<l}
+        overlap_per_batch = pairwise_overlap(m_unique)
 
         # Sparsity: L1 of masks (averaged over K then batch)
         sparse_per_batch = m_unique.abs().sum(dim=-1).mean(dim=1)
@@ -170,7 +181,7 @@ class ContrastiveObjective:
         # by construction. The unique masks were never the problem — they sit at 3.4x
         # chance on both settings.
         #
-        # Defaults to 0.0 so existing runs reproduce exactly; set it to constrain shared.
+        # Default is 0.25. At 0 the shared mask is a blanket (degenerate route D1).
         #
         # The L1 is divided by mass_scale for the same reason target_mass is multiplied by
         # it: so the coefficient means a constant *fraction* of the frame rather than a
@@ -236,7 +247,8 @@ class ContrastiveObjective:
 
         return {
             "loss": loss,
-            "suff": suff_mean.mean(),
+            "kept_logit": suff_mean.mean(),
+            "suff": suff_mean.mean(),  # alias of kept_logit
             "margin": margin_mean.mean(),
             "overlap": overlap_per_batch.mean(),
             "sparse": sparse_per_batch.mean(),

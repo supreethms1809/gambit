@@ -167,7 +167,7 @@ def test_interaction_changes_contrastive_masks():
         num_steps=8,
         lr=0.25,
         use_shared=True,
-        lambda_disjoint=0.1,
+        lambda_disjoint=0.0,
         lambda_partition=0.1,
         attn_mix=1.0,
     )

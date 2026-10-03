@@ -20,7 +20,8 @@ def test_contrastive_presets_are_separated():
     assert coop.lambda_disjoint == 0.0
     assert comp.use_shared is False
     assert comp.lambda_overlap > mixed.lambda_overlap
-    assert comp.lambda_disjoint > mixed.lambda_disjoint
+    assert comp.lambda_disjoint == 0.0
+    assert mixed.lambda_disjoint == 0.0
     assert mixed.use_shared is True
     print("PASS: contrastive cooperative/competitive/mixed presets are separated")
 
@@ -31,14 +32,14 @@ def test_contrastive_manual_mode():
         use_shared=False,
         lambda_margin=0.9,
         lambda_overlap=0.12,
-        lambda_disjoint=0.34,
+        lambda_disjoint=0.0,
         lambda_partition=0.0,
     )
     assert cfg.mode == "manual"
     assert cfg.use_shared is False
     assert abs(cfg.lambda_margin - 0.9) < 1e-8
     assert abs(cfg.lambda_overlap - 0.12) < 1e-8
-    assert abs(cfg.lambda_disjoint - 0.34) < 1e-8
+    assert cfg.lambda_disjoint == 0.0
     assert abs(cfg.lambda_partition - 0.0) < 1e-8
     print("PASS: contrastive manual mode")
 

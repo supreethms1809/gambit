@@ -206,11 +206,9 @@ def main() -> None:
     ap.add_argument("--alloc_lr", type=float, default=0.2)
     ap.add_argument("--game_mode", type=str, default="mixed")
     ap.add_argument("--lambda_mass", type=float, default=2.0)
-    ap.add_argument("--lambda_shared_sparse", type=float, default=0.0,
-                    help="L1 penalty on the shared mask. At 0.0 it is in no penalty "
-                         "term at all and inflates to blanket ~46%% of the grid, which "
-                         "is why the cdea_shared row here is not interpretable. See "
-                         "docs/MEDICAL_RESULTS.md section 9a.")
+    ap.add_argument("--lambda_shared_sparse", type=float, default=0.25,
+                    help="L1 penalty on the shared mask. The default 0.25 closes the "
+                         "shared-mask blanket. At 0.0 the shared mask is unpenalized.")
     ap.add_argument("--control", action="store_true",
                     help="Negative control: train WITHOUT the shortcut but evaluate on "
                          "patched images. Evidence should not concentrate on the patch.")

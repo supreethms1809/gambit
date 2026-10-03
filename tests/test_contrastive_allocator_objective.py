@@ -36,7 +36,7 @@ def test_optimization_allocator_masks_sparse_nontrivial():
     model = TinyCNN(num_classes=10)
     model.eval()
     objective = ContrastiveObjective(lambda_suff=1.0, lambda_margin=1.0, lambda_sparse=0.05, lambda_overlap=0.2)
-    allocator = OptimizationAllocator(objective, num_steps=35, lr=0.4, lambda_disjoint=0.2)
+    allocator = OptimizationAllocator(objective, num_steps=35, lr=0.4)
     x = torch.rand(B, 3, 32, 32)
     ids = torch.randint(0, 10, (B, K))
     valid = torch.ones(B, K, dtype=torch.bool)
@@ -70,12 +70,13 @@ def test_contrastive_objective_metrics_direction():
     # Initial masks = evidence
     m0 = evidence.clone().requires_grad_(True)
     out0 = objective.compute(x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, masks={"unique": m0}, evidence=evidence)
-    suff0 = out0["suff"].item()
+    suff0 = out0["kept_logit"].item()
+    assert out0["suff"].item() == suff0
     margin0 = out0["margin"].item()
     overlap0 = out0["overlap"].item()
 
     # Optimized masks (few steps)
-    allocator = OptimizationAllocator(objective, num_steps=25, lr=0.5, lambda_disjoint=0.5)
+    allocator = OptimizationAllocator(objective, num_steps=25, lr=0.5)
     masks_opt = allocator.allocate(x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, evidence=evidence)
     out1 = objective.compute(x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, masks=masks_opt, evidence=evidence)
     suff1 = out1["suff"].item()
@@ -101,7 +102,6 @@ def test_contrastive_probability_split_metrics_with_shared():
         num_steps=20,
         lr=0.4,
         use_shared=True,
-        lambda_disjoint=0.2,
         lambda_partition=0.1,
     )
 

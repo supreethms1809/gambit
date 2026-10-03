@@ -45,7 +45,7 @@ def run_matrix(
     model_name: str = "resnet18",
     pretrained: bool = False,
     ig_steps: int = 8,
-    lambda_disjoint: float = 1.0,
+    lambda_disjoint: float = 0.0,
     lambda_mass: float = 2.0,
 ) -> List[Dict[str, float]]:
     combos = [
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         model_name="resnet18",
         pretrained=False,
         ig_steps=8,
-        lambda_disjoint=1.0,
+        lambda_disjoint=0.0,
         lambda_mass=2.0,
     )
     write_report(matrix_rows)

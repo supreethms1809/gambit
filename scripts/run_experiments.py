@@ -566,9 +566,10 @@ def main() -> None:
                         help="Allocation optimizer steps (contrastive and shift)")
     parser.add_argument("--ig_steps", type=int, default=24,
                         help="Integrated Gradients interpolation steps")
-    parser.add_argument("--lambda_disjoint", type=float, default=0.5)
+    parser.add_argument("--lambda_disjoint", type=float, default=0.0,
+                        help="Retired. Must be 0. Overlap has one weight, lambda_overlap.")
     parser.add_argument("--lambda_mass", type=float, default=2.0)
-    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.25,
                         help="L1 penalty on the shared mask. At 0.0 it is in no penalty term at "
                              "all and inflates to blanket ~46%% of the grid at 0.99x "
                              "chance on base-evidence capture. See "

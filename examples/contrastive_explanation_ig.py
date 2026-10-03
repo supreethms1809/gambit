@@ -87,7 +87,8 @@ def main() -> None:
     parser.add_argument("--lambda_partition", type=float, default=0.1)
     parser.add_argument("--lambda_margin", type=float, default=1.0)
     parser.add_argument("--lambda_overlap", type=float, default=0.2)
-    parser.add_argument("--lambda_disjoint", type=float, default=0.1)
+    parser.add_argument("--lambda_disjoint", type=float, default=0.0,
+                        help="Retired. Must be 0. Overlap has one weight, --lambda_overlap.")
     parser.add_argument("--lambda_mass", type=float, default=2.0,
                         help="Penalty weight to keep optimized mask mass close to base evidence mass")
     parser.add_argument("--ig_steps", type=int, default=24, help="Integrated Gradients interpolation steps")

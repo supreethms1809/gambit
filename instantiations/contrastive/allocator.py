@@ -1,19 +1,13 @@
-"""OptimizationAllocator for contrastive: masks as parameters, sigmoid, disjointness penalty, gradient steps."""
+"""OptimizationAllocator: mask logits, sigmoid, a fixed number of Adam steps.
+
+Overlap is not penalised here. ContrastiveObjective.pairwise_overlap is the only
+pairwise term, so the same quantity is not added a second time.
+"""
 from __future__ import annotations
 from typing import Any, Dict, Optional
 import torch
 import torch.nn.functional as F
 from core.types import Tensor, HypothesisSet, EnvBatch
-
-
-def _disjoint_penalty(m_unique: Tensor) -> Tensor:
-    """Penalty for overlap among unique masks: sum over k<l of (m_k * m_l).sum(dim=-1) (each pair once)."""
-    # m_unique (B, K, R); dots[b,k,l] = m_k · m_l; symmetric so off-diag total = 2 * sum_{k<l}
-    dots = torch.einsum("bkr,blr->bkl", m_unique, m_unique)
-    total = dots.sum()
-    diag = dots.diagonal(dim1=1, dim2=2).sum()
-    off_diag = total - diag
-    return off_diag * 0.5
 
 
 def _partition_penalty(m_unique: Tensor, m_shared: Optional[Tensor] = None) -> Tensor:
@@ -29,8 +23,9 @@ class OptimizationAllocator:
     Allocator that optimizes masks as parameters:
     - m_unique_logits (B,K,R), optionally m_shared_logits (B,R)
     - map to [0,1] via sigmoid
-    - enforce disjointness/partition via penalty
-    - 30-60 gradient steps per batch
+    - the objective supplies the only overlap penalty
+    - an optional partition penalty if the masks sum past 1
+    - a fixed number of Adam steps of joint gradient descent on one loss.
     """
 
     def __init__(
@@ -39,7 +34,7 @@ class OptimizationAllocator:
         num_steps: int = 50,
         lr: float = 0.5,
         use_shared: bool = False,
-        lambda_disjoint: float = 0.2,
+        lambda_disjoint: float = 0.0,
         lambda_partition: float = 0.0,
         init_from_evidence: bool = True,
         attn_mix: float = 0.35,
@@ -50,7 +45,12 @@ class OptimizationAllocator:
         self.num_steps = num_steps
         self.lr = lr
         self.use_shared = use_shared
-        self.lambda_disjoint = lambda_disjoint
+        if lambda_disjoint != 0.0:
+            raise ValueError(
+                "lambda_disjoint is retired. Pairwise overlap is penalised once, "
+                "by ContrastiveObjective.lambda_overlap."
+            )
+        self.lambda_disjoint = 0.0
         self.lambda_partition = lambda_partition
         self.init_from_evidence = init_from_evidence
         if not (0.0 <= attn_mix <= 1.0):
@@ -155,10 +155,9 @@ class OptimizationAllocator:
                     **kwargs,
                 )
                 loss = out["loss"]
-                penalty = self.lambda_disjoint * _disjoint_penalty(m_unique)
                 if self.lambda_partition > 0:
-                    penalty = penalty + self.lambda_partition * _partition_penalty(m_unique, m_shared)
-                (loss + penalty).backward()
+                    loss = loss + self.lambda_partition * _partition_penalty(m_unique, m_shared)
+                loss.backward()
                 optimizer.step()
                 with torch.no_grad():
                     m_unique_logits.clamp_(-self.logit_clip, self.logit_clip)

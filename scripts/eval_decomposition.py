@@ -113,14 +113,9 @@ def main() -> None:
     parser.add_argument("--game_mode", type=str, default="mixed",
                         help="Must be a preset with use_shared=True for Test A")
     parser.add_argument("--lambda_mass", type=float, default=2.0)
-    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
-                        help="L1 penalty on the shared mask. It appears in no other "
-                             "penalty term, so at 0.0 it inflates to blanket ~46%% of the "
-                             "grid and captures base evidence at exactly 0.99x chance -- "
-                             "uncorrelated with the field it is allocating. 0.25 shrinks "
-                             "it ~8x and lifts it to 1.48x chance (HAM10000). Test A and "
-                             "Test B both survive; absolute deletion magnitudes fall "
-                             "~25%% but the diagonal/off-diagonal ratio holds or improves.")
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.25,
+                        help="L1 penalty on the shared mask. The default 0.25 closes the "
+                             "shared-mask blanket. At 0.0 the shared mask is unpenalized.")
     parser.add_argument("--evidence", type=str, default="gradcam", choices=["gradcam", "ig", "occlusion"])
     parser.add_argument("--ig_steps", type=int, default=16)
     parser.add_argument("--seed", type=int, default=0)

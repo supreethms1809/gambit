@@ -1043,8 +1043,8 @@ def main():
     parser.add_argument(
         "--lambda_disjoint",
         type=float,
-        default=0.1,
-        help="Allocator disjointness penalty (used when --game_mode manual)",
+        default=0.0,
+        help="Retired. Must be 0. Overlap has one weight, --lambda_overlap.",
     )
     parser.add_argument(
         "--lambda_mass",

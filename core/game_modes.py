@@ -32,7 +32,7 @@ _CONTRASTIVE_PRESETS: Dict[str, ContrastiveGameConfig] = {
         use_shared=True,
         lambda_margin=1.0,
         lambda_overlap=0.2,
-        lambda_disjoint=0.1,
+        lambda_disjoint=0.0,
         lambda_partition=0.1,
     ),
     # Cooperative: no explicit competition terms; shared evidence is allowed.
@@ -50,7 +50,7 @@ _CONTRASTIVE_PRESETS: Dict[str, ContrastiveGameConfig] = {
         use_shared=False,
         lambda_margin=1.5,
         lambda_overlap=0.35,
-        lambda_disjoint=0.35,
+        lambda_disjoint=0.0,
         lambda_partition=0.0,
     ),
 }
@@ -129,6 +129,10 @@ def resolve_contrastive_game(
         _validate_nonnegative("lambda_overlap", lambda_overlap)
         _validate_nonnegative("lambda_disjoint", lambda_disjoint)
         _validate_nonnegative("lambda_partition", lambda_partition)
+        if lambda_disjoint != 0.0:
+            raise ValueError(
+                "lambda_disjoint is retired. Pairwise overlap has one weight, lambda_overlap."
+            )
         return ContrastiveGameConfig(
             mode=mode,
             use_shared=bool(use_shared),
