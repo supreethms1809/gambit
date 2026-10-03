@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -2.8338862800598146,
+      "overlap": 0.3957407283782959,
+      "sparse": 1.0,
+      "suff": 2.1422527647018432
+    },
+    "naive_contrastive": {
+      "margin": -2.829110918045044,
+      "overlap": 0.2273343724012375,
+      "sparse": 1.0,
+      "suff": 2.145960183143616
+    },
+    "optimized": {
+      "margin": -1.959569034576416,
+      "overlap": 0.009514287561178208,
+      "sparse": 1.0426320791244508,
+      "suff": 2.7913839435577392
+    }
+  },
+  "batch_size": 16,
+  "dataset": "mnist",
+  "evidence": "gradcam",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lambda_shared_sparse": 0.25,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_mnist_gradcam_seed1",
+  "use_shared": false
+}

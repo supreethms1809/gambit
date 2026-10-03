@@ -1,0 +1,79 @@
+{
+  "checkpoint": "examples/out/checkpoints/brain_tumor_resnet18.pt",
+  "dataset": "brain_tumor",
+  "model": "resnet18",
+  "evidence": "ig",
+  "grid": [
+    7,
+    7
+  ],
+  "n": 128,
+  "game_mode": "mixed",
+  "num_alloc_steps": 50,
+  "seed": 0,
+  "reference_accuracy": 0.953125,
+  "protocol": "cascading top-down randomization; hypotheses frozen to the trained model's top-K; Spearman over the region axis",
+  "stages": [
+    {
+      "stage": 1,
+      "randomized_through": "fc",
+      "accuracy": 0.78125,
+      "cdea_unique_spearman": 0.7198788523674011,
+      "base_evidence_spearman": 0.965081512928009
+    },
+    {
+      "stage": 2,
+      "randomized_through": "layer4.1",
+      "accuracy": 0.3515625,
+      "cdea_unique_spearman": 0.6306845545768738,
+      "base_evidence_spearman": 0.8972108960151672
+    },
+    {
+      "stage": 3,
+      "randomized_through": "layer4.0",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.6573211550712585,
+      "base_evidence_spearman": 0.9137904047966003
+    },
+    {
+      "stage": 4,
+      "randomized_through": "layer3",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.6609726548194885,
+      "base_evidence_spearman": 0.9154772758483887
+    },
+    {
+      "stage": 5,
+      "randomized_through": "layer2",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.6479524970054626,
+      "base_evidence_spearman": 0.9113004803657532
+    },
+    {
+      "stage": 6,
+      "randomized_through": "layer1",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.621105432510376,
+      "base_evidence_spearman": 0.841566264629364
+    },
+    {
+      "stage": 7,
+      "randomized_through": "bn1",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.6313619017601013,
+      "base_evidence_spearman": 0.8400260806083679
+    },
+    {
+      "stage": 8,
+      "randomized_through": "conv1",
+      "accuracy": 0.3359375,
+      "cdea_unique_spearman": 0.5677316784858704,
+      "base_evidence_spearman": 0.8645880818367004
+    }
+  ],
+  "final": {
+    "cdea_unique_spearman": 0.5677316784858704,
+    "base_evidence_spearman": 0.8645880818367004,
+    "accuracy": 0.3359375
+  }
+}

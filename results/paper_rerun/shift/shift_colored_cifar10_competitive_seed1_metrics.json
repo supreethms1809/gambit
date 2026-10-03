@@ -1,0 +1,25 @@
+{
+  "batch_size": 16,
+  "game_config": {
+    "lambda_disjoint": 0.4,
+    "lambda_gap": 1.5,
+    "lambda_mean": 1.0,
+    "lambda_shortcut": 0.0,
+    "lambda_sparse": 0.05,
+    "lambda_var": 0.5
+  },
+  "game_mode": "competitive",
+  "id_ood_gap": 3.5590337085723878,
+  "num_images": 400,
+  "num_steps": 40,
+  "run_name": "shift_colored_cifar10_competitive_seed1",
+  "scalar_metrics": {
+    "disjoint": 1.0821333479881288,
+    "loss": -7.302995643615723,
+    "rob_mean": 6.80804479598999,
+    "rob_var": 0.013173791561275721,
+    "sho_gap": 1.0341480827331544,
+    "sho_mean": 0.22156596302986145,
+    "sparse": 12.336621932983398
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -2.798298749923706,
+      "overlap": 1.749069881439209,
+      "sparse": 1.0,
+      "suff": 2.1414755058288573
+    },
+    "naive_contrastive": {
+      "margin": -2.8164156532287596,
+      "overlap": 0.9695871376991272,
+      "sparse": 1.0,
+      "suff": 2.165128803253174
+    },
+    "optimized": {
+      "margin": -1.994555583000183,
+      "overlap": 0.026296487152576445,
+      "sparse": 1.019507098197937,
+      "suff": 2.76372314453125
+    }
+  },
+  "batch_size": 16,
+  "dataset": "mnist",
+  "evidence": "ig",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_mnist_ig_seed2",
+  "use_shared": false
+}

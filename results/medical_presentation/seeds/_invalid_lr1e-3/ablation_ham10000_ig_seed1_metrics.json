@@ -1,0 +1,42 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -4.700061779022217,
+      "overlap": 0.47003980159759523,
+      "sparse": 1.0,
+      "suff": 0.10471246838569641
+    },
+    "naive_contrastive": {
+      "margin": -4.716605377197266,
+      "overlap": 0.28586015224456784,
+      "sparse": 1.0,
+      "suff": 0.11861480087041855
+    },
+    "optimized": {
+      "margin": -1.982216031551361,
+      "overlap": 0.16425424039363862,
+      "sparse": 1.0081568813323976,
+      "suff": 1.1343477320671083
+    }
+  },
+  "batch_size": 16,
+  "dataset": "ham10000",
+  "evidence": "ig",
+  "game_mode": "mixed",
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.1,
+  "lr": 0.2,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 50,
+  "pretrained": true,
+  "run_name": "ablation_ham10000_ig_seed1",
+  "use_shared": true
+}

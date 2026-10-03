@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -2.4993692207336426,
+      "overlap": 0.6853929495811463,
+      "sparse": 1.0,
+      "suff": -3.4873214626312254
+    },
+    "naive_contrastive": {
+      "margin": -2.4579084396362303,
+      "overlap": 0.401070396900177,
+      "sparse": 1.0,
+      "suff": -3.442314224243164
+    },
+    "optimized": {
+      "margin": -1.3645521354675294,
+      "overlap": 0.024886233955621718,
+      "sparse": 1.0530257797241211,
+      "suff": -2.5230155420303344
+    }
+  },
+  "batch_size": 16,
+  "dataset": "stanford_dogs",
+  "evidence": "ig",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": 16,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lambda_shared_sparse": 0.25,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_stanford_dogs_ig_seed2",
+  "use_shared": false
+}

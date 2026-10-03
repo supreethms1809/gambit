@@ -1,0 +1,55 @@
+{
+  "checkpoint": "examples/out/checkpoints/ham10000_resnet18.pt",
+  "dataset": "ham10000",
+  "model": "resnet18",
+  "evidence": "gradcam",
+  "grid": [
+    7,
+    7
+  ],
+  "game_mode": "mixed",
+  "lambda_shared_sparse": 0.25,
+  "num_alloc_steps": 50,
+  "seed": 0,
+  "scan_images": 512,
+  "selected": {
+    "true": "melanocytic nevus",
+    "pair": [
+      "melanoma",
+      "melanocytic nevus"
+    ],
+    "probs": [
+      0.485566109418869,
+      0.4526023268699646
+    ],
+    "top1_top2_gap": 0.03296378254890442
+  },
+  "evidence_cosine_top2": {
+    "selected_image": 0.9854123592376709,
+    "scan_set_mean": 0.8244861362036318,
+    "scan_set_n": 512
+  },
+  "metrics_this_image": {
+    "base_evidence": {
+      "suff": 1.195204734802246,
+      "margin": -2.256673574447632,
+      "overlap": 0.7305732369422913,
+      "sparse": 1.0
+    },
+    "optimized": {
+      "suff": 1.6181285381317139,
+      "margin": -1.2912993431091309,
+      "overlap": 0.5398107767105103,
+      "sparse": 1.0170190334320068
+    }
+  },
+  "set_overlap_quoted": "0.447,0.069",
+  "logit_top1": {
+    "full_image": 4.097984790802002,
+    "kept_mask": 3.16947865486145
+  },
+  "margin_top1_vs_top2": {
+    "full_image": 0.07030153274536133,
+    "kept_mask": 0.3901824951171875
+  }
+}

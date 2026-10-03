@@ -1,0 +1,241 @@
+{
+  "detail": {
+    "brain_tumor": {
+      "by_grid": {
+        "14": {
+          "cell_area_fraction": 0.00510204081632653,
+          "center_1cell": 0.11028125,
+          "center_3x3": 0.1006484375
+        },
+        "28": {
+          "cell_area_fraction": 0.0012755102040816326,
+          "center_1cell": 0.130296875,
+          "center_3x3": 0.1235
+        },
+        "56": {
+          "cell_area_fraction": 0.00031887755102040814,
+          "center_1cell": 0.137625,
+          "center_3x3": 0.13651388888888888
+        },
+        "7": {
+          "cell_area_fraction": 0.02040816326530612,
+          "center_1cell": 0.1311640625,
+          "center_3x3": 0.07326128472222222
+        }
+      },
+      "centroid_mean_yx": [
+        0.4966150711865903,
+        0.4535465164754941
+      ],
+      "centroid_std_yx": [
+        0.09957087931087552,
+        0.11401687904326065
+      ],
+      "chance_area_fraction": 0.016599888392857143,
+      "flat": {
+        "gaussian_sigma_h4": 0.03639321223055267,
+        "gaussian_sigma_h6": 0.058560550796502686,
+        "uniform": 0.016599888392857143
+      },
+      "n": 1000
+    },
+    "ham10000": {
+      "by_grid": {
+        "14": {
+          "cell_area_fraction": 0.00510204081632653,
+          "center_1cell": 0.93430078125,
+          "center_3x3": 0.8783975694444444
+        },
+        "28": {
+          "cell_area_fraction": 0.0012755102040816326,
+          "center_1cell": 0.95496875,
+          "center_3x3": 0.9435711805555556
+        },
+        "56": {
+          "cell_area_fraction": 0.00031887755102040814,
+          "center_1cell": 0.9610625,
+          "center_3x3": 0.9584444444444443
+        },
+        "7": {
+          "cell_area_fraction": 0.02040816326530612,
+          "center_1cell": 0.939751953125,
+          "center_3x3": 0.7292459852430555
+        }
+      },
+      "centroid_mean_yx": [
+        0.4942239842647125,
+        0.49037065042711186
+      ],
+      "centroid_std_yx": [
+        0.06531040192571201,
+        0.04915040778695382
+      ],
+      "chance_area_fraction": 0.26521456473214283,
+      "flat": {
+        "gaussian_sigma_h4": 0.4548822719508694,
+        "gaussian_sigma_h6": 0.6207669853385278,
+        "uniform": 0.26521456473214283
+      },
+      "n": 1000
+    }
+  },
+  "num_masks_requested": 1000,
+  "rows": [
+    {
+      "dataset": "ham10000",
+      "grid": "",
+      "method": "uniform",
+      "n": 1000,
+      "score": 0.26521456473214283
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "",
+      "method": "gaussian_sigma_h4",
+      "n": 1000,
+      "score": 0.4548822719508694
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "",
+      "method": "gaussian_sigma_h6",
+      "n": 1000,
+      "score": 0.6207669853385278
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "7",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.939751953125
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "7",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.7292459852430555
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "14",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.93430078125
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "14",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.8783975694444444
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "28",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.95496875
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "28",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.9435711805555556
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "56",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.9610625
+    },
+    {
+      "dataset": "ham10000",
+      "grid": "56",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.9584444444444443
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "",
+      "method": "uniform",
+      "n": 1000,
+      "score": 0.016599888392857143
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "",
+      "method": "gaussian_sigma_h4",
+      "n": 1000,
+      "score": 0.03639321223055267
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "",
+      "method": "gaussian_sigma_h6",
+      "n": 1000,
+      "score": 0.058560550796502686
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "7",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.1311640625
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "7",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.07326128472222222
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "14",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.11028125
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "14",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.1006484375
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "28",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.130296875
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "28",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.1235
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "56",
+      "method": "center_1cell",
+      "n": 1000,
+      "score": 0.137625
+    },
+    {
+      "dataset": "brain_tumor",
+      "grid": "56",
+      "method": "center_3x3",
+      "n": 1000,
+      "score": 0.13651388888888888
+    }
+  ],
+  "seed": 0,
+  "size": 224
+}

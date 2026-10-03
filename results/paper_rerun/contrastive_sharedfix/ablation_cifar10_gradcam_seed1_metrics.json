@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "base_evidence": {
+      "margin": -1.9641964387893678,
+      "overlap": 0.4008343040943146,
+      "sparse": 1.0,
+      "suff": 0.16675307907164097
+    },
+    "naive_contrastive": {
+      "margin": -1.9590669441223145,
+      "overlap": 0.2332765954732895,
+      "sparse": 1.0,
+      "suff": 0.17106158137321473
+    },
+    "optimized": {
+      "margin": -1.1999440693855286,
+      "overlap": 0.008597016632556916,
+      "sparse": 1.0391289901733398,
+      "suff": 0.7074337983131409
+    }
+  },
+  "batch_size": 16,
+  "dataset": "cifar10",
+  "evidence": "gradcam",
+  "game_mode": null,
+  "grid_h": 7,
+  "grid_w": 7,
+  "ig_steps": null,
+  "input_size": 224,
+  "lambda_disjoint": 0.5,
+  "lambda_margin": 1.0,
+  "lambda_mass": 2.0,
+  "lambda_overlap": 0.2,
+  "lambda_partition": 0.0,
+  "lambda_shared_sparse": 0.25,
+  "lr": 0.3,
+  "model": "resnet18",
+  "num_images": 400,
+  "num_steps": 40,
+  "pretrained": true,
+  "run_name": "ablation_cifar10_gradcam_seed1",
+  "use_shared": false
+}
