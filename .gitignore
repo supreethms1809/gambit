@@ -215,3 +215,17 @@ scripts/out/*.json
 scripts/out/*.csv
 scripts/out/journal/
 examples/out/
+
+# Checkpoints, videos, and Finder metadata never belong in git.
+*.pt
+*.mp4
+*.pptx
+.DS_Store
+results/**/checkpoints/
+results/**/models/
+
+# Pre-audit figures, logs, and launch scripts stay local. JSON/CSV/MD are tracked.
+results/**/*.png
+results/**/*.pdf
+results/**/*.sh
+cdae_extendedAbs/*.docx
