@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p2-datasets`. Degenerate-check pull request: https://github.com/supreethms1809/gambit/pull/3
+Branch: `paper/p2-shift-data`.
 
 ## Stage status
 
@@ -14,7 +14,7 @@ Branch: `paper/p2-datasets`. Degenerate-check pull request: https://github.com/s
 | S05 | done | `fd447a1`, `3b979ae` | One overlap weight, shared-sparse default 0.25, shift mass target, equation audit. |
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
-| S08 | todo | | Shift datasets. Next session. |
+| S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
 | S09–S28 | todo | | Not started. |
 
 ## Decisions
@@ -34,6 +34,11 @@ Branch: `paper/p2-datasets`. Degenerate-check pull request: https://github.com/s
 - 2026-10-03. The paper pet dataset is `oxford_pets`, the 37-breed Oxford-IIIT Pet set. `pets` remains the 2-class cats-vs-dogs folder and is not a paper dataset.
 - 2026-10-03. CIFAR-100, Oxford-IIIT Pet, and CUB-200 use the official test split. Val is 10% of each class inside the official train pool, seed 43. Script counts: CIFAR-100 45000/5000/10000 (100 classes, 450/50/100). Oxford-IIIT Pet 3311/369/3669 (37 breeds). CUB-200 5394/600/5794 (200 classes). Every class is on all three sides.
 - 2026-10-03. ImageNet-S was not downloaded. The public release is a split of ImageNet-1k plus segmentation masks, and ImageNet-1k is not on this machine.
+- 2026-10-03. Waterbirds pairs use CUB segmentations and the Places365 validation images of bamboo forest, broadleaf forest, lake/natural, and ocean (200 land, 200 water). Backgrounds are split 160/20/20 with seeds 43 and 44. Birds use the CUB paper indices. The water-bird list is the group_DRO substring list, so "tern" also marks bittern. This is not the full Places training pool.
+- 2026-10-03. ImageNet-9 training images came from the S3 mirror. The Dropbox links return HTML. Val folders pair completely: 4185 images in original, mixed_same, and mixed_rand, and 45405 original train images. The GitHub challenge release is the held-out test set. It is downloaded and not extracted. The loader refuses a `bg_challenge` path.
+- 2026-10-03. Planted-patch CIFAR-10 has two patches. The environments are present, moved, and removed, on the CIFAR-10 paper indices. The two-patch recovery metric stays in S17.
+- 2026-10-03. ColoredMNIST OOD views recolor the digit recovered by inverting the label hue. The previous view averaged the colored channels, which scales the digit by the mean of the hue. That invalidates stored ColoredMNIST environment views built the old way. Those runs are pre-audit. Stanford Dogs background restyling is unchanged (`make_env_fn`).
+- 2026-10-03. The val contact sheet was inspected. The same bird sits on a forest photo and a beach photo, with the mask on that bird. The two CIFAR patches move and then disappear. A ColoredMNIST digit keeps its shape across three hues. An ImageNet-9 dog keeps its pose across original, mixed-same, and mixed-rand backgrounds.
 
 ## Open issues
 
@@ -41,6 +46,8 @@ Branch: `paper/p2-datasets`. Degenerate-check pull request: https://github.com/s
 - S05 invalidates stored ablation `suff` and `overlap` columns. Those files were already pre-audit.
 - `docs/paper/EVAL_PLAN.md` does not exist. The test split stays locked.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
+- Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
+- The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
 - No background jobs are running.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
@@ -52,14 +59,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
 
-## Exit check (S07)
+## Exit check (S08)
 
 ```
-64 passed, 8 warnings in 2.68s
+74 passed, 8 warnings in 9.06s
 ```
 
-Loaders open a raw `[0, 1]` batch for CIFAR-100, Oxford-IIIT Pet, and CUB-200. `tests/test_s07_datasets.py` checks that every class is in train, val, and test.
+`tests/test_shift_pairs.py` checks the recolor, the disjoint patch move, the ImageNet-9 foreground key, and the on-disk Waterbirds and ImageNet-9 val pairs. The contact sheet is `results/paper/shift_pairs/preview.png` (local, not committed).
 
 ## Next session
 
-Stage **S08**. Shift datasets: Waterbirds pairs, ImageNet-9 backgrounds, the two-patch planted variant, and a check of the existing ColoredMNIST loader. Val only for any smoke run. Do not pass `--final`. ImageNet-1k is still not on disk.
+Stage **S09**. Launch training: 5 seeds × datasets × backbones, in the background, and a script for the model table. Val selection only. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
