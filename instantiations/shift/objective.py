@@ -1,3 +1,12 @@
+"""Shift objective: one joint loss on a robust mask and a shortcut mask.
+
+The quantity inside ``rob_mean`` and ``sho_gap`` is the baseline-subtracted kept
+logit, z(keep) - z(keep of an empty mask). It is not the contrastive game's raw
+kept logit.
+
+``lambda_sparse`` alone pulls both masks toward empty. ``lambda_mass`` pulls each
+mask toward a grid-scaled mass target, so a blanket and an empty mask both cost.
+"""
 from __future__ import annotations
 from typing import Any, Dict, Optional
 import torch
@@ -6,10 +15,16 @@ from core.types import Tensor, HypothesisSet, EnvBatch
 class RobustShortcutObjective:
     def __init__(self, lambda_mean=1.0, lambda_var=0.5, lambda_gap=1.0,
                  lambda_disjoint=0.2, lambda_sparse=0.05, target="pred",
-                 lambda_shortcut=0.0):
+                 lambda_shortcut=0.0, lambda_mass=0.1, mass_ref_regions=49):
         self.lm, self.lv, self.lg = lambda_mean, lambda_var, lambda_gap
         self.ls = lambda_shortcut
         self.ld, self.lp = lambda_disjoint, lambda_sparse
+        self.lambda_mass = lambda_mass
+        if mass_ref_regions <= 0:
+            raise ValueError("mass_ref_regions must be > 0")
+        if lambda_mass < 0:
+            raise ValueError("lambda_mass must be >= 0")
+        self.mass_ref_regions = mass_ref_regions
         self.target = target
 
     def compute(self, x: Any, model: Any, unit_space: Any, hypotheses: HypothesisSet,
@@ -41,7 +56,7 @@ class RobustShortcutObjective:
         else:
             raise ValueError("target must be one of: pred, top_hypothesis, label")
 
-        def suff(m: Tensor, x_env: Any) -> Tensor:
+        def baseline_subtracted_kept_logit(m: Tensor, x_env: Any) -> Tensor:
             x_keep = unit_space.keep(x_env, m)
             z = model(x_keep).gather(1, y[:, None]).squeeze(1)
             z0 = model(unit_space.keep(x_env, torch.zeros_like(m))).gather(1, y[:, None]).squeeze(1)
@@ -50,8 +65,8 @@ class RobustShortcutObjective:
         suff_rob = []
         suff_sho = []
         for xe in env.xs:
-            suff_rob.append(suff(m_rob, xe))
-            suff_sho.append(suff(m_sho, xe))
+            suff_rob.append(baseline_subtracted_kept_logit(m_rob, xe))
+            suff_sho.append(baseline_subtracted_kept_logit(m_sho, xe))
         suff_rob = torch.stack(suff_rob, dim=1)
         suff_sho = torch.stack(suff_sho, dim=1)
 
@@ -63,7 +78,19 @@ class RobustShortcutObjective:
         gap = sho_id - sho_ood_mean
         sho_mean = suff_sho.mean(dim=1)
 
-        loss = -(self.lm * rob_mean - self.lv * rob_var + self.lg * gap + self.ls * sho_mean) + self.ld * disjoint + self.lp * sparse
+        regions = m_rob.shape[-1]
+        mass_scale = max(1.0, regions / float(self.mass_ref_regions))
+        mass_dev = 0.5 * (
+            (m_rob.sum(dim=-1) - mass_scale).abs()
+            + (m_sho.sum(dim=-1) - mass_scale).abs()
+        )
+
+        loss = (
+            -(self.lm * rob_mean - self.lv * rob_var + self.lg * gap + self.ls * sho_mean)
+            + self.ld * disjoint
+            + self.lp * sparse
+            + self.lambda_mass * mass_dev
+        )
 
         return {
             "loss": loss.mean(),
@@ -73,4 +100,5 @@ class RobustShortcutObjective:
             "sho_mean": sho_mean.mean(),
             "disjoint": disjoint.mean(),
             "sparse": sparse.mean(),
+            "mass_dev": mass_dev.mean(),
         }

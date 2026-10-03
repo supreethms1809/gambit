@@ -268,18 +268,24 @@ def compute_metrics(
     masks_unique: Tensor,
     masks_shared: Tensor | None = None,
 ) -> Dict[str, float]:
-    """Intervention-based sufficiency, margin, overlap, sparsity (same as ContrastiveObjective)."""
+    """Kept logit, margin, overlap, and sparsity, using the objective's overlap formula.
+
+    ``kept_logit`` / ``suff`` is the raw logit on the kept image, matching
+    ContrastiveObjective. ``baseline_subtracted_kept_logit`` subtracts the logit
+    of an all-zero input. That second quantity is what the shift game reports.
+    """
+    from instantiations.contrastive.objective import pairwise_overlap
+
     B, K, R = masks_unique.shape
     valid = hypotheses.mask
     h_ids = hypotheses.ids
     m_tot = masks_unique + (masks_shared[:, None, :] if masks_shared is not None else 0.0)
 
-    # Baseline: all-zeros input — used to make suff baseline-subtracted
     with torch.no_grad():
-        x_zeros = torch.zeros_like(x)
-        logits_zeros = model(x_zeros)
+        logits_zeros = model(torch.zeros_like(x))
 
-    suff = torch.zeros(B, K, device=x.device)
+    kept = torch.zeros(B, K, device=x.device)
+    subtracted = torch.zeros(B, K, device=x.device)
     margin = torch.zeros(B, K, device=x.device)
     for k in range(K):
         mk = m_tot[:, k, :]
@@ -288,19 +294,28 @@ def compute_metrics(
         cls_k = h_ids[:, k].clamp_min(0)
         z_k = logits.gather(1, cls_k.unsqueeze(1)).squeeze(1)
         z_base = logits_zeros.gather(1, cls_k.unsqueeze(1)).squeeze(1)
-        suff[:, k] = z_k - z_base  # how much better than seeing nothing
+        kept[:, k] = z_k
+        subtracted[:, k] = z_k - z_base
         z_all = logits.gather(1, h_ids.clamp_min(0))
         z_all = z_all.masked_fill(~valid, float("-inf"))
         z_foil = z_all.clone()
         z_foil[:, k] = float("-inf")
         margin[:, k] = z_k - z_foil.max(dim=1).values
 
-    dots = torch.einsum("bkr,blr->bkl", masks_unique, masks_unique)
-    overlap = (dots.sum(dim=(1, 2)) - dots.diagonal(dim1=1, dim2=2).sum(dim=1)).mean().item()
+    def _mean_valid(values: Tensor) -> float:
+        return (values.masked_fill(~valid, 0.0).sum(dim=1) / valid.sum(dim=1).clamp_min(1)).mean().item()
+
+    kept_logit = _mean_valid(kept)
+    overlap = pairwise_overlap(masks_unique).mean().item()
     sparse = masks_unique.abs().sum(dim=-1).mean(dim=1).mean().item()
-    suff_mean = (suff.masked_fill(~valid, 0.0).sum(dim=1) / valid.sum(dim=1).clamp_min(1)).mean().item()
-    margin_mean = (margin.masked_fill(~valid, 0.0).sum(dim=1) / valid.sum(dim=1).clamp_min(1)).mean().item()
-    return {"suff": suff_mean, "margin": margin_mean, "overlap": overlap, "sparse": sparse}
+    return {
+        "kept_logit": kept_logit,
+        "suff": kept_logit,
+        "baseline_subtracted_kept_logit": _mean_valid(subtracted),
+        "margin": _mean_valid(margin),
+        "overlap": overlap,
+        "sparse": sparse,
+    }
 
 
 def run_ablation(
@@ -311,9 +326,9 @@ def run_ablation(
     model_name: str = "resnet18",
     pretrained: bool = False,
     ig_steps: int = 8,
-    lambda_disjoint: float = 0.5,
+    lambda_disjoint: float = 0.0,
     lambda_mass: float = 2.0,
-    lambda_shared_sparse: float = 0.0,
+    lambda_shared_sparse: float = 0.25,
     data_root: str | None = None,
     export_prefix: str | None = None,
     checkpoint: Optional[str] = None,
@@ -613,9 +628,10 @@ if __name__ == "__main__":
                         help="Allow the test split. Refuses a dirty tree and an unfrozen eval plan.")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--ig_steps", type=int, default=8)
-    parser.add_argument("--lambda_disjoint", type=float, default=0.5)
+    parser.add_argument("--lambda_disjoint", type=float, default=0.0,
+                        help="Retired. Must be 0. Overlap has one weight, lambda_overlap.")
     parser.add_argument("--lambda_mass", type=float, default=2.0)
-    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.25,
                         help="L1 penalty on the shared mask. At 0.0 it is in no penalty "
                              "term at all and inflates to blanket ~46%% of the grid. Note "
                              "that sufficiency is measured on keep(x, unique + shared), so "

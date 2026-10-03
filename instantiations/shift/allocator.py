@@ -14,7 +14,7 @@ class RobustShortcutOptimizationAllocator:
     """
     Allocator for robust vs shortcut:
     - m_rob_logits (B,R), m_sho_logits (B,R)
-    - sigmoid to [0,1], disjointness penalty, same optimization loop as contrastive
+    - sigmoid to [0,1]. Overlap is penalised only inside the objective.
     - Requires env: EnvBatch in allocate()
     """
 

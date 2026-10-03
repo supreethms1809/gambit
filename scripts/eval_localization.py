@@ -137,11 +137,9 @@ def main() -> None:
     parser.add_argument("--num_alloc_steps", type=int, default=50)
     parser.add_argument("--game_mode", type=str, default="mixed")
     parser.add_argument("--lambda_mass", type=float, default=2.0)
-    parser.add_argument("--lambda_shared_sparse", type=float, default=0.0,
-                        help="L1 penalty on the shared mask. At 0.0 it is in no penalty term at "
-                             "all and inflates to blanket ~46%% of the grid at 0.99x "
-                             "chance on base-evidence capture. See "
-                             "docs/MEDICAL_RESULTS.md section 9a.")
+    parser.add_argument("--lambda_shared_sparse", type=float, default=0.25,
+                        help="L1 penalty on the shared mask. The default 0.25 closes the "
+                             "shared-mask blanket. At 0.0 the shared mask is unpenalized.")
     parser.add_argument("--evidence", type=str, default="gradcam", choices=["gradcam", "ig", "occlusion"],
                         help="Base evidence provider to score")
     parser.add_argument("--ig_steps", type=int, default=16,
