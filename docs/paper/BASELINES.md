@@ -11,7 +11,7 @@ records the pin, the conversion, and the check each method has to pass first.
 - The budget conversion does not clamp. An all-negative map keeps its order, and the least-negative entries receive the area.
 - A row with a non-finite value, or a row with no entries, is a failure. `budget_or_floor` replaces that row with `random_floor`, a seeded area-a mask, and leaves the row in the batch.
 - Library pins, checked in `tests/test_baselines.py`: `grad-cam` 1.5.7 and `captum` 0.9.0 (`baselines/versions.py`). This repo has no `environment.yml`.
-- GradientShap draws its path coefficients with NumPy and its noise with `torch.normal`. A repeat seeds both `torch.manual_seed` and `numpy.random.seed` before the call. RISE and SpRAy get the same rule when those methods land.
+- GradientShap draws its path coefficients with NumPy and its noise with `torch.normal`. A repeat seeds both `torch.manual_seed` and `numpy.random.seed` before the call. RISE draws its masks from NumPy's global state, so a repeat seeds `numpy.random.seed` before the call. SpRAy seeds k-means with `random_state`.
 - Paper checkpoints take raw `[0, 1]` input. `NormalizedModel` is the wrapper for a library call that expects ImageNet normalisation inside the model. The CIFAR-10 checkpoint used for the cross-check was trained on raw input, so both implementations call that model directly.
 
 ## Margin attribution
@@ -93,6 +93,38 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** Fewer than three maps raises. `n_eigval` greater than or equal to the number of maps raises. A non-finite map raises.
 - **Cost.** One LRP backward per image, then one spectral clustering of the stack.
 
+## Contrastive Grad-CAM
+
+- **Reviewer question.** Gradient-based contrastive saliency exists.
+- **Citation.** Mohit Prabhushankar, Gukyeong Kwon, Dogancan Temel, and Ghassan AlRegib, Contrastive Explanations in Neural Networks, ICIP 2020.
+- **Source.** `pytorch-grad-cam` 1.5.7 with `CrossEntropyContrastTarget`. The scalar is the cross-entropy of the logits toward the contrast class Q, which is hypothesis rank 1. The official repository is https://github.com/olivesgatech/Contrastive-Explanations. Their qualitative examples (spoonbill versus flamingo, a bull mastiff, Stanford Cars) have not been run.
+- **Patches.** None. The target is the paper's recognition loss. It is not the logit margin in `baselines/margin.py`.
+- **Defaults.** The same last-convolution Grad-CAM pooling as the margin adapter.
+- **Reproduction.** The toy-model test in `tests/test_extended_baselines.py`. Class 0 is a red square, class 1 is a blue square, and the map has to land on the kept square. The authors' qualitative figures are the published check and have not been run.
+- **Conversion.** The shared budget conversion.
+- **Failure modes.** A model with fewer than two valid hypotheses has no contrast class. That call raises.
+- **Cost.** One Grad-CAM backward per image.
+
+## SCOUT
+
+- **Reviewer question.** Discriminant why-A-not-B explanations exist.
+- **Citation.** Pei Wang and Nuno Vasconcelos, SCOUT: Self-aware Discriminant Counterfactual Explanations, CVPR 2020.
+- **Source.** https://github.com/peiwang062/SCOUT is public. It is a training pipeline for CUB and ADE: an AlexNet, VGG, or ResNet plus a separate hardness predictor, with weights on Google Drive. It does not explain an arbitrary frozen classifier.
+- **Attempt.** The repository was inspected and not vendored. A drop-in call would require their hardness predictor and a CUB or ADE retrain. That retrain is not this adapter.
+- **Reproduction.** Not run. The dossier records the omission. No Google Drive weights were downloaded.
+
+## RISE
+
+- **Reviewer question.** Sampling-based perturbation would do the same.
+- **Citation.** Vitali Petsiuk, Abir Das, and Kate Saenko, RISE: Randomized Input Sampling for Explanation of Black-box Models, BMVC 2018.
+- **Source.** Official PyTorch class `RISE` in `explanations.py`, commit `d91ea006d4bb9b7990347fe97086bdc0f5c1fe10`, vendored at `third_party/rise`. Licence MIT. TorchRay's RISE is a different reimplementation and is not this pin.
+- **Patches.** `RISE` takes a `device` and moves the masks there. When CUDA is available the default is still CUDA. `generate_masks` skips the `masks.npy` write when `savepath` is `None`. The mask draw and the weighted sum are unchanged. The official forward uses the model's raw output, not a softmax.
+- **Defaults.** The ImageNet ResNet-50 setting: 8000 masks, cell grid 7, keep-probability 0.5, input 224. VGG-16 in the paper uses 4000 masks. The toy check passes a smaller mask count and grid as arguments of the same function.
+- **Reproduction target.** Table 1, ImageNet validation, deletion (lower is better) and insertion (higher is better). ResNet-50: deletion \(0.1076 \pm 0.0005\), insertion \(0.7267 \pm 0.0006\). VGG-16: deletion \(0.0980 \pm 0.0025\), insertion \(0.6663 \pm 0.0014\). That run has not been started: ImageNet-1k is not on disk. The CI check is the toy square, plus an identity check against the vendored `RISE.forward`.
+- **Conversion.** The shared budget conversion. The per-class map is the official weighted sum. The margin map uses the same masks and weights each one by \(z_k - z_l\).
+- **Failure modes.** Fewer than one mask raises. A keep-probability outside \((0, 1]\) raises. A non-finite map raises. The margin call raises when the foil is missing.
+- **Cost.** One forward of the classifier per mask. The authors' ResNet-50 setting is 8000 forwards per image.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
@@ -101,8 +133,6 @@ records the pin, the conversion, and the check each method has to pass first.
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
 | Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
 | SpRAy on the VOC horse analysis | The four strategies above. | Still needs their Fisher-vector classifier and VOC 2007. |
-| Contrastive Grad-CAM | Gradient-based contrastive saliency exists. | S14 |
-| SCOUT | Discriminant why-A-not-B explanations exist. | S14 |
-| RISE | Sampling-based perturbation would do the same. | S14 |
+| RISE deletion and insertion | The published ImageNet table above. | Still needs ImageNet-1k. |
 
 Method-specific conversions that are not the shared top-a rule (CVE edit order, SpRAy cluster relevance, Extremal Perturbations' native area mask) are added with the method that needs them.
