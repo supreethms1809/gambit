@@ -6,11 +6,14 @@ from tqdm import tqdm
 
 
 class RISE(nn.Module):
-    def __init__(self, model, input_size, gpu_batch=100):
+    def __init__(self, model, input_size, gpu_batch=100, device=None):
         super(RISE, self).__init__()
         self.model = model
         self.input_size = input_size
         self.gpu_batch = gpu_batch
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = torch.device(device)
 
     def generate_masks(self, N, s, p1, savepath='masks.npy'):
         cell_size = np.ceil(np.array(self.input_size) / s)
@@ -29,15 +32,16 @@ class RISE(nn.Module):
             self.masks[i, :, :] = resize(grid[i], up_size, order=1, mode='reflect',
                                          anti_aliasing=False)[x:x + self.input_size[0], y:y + self.input_size[1]]
         self.masks = self.masks.reshape(-1, 1, *self.input_size)
-        np.save(savepath, self.masks)
+        if savepath is not None:
+            np.save(savepath, self.masks)
         self.masks = torch.from_numpy(self.masks).float()
-        self.masks = self.masks.cuda()
+        self.masks = self.masks.to(self.device)
         self.N = N
         self.p1 = p1
 
     def load_masks(self, filepath):
         self.masks = np.load(filepath)
-        self.masks = torch.from_numpy(self.masks).float().cuda()
+        self.masks = torch.from_numpy(self.masks).float().to(self.device)
         self.N = self.masks.shape[0]
 
     def forward(self, x):
