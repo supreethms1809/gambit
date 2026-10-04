@@ -26,12 +26,17 @@ class RobustShortcutOptimizationAllocator:
         lr: float = 0.5,
         lambda_disjoint: float = 0.2,
         init_from_evidence: bool = True,
+        init_seed: int = 0,
     ):
         self.objective = objective
         self.num_steps = num_steps
         self.lr = lr
+        # Not applied here: the objective already holds the disjointness term.
+        # This must equal the objective's lambda_disjoint and is checked in
+        # allocate(), so a caller cannot silently set two different values.
         self.lambda_disjoint = lambda_disjoint
         self.init_from_evidence = init_from_evidence
+        self.init_seed = int(init_seed)
 
     def allocate(
         self,
@@ -66,6 +71,15 @@ class RobustShortcutOptimizationAllocator:
             E_clamp = E.clamp(1e-4, 1 - 1e-4).to(torch.float32)
             m_rob_logits = torch.logit(E_clamp * 0.5, eps=1e-4).clamp(-3.0, 3.0)
             m_sho_logits = torch.logit(E_clamp * 0.5, eps=1e-4).clamp(-3.0, 3.0)
+            # Break the rob/sho symmetry. Identical starts leave separation
+            # entirely to the gradients while the disjoint penalty starts near
+            # maximal. A small deterministic jitter (±0.25 logit units) on the
+            # shortcut side gives the two masks different descent directions
+            # without biasing either toward any region.
+            jitter_gen = torch.Generator(device="cpu")
+            jitter_gen.manual_seed(self.init_seed)
+            noise = torch.rand(m_sho_logits.shape, generator=jitter_gen) - 0.5
+            m_sho_logits = (m_sho_logits + 0.5 * noise.to(m_sho_logits.device)).clamp(-3.0, 3.0)
         else:
             m_rob_logits = torch.zeros(B, R, device=device, dtype=torch.float32)
             m_sho_logits = torch.zeros(B, R, device=device, dtype=torch.float32)

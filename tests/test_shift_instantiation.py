@@ -138,8 +138,40 @@ def test_robust_shortcut_objective_targets():
     print("PASS: RobustShortcutObjective target modes (pred/top_hypothesis/label)")
 
 
+def test_shift_init_breaks_rob_sho_symmetry_deterministically():
+    """Pass: robust and shortcut start apart, identically across repeats."""
+    B, R = 4, 16
+    unit_space = VisionGridUnitSpace(4, 4)
+    model = TinyCNN(num_classes=10).eval()
+    objective = RobustShortcutObjective(lambda_disjoint=0.2)
+    x = torch.rand(B, 3, 28, 28)
+    aug1, aug2 = default_shift_augs(color_jitter=0.4)
+    env = env_batch_from_augs(x, aug1, aug2)
+    hypotheses = HypothesisSet(ids=torch.randint(0, 10, (B, 3)), mask=torch.ones(B, 3, dtype=torch.bool))
+    evidence = torch.rand(B, 3, R).abs()
+    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
+
+    def run(seed: int):
+        allocator = RobustShortcutOptimizationAllocator(
+            objective, num_steps=0, lr=0.3, lambda_disjoint=0.2, init_seed=seed
+        )
+        return allocator.allocate(
+            x=x, model=model, unit_space=unit_space, hypotheses=hypotheses,
+            evidence=evidence, env=env,
+        )
+
+    first, second = run(0), run(0)
+    assert not torch.equal(first["robust"], first["shortcut"]), "inits must differ"
+    assert torch.equal(first["shortcut"], second["shortcut"]), "init must be deterministic"
+    assert torch.equal(first["robust"], second["robust"])
+    other = run(1)
+    assert not torch.equal(first["shortcut"], other["shortcut"]), "seed must move the init"
+    print("PASS: shift robust/shortcut inits differ deterministically")
+
+
 if __name__ == "__main__":
     test_env_batch_logits_differ()
     test_robust_shortcut_allocator_metrics()
     test_robust_shortcut_objective_targets()
+    test_shift_init_breaks_rob_sho_symmetry_deterministically()
     print("All shift instantiation pass conditions OK.")
