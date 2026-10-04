@@ -44,10 +44,19 @@ class OptimizationAllocator:
         lambda_disjoint: float = 0.0,
         lambda_partition: float = 0.0,
         init_from_evidence: bool = True,
-        attn_mix: float = 0.35,
+        attn_mix: float = 0.0,
         logit_clip: float = 12.0,
         logit_eps: float = 1e-6,
     ):
+        """Args: objective, num_steps, lr, use_shared, lambda_partition,
+        init_from_evidence, logit_clip, logit_eps are the mask optimisation
+        settings. attn_mix blends attention-conditioned evidence into the
+        init; it defaults to 0 (attention ignored). Pass > 0 only with a
+        trained interaction module: the stock modules are randomly
+        initialised and never trained, so their attention is a random
+        projection, and the runner's tokens carry positional — not visual —
+        information.
+        """
         self.objective = objective
         self.num_steps = num_steps
         self.lr = lr

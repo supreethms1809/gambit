@@ -37,10 +37,16 @@ class ContrastiveObjective:
         lambda_sparse: float = 0.05,
         lambda_overlap: float = 0.2,
         lambda_mass: float = 0.1,
-        attn_weight_blend: float = 0.5,
+        attn_weight_blend: float = 0.0,
         mass_ref_regions: int = 49,
         lambda_shared_sparse: float = DEFAULT_LAMBDA_SHARED_SPARSE,
     ):
+        """Args: lambda_suff/margin/sparse/overlap/mass weight the joint loss;
+        mass_ref_regions scales the mass target to a constant grid fraction.
+        attn_weight_blend mixes interaction attention into the hypothesis
+        weights; it defaults to 0 (uniform weights). Pass > 0 only with a
+        trained interaction module (see OptimizationAllocator.attn_mix).
+        """
         self.lambda_suff = lambda_suff
         self.lambda_margin = lambda_margin
         self.lambda_sparse = lambda_sparse

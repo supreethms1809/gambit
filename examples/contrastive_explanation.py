@@ -1007,14 +1007,14 @@ def main():
     parser.add_argument(
         "--interaction_attn_mix",
         type=float,
-        default=0.35,
-        help="Blend ratio in [0,1] for attention-conditioned evidence init in allocator",
+        default=0.0,
+        help="Blend ratio in [0,1] for attention-conditioned evidence init in allocator (0 ignores untrained random attention)",
     )
     parser.add_argument(
         "--interaction_weight_blend",
         type=float,
-        default=0.5,
-        help="Blend ratio in [0,1] for attention-conditioned hypothesis weighting in objective",
+        default=0.0,
+        help="Blend ratio in [0,1] for attention-conditioned hypothesis weighting in objective (0 keeps uniform weights)",
     )
     parser.add_argument(
         "--use_shared",

@@ -206,6 +206,31 @@ def test_invalid_hypotheses_leave_penalty_means():
     print("PASS: penalty means cover valid hypotheses only")
 
 
+def test_default_ignores_untrained_attention():
+    """Pass: default allocator/objective ignore a passed attention map."""
+    B, K, R = 2, 3, 16
+    unit_space = VisionGridUnitSpace(4, 4)
+    model = TinyCNN(num_classes=10).eval()
+    objective = ContrastiveObjective()
+    assert objective.attn_weight_blend == 0.0
+    allocator = OptimizationAllocator(objective, num_steps=6, lr=0.5)
+    assert allocator.attn_mix == 0.0
+    x = torch.rand(B, 3, 32, 32)
+    hypotheses = HypothesisSet(ids=torch.randint(0, 10, (B, K)), mask=torch.ones(B, K, dtype=torch.bool))
+    evidence = torch.rand(B, K, R).abs()
+    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
+    attn = torch.rand(B, K, K)
+    without = allocator.allocate(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, evidence=evidence
+    )["unique"]
+    with_attn = allocator.allocate(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses,
+        evidence=evidence, attn=attn,
+    )["unique"]
+    assert torch.equal(without, with_attn), "default blend 0 must ignore attention"
+    print("PASS: default allocation ignores untrained attention")
+
+
 if __name__ == "__main__":
     test_optimization_allocator_masks_sparse_nontrivial()
     test_contrastive_objective_metrics_direction()
@@ -213,4 +238,5 @@ if __name__ == "__main__":
     test_partition_penalty_scale_invariant()
     test_single_valid_hypothesis_has_finite_zero_margin()
     test_invalid_hypotheses_leave_penalty_means()
+    test_default_ignores_untrained_attention()
     print("All pass conditions OK.")
