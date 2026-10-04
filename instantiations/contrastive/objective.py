@@ -145,7 +145,9 @@ class ContrastiveObjective:
             split_plus_logits[:, k] = z_k
             split_plus_probs[:, k] = p_k
 
-            # Contrastive margin: z_k - max(z_foil), foil = other valid hypotheses
+            # Contrastive margin: z_k - max(z_foil), foil = other valid hypotheses.
+            # Rows with no valid foil (a single valid hypothesis) have no
+            # contrast to draw; their margin is 0 rather than z_k - (-inf).
             z_all = logits_keep.gather(1, h_ids.clamp_min(0))
             p_all = probs_keep.gather(1, h_ids.clamp_min(0))
             keep_logits_topm[:, k, :] = z_all.masked_fill(~valid, 0.0)
@@ -154,12 +156,21 @@ class ContrastiveObjective:
             z_foil = z_all.clone()
             z_foil[:, k] = float("-inf")
             z_foil_max = z_foil.max(dim=1).values
-            margin[:, k] = z_k - z_foil_max
+            margin_k = z_k - z_foil_max
+            margin[:, k] = torch.where(
+                torch.isfinite(z_foil_max),
+                margin_k,
+                torch.zeros_like(margin_k),
+            )
 
-        overlap_per_batch = pairwise_overlap(m_unique)
+        # Overlap counts valid hypotheses only: invalid rows carry
+        # near-zero allocator leftovers, not evidence, and must not move the term.
+        valid_f = valid.float()
+        n_valid = valid_f.sum(dim=1).clamp_min(1.0)
+        overlap_per_batch = pairwise_overlap(m_unique * valid.unsqueeze(-1).float())
 
-        # Sparsity: L1 of masks (averaged over K then batch)
-        sparse_per_batch = m_unique.abs().sum(dim=-1).mean(dim=1)
+        # Sparsity: L1 of the valid unique masks, averaged over valid K
+        sparse_per_batch = (m_unique.abs().sum(dim=-1) * valid_f).sum(dim=1) / n_valid
 
         # The shared mask appears in m_tot, so growing it always raises sufficiency and
         # margin — more of the image is kept — but it was in no penalty term at all. Its
@@ -197,8 +208,11 @@ class ContrastiveObjective:
                                    else torch.zeros_like(sparse_per_batch))
         # (B, K), ~1.0 after normalization, then scaled so the budget is a constant
         # fraction of the grid rather than a constant absolute mass (see __init__).
+        # Invalid hypotheses carry no evidence and no target; they leave the term.
         target_mass = evidence.sum(dim=-1).detach() * mass_scale
-        mass_dev_per_batch = (m_unique.sum(dim=-1) - target_mass).abs().mean(dim=1)
+        mass_dev_per_batch = (
+            ((m_unique.sum(dim=-1) - target_mass).abs() * valid_f).sum(dim=1) / n_valid
+        )
 
         # Mask invalid positions for suff and margin
         h_weights = self._hypothesis_weights(valid, attn)
