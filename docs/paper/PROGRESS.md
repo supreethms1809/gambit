@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p3-metrics`.
+Branch: `paper/p3-g1`.
 
 ## Stage status
 
@@ -23,8 +23,9 @@ Branch: `paper/p3-metrics`.
 | S14 | done | merge `6d038e2` | Contrastive Grad-CAM and official RISE merged as PR #12. SCOUT is recorded as not a drop-in explainer. ImageNet deletion/insertion and the qualitative figures are not run. |
 | S15 | done | merge `d870a1d` | Gate G0 does not pass. The tag `g0-baselines` was not created. Open Core reproductions are listed in `docs/paper/G0.md`. |
 | S16 | done | merge `8715ded` | Unpaired group-statistics objective merged as PR #14. The paired objective is unchanged. |
-| S17 | in review | `64c6597` | CD@a, K×K deletion, ΔD, two-patch recovery, Wilcoxon, Holm, bootstrap. `EVAL_PLAN.md` and `FRAMING.md` are drafts. The freeze tag was not created. |
-| S18–S28 | todo | | Not started. |
+| S17 | done | merge `a0ff742` | Scores and the draft plan merged as PR #15. `EVAL_PLAN.md` is not frozen. |
+| S18 | in review | `7854980` | Gate G1 does not run. The tag `g1-pilot` was not created. No pilot comparison and no stop-or-continue decision. |
+| S19–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -62,6 +63,7 @@ Branch: `paper/p3-metrics`.
 - 2026-10-03. Gate G0 does not pass. Core reproductions still open: the Grad-CAM and Extremal Perturbations pointing games, the CVE edit counts, and the SpRAy horse analysis. The tag `g0-baselines` was not created. No pilot comparison runs. The random area-a floor has a dossier entry.
 - 2026-10-03. The unpaired shift objective scores each image in one group. The reward is the mean of the per-group baseline-subtracted kept logits, minus the variance of the robust group means, plus the variance of the shortcut group means. `lambda_gap` weights that shortcut variance. The paired in-distribution gap is a different quantity and is unchanged. Allocation stays Adam on the mask logits for a fixed number of steps, with the classifier frozen and no learning-rate schedule.
 - 2026-10-03. Primary scores live in `evaluation/scores.py`. CD@a uses ROAD. ΔD subtracts a random mask of equal area. Holm adjusted p-values are the cumulative maximum of (m − i) p_(i). `docs/paper/EVAL_PLAN.md` is a draft. The tag `eval-plan-frozen` was not created. The test split stays locked.
+- 2026-10-03. Gate G1 does not run. G0 is still closed, and the paper dev checkpoints are 2 of 110 cells, both CIFAR-10. HAM10000 has no paper checkpoint yet. The tag `g1-pilot` was not created. No stop-or-continue decision is logged.
 
 ## Open issues
 
@@ -71,7 +73,7 @@ Branch: `paper/p3-metrics`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cell 1 finished: CIFAR-10 ResNet-50 linear probe, seed 0. Cell 2 (`cifar10_resnet50_lp_lr0.001_seed1`) had reached epoch 14 of 15.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had started and had not printed an epoch.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -81,6 +83,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S18)
+
+```
+125 passed, 11 warnings in 54.80s
+```
+
+Gate G1 does not run. The tag `g1-pilot` was not created. The test split was not read.
 
 ## Exit check (S17)
 
@@ -162,4 +172,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the metrics pull request. Do not freeze `EVAL_PLAN.md` and do not create `eval-plan-frozen`. Gate G0 stays closed until the VOC pointing game, the CUB edit counts, and the VOC horse analysis have been run. Do not start a pilot comparison. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the G1 pull request. Do not create `g1-pilot` and do not start a pilot comparison while G0 is closed. Do not freeze `EVAL_PLAN.md`. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
