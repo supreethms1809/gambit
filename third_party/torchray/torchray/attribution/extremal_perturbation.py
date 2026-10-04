@@ -209,7 +209,9 @@ class Perturbation:
         Returns:
             Perturbation: self.
         """
-        self.pyramid.to(dev)
+        # Device move. Upstream discards the moved tensor, so a later `.to()`
+        # leaves the pyramid on the original device.
+        self.pyramid = self.pyramid.to(dev)
         return self
 
     def __str__(self):
