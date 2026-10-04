@@ -231,4 +231,5 @@ results/**/*.png
 results/**/*.pdf
 results/**/*.sh
 results/paper/logs/
+results/paper/model_table/
 cdae_extendedAbs/*.docx
