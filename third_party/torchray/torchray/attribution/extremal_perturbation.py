@@ -378,7 +378,8 @@ class MaskGenerator:
             for kx in range(2 * self.radius + 1):
                 uy, ux = torch.meshgrid(
                     torch.arange(self.shape_out[0], dtype=torch.float32),
-                    torch.arange(self.shape_out[1], dtype=torch.float32)
+                    torch.arange(self.shape_out[1], dtype=torch.float32),
+                    indexing="ij",
                 )
                 iy = torch.floor(step_inv[0] * uy) + ky - self.padding
                 ix = torch.floor(step_inv[1] * ux) + kx - self.padding
