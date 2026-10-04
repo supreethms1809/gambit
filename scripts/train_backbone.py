@@ -354,6 +354,46 @@ def _freeze_backbone(model: nn.Module) -> None:
         param.requires_grad_(is_head)
 
 
+_HEAD_MODULE_SEGMENTS = ("fc", "classifier", "heads")
+
+
+def _noise_module_types() -> tuple:
+    """BatchNorm, dropout, and stochastic depth: modules that make train != eval."""
+    types = [
+        nn.modules.batchnorm._BatchNorm,
+        nn.Dropout,
+        nn.Dropout1d,
+        nn.Dropout2d,
+        nn.Dropout3d,
+        nn.AlphaDropout,
+    ]
+    try:
+        from torchvision.ops import StochasticDepth
+
+        types.append(StochasticDepth)
+    except ImportError:
+        pass
+    return tuple(types)
+
+
+def _backbone_to_eval(model: nn.Module) -> None:
+    """Hold backbone noise modules (BN, dropout) in eval during probe training.
+
+    Freezing ``requires_grad`` stops weight updates, but a backbone left in
+    train mode still updates BatchNorm running statistics and samples dropout,
+    so the "frozen" features drift every epoch and train/eval disagree. Head
+    modules (fc / classifier / heads) stay in whatever mode the caller set.
+    Call after every ``model.train()``: that call re-enables the whole tree.
+    """
+    noise_types = _noise_module_types()
+    for mod_name, mod in model.named_modules():
+        if not isinstance(mod, noise_types):
+            continue
+        if any(seg in _HEAD_MODULE_SEGMENTS for seg in mod_name.split(".")):
+            continue
+        mod.eval()
+
+
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
@@ -544,6 +584,10 @@ def train_model(
 
     for epoch in range(num_epochs):
         model.train()
+        # model.train() re-enables the whole tree. A frozen backbone must not
+        # update BN stats or sample dropout (see _backbone_to_eval).
+        if freeze_backbone:
+            _backbone_to_eval(model)
         total_loss = 0.0
         correct = 0
         n_total = 0

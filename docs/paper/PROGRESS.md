@@ -15,7 +15,7 @@ Branch: `paper/p6-audit`.
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
 | S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
-| S09 | launched | `1981031` | Training queue is running. See the background job below. |
+| S09 | stopped | `1981031` | Training queue was stopped on request. Cells 1–3 finished. Cell 4 was stopped before epoch 1. |
 | S10 | done | `c15aeed`, merge `ec9239e` | Harness merged as PR #7. |
 | S11 | done | merge `061ddaa` | Adapter merged as PR #8. The VOC pointing game is not run. |
 | S12 | done | merge `a965754` | Algorithm 1 merged as PR #9. The CUB edit-count reproduction is not run. |
@@ -76,6 +76,10 @@ Branch: `paper/p6-audit`.
 - 2026-10-03. A final cell is complete only when its done marker exists. A failed marker is a rerun. The contrastive manifest names eight datasets, including ImageNet-S. Run-record checks cover mask range, area, probabilities, finiteness, and `n`. No paper record was checked. The tag `final-runs-v1` was not created.
 - 2026-10-03. `analysis/build_results.py` formats every table number from the records through `family_summary` or a seed-averaged mean. Family S stays without a baseline until val selection supplies one. `results/paper/RESULTS.md` was not written.
 - 2026-10-03. The results audit compares a markdown file with a fresh render and does not rewrite the file. A hand-edited number fails that comparison. RESULTS.md is absent. Masks were not checked. The fresh-session audit has not been run. The audit does not pass.
+- 2026-10-04. Review fixes on `paper/p6-review-fixes` (`e31c897`–`7a3f12f` plus this entry): partition penalty is a batch/region mean (preset numbers unchanged, effective strength weaker — re-tune under S19); allocators and Grad-CAM paths hold eval mode; linear-probe training holds backbone BN/dropout in eval; single-foil margin is 0 and penalty means cover valid hypotheses only; shift shortcut init gets seeded jitter; interaction blends default to 0; logit-gap companions added beside prob ΔD; Spearman is tie-aware with 0.0 for constant rows; translated null never returns a zero roll; `frozen: true` line wins the plan lock; manual game mode no longer requires retired lambda_disjoint. Suite: 166 passed (149 before + 17 new).
+- 2026-10-04. Cells 1–3 (CIFAR-10 ResNet-50 LP seeds 0–2, code `1981031`) predate the backbone-eval fix and must be retrained before S19 selection. Do not restart the queue until the branch merges; the rerun starts from a clean log dir or explicitly overwrites those three done markers.
+- 2026-10-04. Raw-[0,1] training stays: train and eval are consistently unnormalised, which is correct for raw-trained checkpoints but leaves ImageNet-pretrained features underused (measured 0.389 raw vs 0.816 normalised on a CIFAR-10 probe). `NormalizedModel` stays unused outside its test until a normalised-weights setting needs it. Revisit only with a val-measured comparison, not by wrapping silently.
+- 2026-10-04. Shift split discipline verified, no fix needed: `WaterbirdsPairs` and `PlantedPatchCIFAR` read the paper indices via `load_indices` (cub200/cifar10), backgrounds are disjointly split, and `ColoredMNIST` preserves MNIST row order so the mnist indices align.
 
 ## Open issues
 
@@ -85,7 +89,7 @@ Branch: `paper/p6-audit`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 12 of 15.
+- Training queue stopped 2026-10-03 on request. The process group was 74099 (`python` 74115, `caffeinate` 74116). Nothing from `launch_paper_training.py` is still running. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1–3 finished: CIFAR-10 ResNet-50 linear probe, seeds 0, 1, and 2. Cell 4 (`cifar10_resnet50_lp_lr0.001_seed3`) was stopped before epoch 1 and has no done marker.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -95,6 +99,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (review fixes)
+
+```
+166 passed, 13 warnings in 19.23s
+```
+
+Branch `paper/p6-review-fixes`, 12 commits over `main`. The training queue stays stopped (cells 1–3 predate the backbone-eval fix and must be retrained). The test split was not read.
 
 ## Exit check (S24)
 
@@ -232,4 +244,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the results-audit pull request. Do not treat this audit as the fresh-session audit. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Merge `paper/p6-review-fixes` after review, then retrain cells 1–3 and relaunch the S09 queue from the merged code. Do not treat this audit as the fresh-session audit. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.

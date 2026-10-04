@@ -12,7 +12,7 @@ if str(REPO) not in sys.path:
 from core.types import HypothesisSet
 from modality.grid_regions import VisionGridUnitSpace
 from instantiations.contrastive.objective import ContrastiveObjective
-from instantiations.contrastive.allocator import OptimizationAllocator
+from instantiations.contrastive.allocator import OptimizationAllocator, _partition_penalty
 
 
 class TinyCNN(nn.Module):
@@ -148,8 +148,95 @@ def test_contrastive_probability_split_metrics_with_shared():
     print("PASS: Contrastive split report metrics returned with explicit shared masks")
 
 
+def test_partition_penalty_scale_invariant():
+    """Pass: identical per-region overflow costs the same at any batch/grid scale."""
+    from instantiations.contrastive.allocator import _partition_penalty
+
+    small = torch.full((2, 3, 16), 0.5)  # total 1.5 per region -> overflow 0.5
+    large = torch.full((4, 3, 64), 0.5)
+    assert torch.allclose(_partition_penalty(small), _partition_penalty(large))
+    assert torch.allclose(_partition_penalty(small), torch.tensor(0.5))
+    assert _partition_penalty(torch.zeros(2, 3, 16)).item() == 0.0
+    print("PASS: partition penalty is a scale-invariant mean")
+
+
+def test_single_valid_hypothesis_has_finite_zero_margin():
+    """Pass: with no foil, the margin is 0 rather than z_k - (-inf)."""
+    B, K, R = 2, 3, 16
+    unit_space = VisionGridUnitSpace(4, 4)
+    model = TinyCNN(num_classes=10).eval()
+    objective = ContrastiveObjective()
+    x = torch.rand(B, 3, 32, 32)
+    ids = torch.randint(0, 10, (B, K))
+    valid = torch.zeros(B, K, dtype=torch.bool)
+    valid[:, 0] = True
+    hypotheses = HypothesisSet(ids=ids, mask=valid)
+    evidence = torch.rand(B, K, R).abs()
+    evidence = evidence / evidence.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    out = objective.compute(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses,
+        masks={"unique": evidence}, evidence=evidence,
+    )
+    assert torch.isfinite(out["loss"]).all(), "loss must stay finite with one hypothesis"
+    assert torch.isfinite(out["margin"]).all()
+    assert out["margin"].item() == 0.0
+    print("PASS: single-hypothesis margin is finite and zero")
+
+
+def test_invalid_hypotheses_leave_penalty_means():
+    """Pass: sparsity/mass-dev/overlap average over valid hypotheses only."""
+    B, K, R = 2, 4, 8
+    unit_space = VisionGridUnitSpace(2, 4)
+    model = TinyCNN(num_classes=10).eval()
+    objective = ContrastiveObjective(lambda_mass=0.0)
+    x = torch.rand(B, 3, 32, 32)
+    ids = torch.zeros(B, K, dtype=torch.long)
+    valid = torch.tensor([[True, True, False, False], [True, True, False, False]])
+    hypotheses = HypothesisSet(ids=ids, mask=valid)
+    evidence = torch.full((B, K, R), 1.0 / R)
+    masks = {"unique": torch.full((B, K, R), 0.5)}
+    out = objective.compute(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses,
+        masks=masks, evidence=evidence,
+    )
+    # Valid rows hold 0.5 * 8 = 4.0 mass each; invalid rows must not dilute the mean.
+    assert out["sparse"].item() == 4.0
+    # Invalid rows are zeroed before the overlap, so they contribute no pairs.
+    assert torch.isfinite(out["overlap"])
+    print("PASS: penalty means cover valid hypotheses only")
+
+
+def test_default_ignores_untrained_attention():
+    """Pass: default allocator/objective ignore a passed attention map."""
+    B, K, R = 2, 3, 16
+    unit_space = VisionGridUnitSpace(4, 4)
+    model = TinyCNN(num_classes=10).eval()
+    objective = ContrastiveObjective()
+    assert objective.attn_weight_blend == 0.0
+    allocator = OptimizationAllocator(objective, num_steps=6, lr=0.5)
+    assert allocator.attn_mix == 0.0
+    x = torch.rand(B, 3, 32, 32)
+    hypotheses = HypothesisSet(ids=torch.randint(0, 10, (B, K)), mask=torch.ones(B, K, dtype=torch.bool))
+    evidence = torch.rand(B, K, R).abs()
+    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
+    attn = torch.rand(B, K, K)
+    without = allocator.allocate(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, evidence=evidence
+    )["unique"]
+    with_attn = allocator.allocate(
+        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses,
+        evidence=evidence, attn=attn,
+    )["unique"]
+    assert torch.equal(without, with_attn), "default blend 0 must ignore attention"
+    print("PASS: default allocation ignores untrained attention")
+
+
 if __name__ == "__main__":
     test_optimization_allocator_masks_sparse_nontrivial()
     test_contrastive_objective_metrics_direction()
     test_contrastive_probability_split_metrics_with_shared()
+    test_partition_penalty_scale_invariant()
+    test_single_valid_hypothesis_has_finite_zero_margin()
+    test_invalid_hypotheses_leave_penalty_means()
+    test_default_ignores_untrained_attention()
     print("All pass conditions OK.")

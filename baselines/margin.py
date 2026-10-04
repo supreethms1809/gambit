@@ -14,6 +14,8 @@ import torch.nn as nn
 
 from core.types import HypothesisSet
 
+from core.eval_mode import eval_mode
+
 from .hypotheses import foil_pair
 
 
@@ -54,7 +56,8 @@ def margin_gradcam(
     ]
     was_training = model.training
     try:
-        with pgc.GradCAM(model=model, target_layers=[layer]) as cam:
+        # Eval mode: attribution must see the deterministic inference function.
+        with eval_mode(model), pgc.GradCAM(model=model, target_layers=[layer]) as cam:
             heat = cam(input_tensor=x.detach(), targets=targets)
     finally:
         model.train(was_training)

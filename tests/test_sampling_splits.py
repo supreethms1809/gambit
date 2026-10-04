@@ -20,6 +20,7 @@ from evaluation.splits import (
     holdout_complement_indices,
     imagefolder_three_way,
     load_indices,
+    plan_is_frozen,
     write_spec,
 )
 
@@ -125,6 +126,20 @@ def test_test_split_requires_hash_in_frozen_plan(tmp_path: Path):
             config_hash="deadbeef",
             eval_plan_path=tmp_path / "missing.md",
         )
+
+
+def test_explicit_frozen_flag_wins_over_history_prose(tmp_path: Path):
+    # A frozen plan that mentions its own "previously not frozen" history
+    # must not stay locked on that substring.
+    assert plan_is_frozen("status: eval-plan-frozen\nconfig deadbeef\n")
+    assert not plan_is_frozen("draft, not frozen\n")
+    frozen = tmp_path / "EVAL_PLAN.md"
+    frozen.write_text(
+        "frozen: true\nconfig deadbeef\n(previously not frozen, see S19)\n",
+        encoding="utf-8",
+    )
+    assert plan_is_frozen(frozen.read_text(encoding="utf-8"))
+    assert_split_allowed("test", final=True, config_hash="deadbeef", eval_plan_path=frozen)
 
 
 def test_recorded_splits_keep_train_and_val_disjoint():

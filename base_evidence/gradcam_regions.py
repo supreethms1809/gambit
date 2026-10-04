@@ -13,6 +13,7 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from core.eval_mode import eval_mode
 from core.types import Tensor, HypothesisSet
 
 
@@ -85,13 +86,16 @@ class GradCAMRegionsProvider:
         handle_fwd = layer.register_forward_hook(self._forward_hook)
         handle_bwd = layer.register_full_backward_hook(self._backward_hook)
         try:
-            out = model(x)
-            B = x.shape[0]
-            one_hot = torch.zeros_like(out, device=out.device)
-            one_hot.scatter_(1, class_idx.clamp_min(0).unsqueeze(1), 1.0)
-            loss = (out * one_hot).sum()
-            model.zero_grad()
-            loss.backward()
+            # Eval mode: a train-mode model would update BatchNorm stats and
+            # sample dropout under the explanation, corrupting the CAM.
+            with eval_mode(model):
+                out = model(x)
+                B = x.shape[0]
+                one_hot = torch.zeros_like(out, device=out.device)
+                one_hot.scatter_(1, class_idx.clamp_min(0).unsqueeze(1), 1.0)
+                loss = (out * one_hot).sum()
+                model.zero_grad()
+                loss.backward()
         finally:
             handle_fwd.remove()
             handle_bwd.remove()

@@ -9,7 +9,7 @@ from evaluation.accuracy import top1_and_balanced, worst_group_accuracy
 from instantiations.shift.biased_data import ColoredMNIST
 from instantiations.shift.waterbirds import confounder_uses_water
 from scripts.launch_paper_training import CONTRASTIVE, SHIFT, paper_cells
-from scripts.train_backbone import _build_model
+from scripts.train_backbone import _backbone_to_eval, _build_model, _freeze_backbone, train_model
 
 
 def test_scores_match_a_known_prediction():
@@ -67,3 +67,49 @@ def test_colored_mnist_seed_fixes_the_colors():
     image_a, _label_a = first[0]
     image_b, _label_b = second[0]
     assert torch.equal(image_a, image_b)
+
+
+class _ProbeNet(nn.Module):
+    """Backbone (conv+BN+dropout) plus a linear head, mirroring a linear probe."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 8, 3, padding=1)
+        self.bn = nn.BatchNorm2d(8)
+        self.drop = nn.Dropout(p=0.5)
+        self.fc = nn.Linear(8, 2)
+
+    def forward(self, x):
+        x = torch.relu(self.bn(self.conv(x)))
+        x = self.drop(x)
+        return self.fc(x.mean(dim=(2, 3)))
+
+
+def test_linear_probe_freezes_bn_stats_and_dropout_but_trains_head():
+    torch.manual_seed(0)
+    model = _ProbeNet()
+    _freeze_backbone(model)
+    assert not model.bn.weight.requires_grad
+    assert model.fc.weight.requires_grad
+    xs = torch.rand(32, 3, 8, 8)
+    ys = torch.randint(0, 2, (32,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(xs, ys), batch_size=8
+    )
+    head_before = model.fc.weight.detach().clone()
+    bn_before = model.bn.running_mean.clone()
+    trained = train_model(
+        model,
+        loader,
+        num_epochs=2,
+        lr=1e-3,
+        freeze_backbone=True,
+        device=torch.device("cpu"),
+    )
+    assert trained.training is False  # train_model returns the model in eval
+    assert not torch.equal(trained.fc.weight, head_before), "head must learn"
+    assert torch.equal(trained.bn.running_mean, bn_before), "frozen BN stats must not move"
+    # train_model leaves the model in eval; the point above is that the two
+    # training epochs did not move the frozen backbone statistics either.
+    assert trained.bn.training is False
+

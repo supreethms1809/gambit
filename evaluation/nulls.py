@@ -30,5 +30,11 @@ def random_translate(
     for i in range(batch):
         dy = int(offsets[i, 0].item()) % grid_h
         dx = int(offsets[i, 1].item()) % grid_w
+        if dy == 0 and dx == 0:
+            # The null must move: a (0, 0) roll returns the real mask and
+            # dilutes the check with self-comparisons.
+            dx = 1 % grid_w
+            if dx == 0:
+                dy = 1 % grid_h
         out[i] = torch.roll(grid[i], shifts=(dy, dx), dims=(0, 1))
     return out.reshape(batch, regions)

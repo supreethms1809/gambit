@@ -67,6 +67,15 @@ def test_mass_in_and_translate_preserve_mass():
     assert torch.allclose(rolled.sum(dim=-1), mask.sum(dim=-1))
 
 
+def test_translate_always_moves_the_mask():
+    mask = torch.zeros(4, 16)
+    mask[:, 0] = 1
+    for seed in range(20):
+        rolled = random_translate(mask, torch.Generator().manual_seed(seed), 4, 4)
+        assert not torch.equal(rolled, mask), f"null equals the mask at seed {seed}"
+        assert torch.allclose(rolled.sum(dim=-1), mask.sum(dim=-1))
+
+
 def test_impute_pins_known_pixels():
     image = torch.rand(1, 3, 8, 8)
     keep = torch.zeros(1, 1, 8, 8)
@@ -82,6 +91,17 @@ def test_spearman_and_paired():
     stats = paired([1.0, 2.0], [0.0, 0.0])
     assert stats["n"] == 2
     assert stats["delta"] == pytest_approx(1.5)
+
+
+def test_spearman_ties_share_rank_and_constants_report_zero():
+    tied_a = torch.tensor([[0.0, 0.0, 5.0, 5.0]])
+    tied_b = torch.tensor([[1.0, 1.0, 9.0, 9.0]])
+    assert torch.allclose(spearman(tied_a, tied_b), torch.tensor([1.0]))
+    assert torch.allclose(spearman(tied_a, tied_a), torch.tensor([1.0]))
+    const = torch.tensor([[2.0, 2.0, 2.0, 2.0]])
+    varied = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    assert torch.allclose(spearman(const, varied), torch.tensor([0.0]))
+    assert torch.allclose(spearman(const, const), torch.tensor([0.0]))
 
 
 def pytest_approx(value: float):

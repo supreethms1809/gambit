@@ -121,6 +121,10 @@ def _class_probability(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> to
     return torch.softmax(model(x), dim=-1).gather(1, y.long()[:, None]).squeeze(1)
 
 
+def _class_logit(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    return model(x).gather(1, y.long()[:, None]).squeeze(1)
+
+
 def environment_disagreement(
     model: nn.Module,
     x_id: torch.Tensor,
@@ -133,6 +137,27 @@ def environment_disagreement(
     try:
         with torch.no_grad():
             return (_class_probability(model, x_id, y) - _class_probability(model, x_ood, y)).abs()
+    finally:
+        _restore(model, was_training)
+
+
+def environment_logit_gap(
+    model: nn.Module,
+    x_id: torch.Tensor,
+    x_ood: torch.Tensor,
+    y: torch.Tensor,
+) -> torch.Tensor:
+    """|z_y(x_id) − z_y(x_ood)|, the unsaturated companion of ``environment_disagreement``.
+
+    The probability gap saturates when the model is confident in both
+    environments (p ≈ 1 twice even as the logits differ by a lot), which can
+    hide real shortcut reliance. The logit gap stays sensitive there.
+    """
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            return (_class_logit(model, x_id, y) - _class_logit(model, x_ood, y)).abs()
     finally:
         _restore(model, was_training)
 
@@ -162,6 +187,49 @@ def disagreement_reduction(
             def gap(xid: torch.Tensor, oods: Sequence[torch.Tensor]) -> torch.Tensor:
                 terms = [
                     (_class_probability(model, xid, y) - _class_probability(model, xo, y)).abs()
+                    for xo in oods
+                ]
+                return torch.stack(terms, dim=0).mean(dim=0)
+
+            def apply(mask: torch.Tensor) -> torch.Tensor:
+                return gap(
+                    _remove(x_id, mask, iters, noise, seed),
+                    [_remove(xo, mask, iters, noise, seed) for xo in x_ood],
+                )
+
+            full = gap(x_id, x_ood)
+            return (full - apply(shortcut)) - (full - apply(random_mask))
+    finally:
+        _restore(model, was_training)
+
+
+def logit_disagreement_reduction(
+    model: nn.Module,
+    x_id: torch.Tensor,
+    x_ood: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    shortcut: torch.Tensor,
+    random_mask: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+) -> torch.Tensor:
+    """ΔD in logit space. Same construction as ``disagreement_reduction`` with
+    D = mean |z_y(id) − z_y(ood)| across the other environments.
+
+    Report beside the probability ΔD: when the model is confident everywhere,
+    the probability gap is near zero whatever the masks do, while the logit
+    gap still separates a shortcut mask from a random one.
+    """
+    if len(x_ood) < 1:
+        raise ValueError("disagreement needs an out-of-distribution view")
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            def gap(xid: torch.Tensor, oods: Sequence[torch.Tensor]) -> torch.Tensor:
+                terms = [
+                    (_class_logit(model, xid, y) - _class_logit(model, xo, y)).abs()
                     for xo in oods
                 ]
                 return torch.stack(terms, dim=0).mean(dim=0)

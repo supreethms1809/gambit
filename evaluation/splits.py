@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
@@ -38,7 +39,13 @@ def plan_is_frozen(text: str) -> bool:
     """True only when the plan carries the freeze marker and does not say otherwise.
 
     A draft that names the marker while saying it is not frozen stays locked.
+    S19 freezes the plan by writing an explicit ``frozen: true`` front-matter
+    line; that line wins over any historical "not frozen" prose, so the lock
+    cannot stick forever on a frozen plan that mentions its own history.
     """
+    lines = [line.strip().lower() for line in text.splitlines()]
+    if any(re.fullmatch(r"frozen\s*:\s*true", line) for line in lines):
+        return True
     if FROZEN_MARKER not in text:
         return False
     if "not frozen" in text:
