@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from core.eval_mode import eval_mode
 from core.types import Tensor, HypothesisSet, EnvBatch
+from instantiations.hard_budget import budgeted_mask
 
 
 def _partition_penalty(m_unique: Tensor, m_shared: Optional[Tensor] = None) -> Tensor:
@@ -29,7 +30,7 @@ class OptimizationAllocator:
     """
     Allocator that optimizes masks as parameters:
     - m_unique_logits (B,K,R), optionally m_shared_logits (B,R)
-    - map to [0,1] via sigmoid
+    - map to a [0, 1] mask with a fixed mass (see instantiations.hard_budget)
     - the objective supplies the only overlap penalty
     - an optional partition penalty if the masks sum past 1
     - a fixed number of Adam steps of joint gradient descent on one loss.
@@ -156,8 +157,10 @@ class OptimizationAllocator:
                     optimizer.zero_grad()
                     # Logits are clamped to [-logit_clip, logit_clip]; the sigmoid
                     # keeps masks away from exact 0/1 for non-trivial allocation.
-                    m_unique = torch.sigmoid(m_unique_logits)
-                    m_shared = torch.sigmoid(m_shared_logits) if m_shared_logits is not None else None
+                    # The hard budget then fixes the mass. A penalty cannot.
+                    m_unique, m_shared = self._budgeted(
+                        m_unique_logits, m_shared_logits, hypotheses,
+                    )
                     masks = {"unique": m_unique}
                     if m_shared is not None:
                         masks["shared"] = m_shared
@@ -188,8 +191,19 @@ class OptimizationAllocator:
                 p.requires_grad_(req)
 
         with torch.no_grad():
-            m_unique_final = torch.sigmoid(m_unique_logits)
+            m_unique_final, m_shared_final = self._budgeted(
+                m_unique_logits, m_shared_logits, hypotheses,
+            )
             result = {"unique": m_unique_final}
-            if self.use_shared and m_shared_logits is not None:
-                result["shared"] = torch.sigmoid(m_shared_logits)
+            if m_shared_final is not None:
+                result["shared"] = m_shared_final
         return result
+
+    def _budgeted(self, m_unique_logits, m_shared_logits, hypotheses: HypothesisSet):
+        ref = int(getattr(self.objective, "mass_ref_regions", 49))
+        unique = budgeted_mask(m_unique_logits, ref)
+        unique = unique * hypotheses.mask.to(dtype=unique.dtype).unsqueeze(-1)
+        shared = None
+        if m_shared_logits is not None:
+            shared = budgeted_mask(m_shared_logits, ref)
+        return unique, shared

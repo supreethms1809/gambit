@@ -304,10 +304,16 @@ def main() -> None:
     parser.add_argument("--lambda-shared-sparse", type=float, default=0.25)
     parser.add_argument("--skip-shift", action="store_true")
     parser.add_argument("--out-dir", type=str, default=str(OUT))
+    parser.add_argument(
+        "--device",
+        default=None,
+        choices=["cpu", "mps", "cuda"],
+        help="Default is the machine device. Pass cpu to leave a trainer on the GPU.",
+    )
     args = parser.parse_args()
     if args.num_images <= 0 or args.num_steps <= 0:
         raise SystemExit("num-images and num-steps must be positive")
-    device = get_device()
+    device = get_device(torch.device(args.device) if args.device else None)
     print("Device:", device)
     payload = {
         "split": "val",
