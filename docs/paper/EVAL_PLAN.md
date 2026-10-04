@@ -49,4 +49,6 @@ A confirmatory claim is called robust only after leave-one-dataset-out, dropping
 - The test-sample seeds.
 - Config hashes.
 
-Gate G0 is still closed. This draft does not start a pilot comparison.
+The selection rule is `analysis.selection.select_config`. It maximises the mean CD@5% on the dev val sets among candidates that close D1–D5. It has not been applied to val. No config hash is written here.
+
+Gate G0 is still closed. Gate G1 did not run. This draft does not start a pilot comparison.
