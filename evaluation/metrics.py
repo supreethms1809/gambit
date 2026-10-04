@@ -7,22 +7,42 @@ from typing import Dict, List
 import torch
 
 
+def _average_rank_row(values: torch.Tensor) -> torch.Tensor:
+    """Zero-based average ranks with ties sharing their mean rank."""
+    flat = values.detach().double().reshape(-1)
+    n = flat.numel()
+    order = flat.argsort(stable=True)
+    ranked = torch.empty(n, dtype=torch.float64)
+    sorted_vals = flat[order]
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and sorted_vals[j + 1] == sorted_vals[i]:
+            j += 1
+        ranked[order[i : j + 1]] = 0.5 * (i + j)
+        i = j + 1
+    return ranked
+
+
 def spearman(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Row-wise Spearman correlation of two ``(N, R)`` tensors."""
+    """Row-wise Spearman correlation of two ``(N, R)`` tensors.
 
-    def _rank(values: torch.Tensor) -> torch.Tensor:
-        order = values.argsort(dim=-1)
-        ranks = torch.zeros_like(values)
-        positions = torch.arange(values.shape[-1], dtype=values.dtype, device=values.device)
-        ranks.scatter_(-1, order, positions.expand_as(values))
-        return ranks
-
-    ra, rb = _rank(a), _rank(b)
-    ra = ra - ra.mean(dim=-1, keepdim=True)
-    rb = rb - rb.mean(dim=-1, keepdim=True)
-    numerator = (ra * rb).sum(dim=-1)
-    denominator = (ra.norm(dim=-1) * rb.norm(dim=-1)).clamp_min(1e-8)
-    return numerator / denominator
+    Ties share their average rank (clamped attributions produce many exact
+    zeros; arbitrary tie order would make the correlation depend on memory
+    order). A row with no rank information — constant on either side — has
+    undefined correlation and reports 0.0 rather than an arbitrary value.
+    """
+    if a.shape != b.shape:
+        raise ValueError(f"spearman needs matching shapes, got {tuple(a.shape)} and {tuple(b.shape)}")
+    if a.ndim != 2:
+        raise ValueError("spearman needs (N, R) tensors")
+    out = torch.empty(a.shape[0], dtype=torch.float64)
+    for i in range(a.shape[0]):
+        ra = _average_rank_row(a[i]) - _average_rank_row(a[i]).mean()
+        rb = _average_rank_row(b[i]) - _average_rank_row(b[i]).mean()
+        denom = float(ra.norm() * rb.norm())
+        out[i] = 0.0 if denom == 0.0 else float((ra * rb).sum() / denom)
+    return out.to(dtype=a.dtype, device=a.device)
 
 
 def paired(a: List[float], b: List[float]) -> Dict[str, float]:

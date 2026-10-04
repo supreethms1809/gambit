@@ -84,6 +84,17 @@ def test_spearman_and_paired():
     assert stats["delta"] == pytest_approx(1.5)
 
 
+def test_spearman_ties_share_rank_and_constants_report_zero():
+    tied_a = torch.tensor([[0.0, 0.0, 5.0, 5.0]])
+    tied_b = torch.tensor([[1.0, 1.0, 9.0, 9.0]])
+    assert torch.allclose(spearman(tied_a, tied_b), torch.tensor([1.0]))
+    assert torch.allclose(spearman(tied_a, tied_a), torch.tensor([1.0]))
+    const = torch.tensor([[2.0, 2.0, 2.0, 2.0]])
+    varied = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    assert torch.allclose(spearman(const, varied), torch.tensor([0.0]))
+    assert torch.allclose(spearman(const, const), torch.tensor([0.0]))
+
+
 def pytest_approx(value: float):
     import pytest
 
