@@ -44,6 +44,18 @@ def test_contrastive_manual_mode():
     print("PASS: contrastive manual mode")
 
 
+def test_contrastive_manual_omits_retired_disjoint():
+    cfg = resolve_contrastive_game(
+        "manual",
+        use_shared=False,
+        lambda_margin=0.9,
+        lambda_overlap=0.12,
+        lambda_partition=0.0,
+    )
+    assert cfg.lambda_disjoint == 0.0
+    print("PASS: manual mode defaults the retired disjoint weight to 0")
+
+
 def test_shift_presets_are_separated():
     coop = resolve_shift_game("cooperative")
     comp = resolve_shift_game("competitive")

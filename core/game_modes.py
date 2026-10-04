@@ -118,13 +118,16 @@ def resolve_contrastive_game(
             use_shared is None
             or lambda_margin is None
             or lambda_overlap is None
-            or lambda_disjoint is None
             or lambda_partition is None
         ):
             raise ValueError(
                 "manual contrastive mode requires use_shared, lambda_margin, "
-                "lambda_overlap, lambda_disjoint, and lambda_partition"
+                "lambda_overlap, and lambda_partition"
             )
+        if lambda_disjoint is None:
+            # Retired: pairwise overlap has one weight, lambda_overlap.
+            # Accepted for backward compatibility, must stay 0.
+            lambda_disjoint = 0.0
         _validate_nonnegative("lambda_margin", lambda_margin)
         _validate_nonnegative("lambda_overlap", lambda_overlap)
         _validate_nonnegative("lambda_disjoint", lambda_disjoint)
