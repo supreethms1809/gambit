@@ -11,11 +11,17 @@ from core.types import Tensor, HypothesisSet, EnvBatch
 
 
 def _partition_penalty(m_unique: Tensor, m_shared: Optional[Tensor] = None) -> Tensor:
-    """Soft penalty if sum of masks exceeds 1 per region: relu(sum_k m_k + m_shared - 1).sum()."""
+    """Mean overflow past a per-region budget of 1: relu(sum_k m_k + m_shared - 1).mean().
+
+    The mean (not the sum) keeps ``lambda_partition`` comparable across batch
+    sizes and grid resolutions. A sum would penalise a 14x14 grid ~4x more
+    than a 7x7 grid at the same lambda, turning a resolution sweep at fixed
+    lambda into a comparison of two different experiments.
+    """
     total = m_unique.sum(dim=1)  # (B, R)
     if m_shared is not None:
         total = total + m_shared
-    return F.relu(total - 1.0).sum()
+    return F.relu(total - 1.0).mean()
 
 
 class OptimizationAllocator:

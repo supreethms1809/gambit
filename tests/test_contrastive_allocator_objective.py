@@ -12,7 +12,7 @@ if str(REPO) not in sys.path:
 from core.types import HypothesisSet
 from modality.grid_regions import VisionGridUnitSpace
 from instantiations.contrastive.objective import ContrastiveObjective
-from instantiations.contrastive.allocator import OptimizationAllocator
+from instantiations.contrastive.allocator import OptimizationAllocator, _partition_penalty
 
 
 class TinyCNN(nn.Module):
@@ -148,8 +148,21 @@ def test_contrastive_probability_split_metrics_with_shared():
     print("PASS: Contrastive split report metrics returned with explicit shared masks")
 
 
+def test_partition_penalty_scale_invariant():
+    """Pass: identical per-region overflow costs the same at any batch/grid scale."""
+    from instantiations.contrastive.allocator import _partition_penalty
+
+    small = torch.full((2, 3, 16), 0.5)  # total 1.5 per region -> overflow 0.5
+    large = torch.full((4, 3, 64), 0.5)
+    assert torch.allclose(_partition_penalty(small), _partition_penalty(large))
+    assert torch.allclose(_partition_penalty(small), torch.tensor(0.5))
+    assert _partition_penalty(torch.zeros(2, 3, 16)).item() == 0.0
+    print("PASS: partition penalty is a scale-invariant mean")
+
+
 if __name__ == "__main__":
     test_optimization_allocator_masks_sparse_nontrivial()
     test_contrastive_objective_metrics_direction()
     test_contrastive_probability_split_metrics_with_shared()
+    test_partition_penalty_scale_invariant()
     print("All pass conditions OK.")
