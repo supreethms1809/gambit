@@ -34,6 +34,18 @@ class MissingSplitError(FileNotFoundError):
     """Raised when a dataset has no recorded train/val/test file."""
 
 
+def plan_is_frozen(text: str) -> bool:
+    """True only when the plan carries the freeze marker and does not say otherwise.
+
+    A draft that names the marker while saying it is not frozen stays locked.
+    """
+    if FROZEN_MARKER not in text:
+        return False
+    if "not frozen" in text:
+        return False
+    return True
+
+
 def assert_split_allowed(
     split: str,
     *,
@@ -51,7 +63,7 @@ def assert_split_allowed(
     if not eval_plan_path.is_file():
         raise SplitLockedError(f"frozen eval plan not found: {eval_plan_path}")
     text = eval_plan_path.read_text(encoding="utf-8")
-    if FROZEN_MARKER not in text:
+    if not plan_is_frozen(text):
         raise SplitLockedError("EVAL_PLAN.md is not frozen")
     if config_hash not in text:
         raise SplitLockedError("config hash is not listed in the frozen EVAL_PLAN.md")
