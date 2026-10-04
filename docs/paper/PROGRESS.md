@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p5-grid`.
+Branch: `paper/p5-shift`.
 
 ## Stage status
 
@@ -26,8 +26,9 @@ Branch: `paper/p5-grid`.
 | S17 | done | merge `a0ff742` | Scores and the draft plan merged as PR #15. `EVAL_PLAN.md` is not frozen. |
 | S18 | done | merge `25c8842` | Gate G1 does not run. Merged as PR #16. The tag `g1-pilot` was not created. |
 | S19 | done | merge `9f4f090` | Val selection rule merged as PR #17. It has not been applied. `EVAL_PLAN.md` is not frozen. |
-| S20 | in review | `c36d478` | Resumable grid runner. The contrastive grid was not launched. `--final` stays refused. |
-| S21–S28 | todo | | Not started. |
+| S20 | done | merge `17c8fc5` | Resumable grid runner merged as PR #18. The contrastive grid was not launched. `--final` stays refused. |
+| S21 | in review | `08bff59` | Shift-grid and ablation manifest. Neither job was launched. S20's contrastive log has no done marker. |
+| S22–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -68,6 +69,7 @@ Branch: `paper/p5-grid`.
 - 2026-10-03. Gate G1 does not run. G0 is still closed, and the paper dev checkpoints are 2 of 110 cells, both CIFAR-10. HAM10000 has no paper checkpoint yet. The tag `g1-pilot` was not created. No stop-or-continue decision is logged.
 - 2026-10-03. Val selection maximises the mean CD@5% among candidates that close D1–D5. Ties keep the earliest candidate. An open route is not a fallback. The rule has not been applied to val. The tag `eval-plan-frozen` was not created.
 - 2026-10-03. The final-grid runner skips a cell whose done marker exists. `--final` is refused while `EVAL_PLAN.md` says it is not frozen, even if the file names the freeze marker. The contrastive grid was not launched.
+- 2026-10-03. The shift manifest lists the six shift datasets, five seeds, ResNet-50 and ViT-B/16, and the five core shift methods. Ablation cells are one variant per removed component, including paired versus unpaired and the mass target on or off. Neither list was started. S20's contrastive log directory is absent, so that grid is not launched.
 
 ## Open issues
 
@@ -77,7 +79,7 @@ Branch: `paper/p5-grid`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 3 of 15.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 4 of 15.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -87,6 +89,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S21)
+
+```
+139 passed, 11 warnings in 54.14s
+```
+
+The shift grid and the ablations were not launched. The contrastive grid was not launched. The test split was not read.
 
 ## Exit check (S20)
 
@@ -192,4 +202,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the final-grid pull request. Do not launch the contrastive grid, do not pass `--final`, and do not freeze `EVAL_PLAN.md`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the shift-grid pull request. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
