@@ -1,0 +1,28 @@
+{
+  "captum_version": "0.9.0",
+  "checkpoint": "results/paper_rerun/checkpoints/cifar10_resnet18_pt_lp_ep15_lr0.001_seed0.pt",
+  "dataset": "cifar10",
+  "grad_cam_version": "1.5.7",
+  "gradcam_spearman_mean": 1.0,
+  "gradcam_spearman_min": 1.0,
+  "grid": 7,
+  "ig_method": "riemann_right",
+  "ig_spearman_mean": 0.9999815225601196,
+  "ig_spearman_min": 0.9997959136962891,
+  "ig_steps": 8,
+  "n": 100,
+  "passed": true,
+  "provenance": {
+    "config_hash": null,
+    "data_split_hash": null,
+    "device": null,
+    "git_commit": "c15aeed3f0327984025d7658c30c6a10d3645f2f",
+    "git_dirty": true,
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "timestamp": "2026-10-04T00:12:46.741572+00:00",
+    "torch": "2.9.1",
+    "torchvision": "0.24.1"
+  },
+  "spearman_min": 0.95,
+  "split": "val"
+}
