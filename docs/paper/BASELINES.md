@@ -13,6 +13,7 @@ records the pin, the conversion, and the check each method has to pass first.
 - Library pins, checked in `tests/test_baselines.py`: `grad-cam` 1.5.7 and `captum` 0.9.0 (`baselines/versions.py`). This repo has no `environment.yml`.
 - GradientShap draws its path coefficients with NumPy and its noise with `torch.normal`. A repeat seeds both `torch.manual_seed` and `numpy.random.seed` before the call. RISE draws its masks from NumPy's global state, so a repeat seeds `numpy.random.seed` before the call. SpRAy seeds k-means with `random_state`.
 - Paper checkpoints take raw `[0, 1]` input. `NormalizedModel` is the wrapper for a library call that expects ImageNet normalisation inside the model. The CIFAR-10 checkpoint used for the cross-check was trained on raw input, so both implementations call that model directly.
+- `NormalizedModel` is currently unused outside its own test: every adapter calls the raw checkpoint directly, which is correct for raw-trained checkpoints and would be wrong for checkpoints trained on normalised input. Wiring it in for a normalised-weights setting (e.g. ImageNet-S public weights) is open work, not a silent default: wrapping a raw-trained checkpoint would score a broken model.
 
 ## Margin attribution
 
@@ -22,6 +23,7 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Patches.** None.
 - **Defaults.** IG uses 8 steps in the harness tests and in `scripts/crosscheck_evidence.py`. Authors' IG step counts and the val-tuned step count are recorded when the method is tuned.
 - **Reproduction.** The toy-model test in `tests/test_baselines.py`. Class 0 is a red square, class 1 is a blue square, and the margin map has to land on the kept square. There is no single published number for this target.
+- **Clamp asymmetry.** Base-evidence IG clamps the channel sum at zero (negatives discarded) while margin IG keeps the signed map so opposing channels lose the top-a ranking. CDEA therefore sees only positive evidence and the margin baseline sees signed evidence: different information, not just different processing. The direction of any resulting bias is open.
 - **Conversion.** The shared budget conversion. The map is already at pixel resolution.
 - **Failure modes.** A model with fewer than two valid hypotheses has no foil. That call raises, and the caller records a failure rather than inventing a class.
 - **Cost.** One Grad-CAM backward, or one integrated-gradient path, per image.
@@ -90,6 +92,7 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Defaults.** Euclidean distance, symmetric sparse 10-nearest neighbors, symmetric normalized Laplacian, 32 eigenvalues, k-means with 2 clusters. k-means uses `random_state` and `n_init=10`. The 32-eigenvalue default needs more maps than 32. A smaller stack passes a smaller `n_eigval`.
 - **Reproduction target.** Their Fisher-vector classifier on PASCAL VOC 2007 horse images separates four strategies: horse and rider, a portrait source tag, riding context, and a landscape source tag. The source tag is present in about one-fifth of the horse images. That run has not been started. The CI check is two synthetic relevance prototypes.
 - **Conversion.** Each image receives the mean relevance map of its cluster. That map then uses the shared budget conversion.
+- **Pseudoreplication.** Images in one cluster share one identical map, so per-image statistics overstate the effective sample size. Treat the number of clusters as the effective N, or state the caveat beside any per-image number.
 - **Failure modes.** Fewer than three maps raises. `n_eigval` greater than or equal to the number of maps raises. A non-finite map raises.
 - **Cost.** One LRP backward per image, then one spectral clustering of the stack.
 
@@ -122,6 +125,7 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Defaults.** The ImageNet ResNet-50 setting: 8000 masks, cell grid 7, keep-probability 0.5, input 224. VGG-16 in the paper uses 4000 masks. The toy check passes a smaller mask count and grid as arguments of the same function.
 - **Reproduction target.** Table 1, ImageNet validation, deletion (lower is better) and insertion (higher is better). ResNet-50: deletion \(0.1076 \pm 0.0005\), insertion \(0.7267 \pm 0.0006\). VGG-16: deletion \(0.0980 \pm 0.0025\), insertion \(0.6663 \pm 0.0014\). That run has not been started: ImageNet-1k is not on disk. The CI check is the toy square, plus an identity check against the vendored `RISE.forward`.
 - **Conversion.** The shared budget conversion. The per-class map is the official weighted sum. The margin map uses the same masks and weights each one by \(z_k - z_l\).
+- **Signed-weight variant.** Official RISE weights by nonnegative class scores. The margin map weights by a signed logit margin, so masks can cancel each other — a novel variant, not published RISE. Characterise negative-weight behaviour before it anchors a confirmatory comparison.
 - **Failure modes.** Fewer than one mask raises. A keep-probability outside \((0, 1]\) raises. A non-finite map raises. The margin call raises when the foil is missing.
 - **Cost.** One forward of the classifier per mask. The authors' ResNet-50 setting is 8000 forwards per image.
 

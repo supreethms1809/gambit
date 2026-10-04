@@ -16,6 +16,8 @@ Optimisation uses blur keep. The primary score uses ROAD noisy-linear imputation
 
 - Contrastive: CD@5% under ROAD. `evaluation.scores.contrastive_deletion` is m(x without M_l) − m(x without M_k), where m = z_k − z_l, k is hypothesis rank 0, and l is rank 1.
 - Shift: ΔD. `evaluation.scores.disagreement_reduction` is the drop in |p_y(x_id) − p_y(x_ood)| after removing the shortcut mask in every environment, minus the same drop for a random mask of equal area.
+- Shift companions: `environment_logit_gap` / `logit_disagreement_reduction` repeat the construction in logit space. The probability gap saturates under confident models (p ≈ 1 in both environments while the logits differ), which can hide shortcut reliance; report the logit ΔD beside the probability ΔD.
+- Target convention: shift allocation explains the predicted class (`target="pred"`), while ΔD scores the true label. On misclassified images the masks are optimised for one class and scored on another; the analysis must state which convention each number uses.
 
 ## Secondary metrics named in this draft
 
