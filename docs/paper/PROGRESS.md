@@ -15,7 +15,7 @@ Branch: `paper/p6-audit`.
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
 | S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
-| S09 | launched | `1981031` | Training queue is running. See the background job below. |
+| S09 | stopped | `1981031` | Training queue was stopped on request. Cells 1–3 finished. Cell 4 was stopped before epoch 1. |
 | S10 | done | `c15aeed`, merge `ec9239e` | Harness merged as PR #7. |
 | S11 | done | merge `061ddaa` | Adapter merged as PR #8. The VOC pointing game is not run. |
 | S12 | done | merge `a965754` | Algorithm 1 merged as PR #9. The CUB edit-count reproduction is not run. |
@@ -85,7 +85,7 @@ Branch: `paper/p6-audit`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 12 of 15.
+- Training queue stopped 2026-10-03 on request. The process group was 74099 (`python` 74115, `caffeinate` 74116). Nothing from `launch_paper_training.py` is still running. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1–3 finished: CIFAR-10 ResNet-50 linear probe, seeds 0, 1, and 2. Cell 4 (`cifar10_resnet50_lp_lr0.001_seed3`) was stopped before epoch 1 and has no done marker.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -232,4 +232,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the results-audit pull request. Do not treat this audit as the fresh-session audit. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the results-audit pull request. Do not treat this audit as the fresh-session audit. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. The training queue is stopped. Do not restart it until the bugs are fixed. Check `results/paper/logs/train/driver.log` before any new launch. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
