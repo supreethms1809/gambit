@@ -10,22 +10,22 @@ One scalar, minimised. File: `instantiations/contrastive/objective.py`.
 
 | Quantity | Definition | Where |
 |---|---|---|
-| Kept logit | Raw logit \(z_k\) of class \(k\) on `keep(x, m_unique_k + m_shared)`. Not baseline-subtracted. | line 144 |
-| `suff` | Alias of the batch-mean kept logit. Equal to `kept_logit`. | lines 250–251 |
-| Margin | Kept logit of \(k\) minus the strongest other valid hypothesis under the same keep. | lines 148–157 |
-| Overlap | Each unordered pair of unique masks once: \(\tfrac{1}{2}(\sum_{k,l} m_k\cdot m_l - \sum_k m_k\cdot m_k)\), then a batch mean. | `pairwise_overlap`, lines 22–29; used at line 159; weighted at line 242 |
-| Unique sparsity | Mean L1 of the unique masks. | line 162, weighted at line 243 |
-| Shared sparsity | L1 of the shared mask, divided by `mass_scale`. Weight default `0.25`. | lines 19, 42, 195–197, 244 |
-| Mass | Unique-mask mass against `evidence.sum(-1) * mass_scale`. `mass_scale = max(1, R / 49)`. | lines 194–201, weighted at line 245 |
-| Loss | \(-(λ_{suff}\,\text{kept logit} + λ_{margin}\,\text{margin}) + λ_{overlap}\,\text{overlap} + λ_{sparse}\,\text{sparse} + λ_{shared}\,\text{shared sparse} + λ_{mass}\,\text{mass}\). | lines 240–246 |
+| Kept logit | Raw logit \(z_k\) of class \(k\) on `keep(x, m_unique_k + m_shared)`. Not baseline-subtracted. | line 150 |
+| `suff` | Alias of the batch-mean kept logit. Equal to `kept_logit`. | lines 270–271 |
+| Margin | Kept logit of \(k\) minus the strongest other valid hypothesis under the same keep. Rows with no valid foil report 0, not \(z_k - (-\infty)\). | lines 154–170 |
+| Overlap | Each unordered pair of valid unique masks once: \(\tfrac{1}{2}(\sum_{k,l} m_k\cdot m_l - \sum_k m_k\cdot m_k)\), then a batch mean. Invalid rows are zeroed first. | `pairwise_overlap`, lines 22–29; used at line 176; weighted at line 262 |
+| Unique sparsity | Mean L1 of the valid unique masks, averaged over valid K. | line 179, weighted at line 263 |
+| Shared sparsity | L1 of the shared mask, divided by `mass_scale`. Weight default `0.25`. | lines 19, 42, 212–214, weighted at line 264 |
+| Mass | Valid unique-mask mass against `evidence.sum(-1) * mass_scale`. `mass_scale = max(1, R / 49)`. | lines 218–221, weighted at line 265 |
+| Loss | \(-(λ_{suff}\,\text{kept logit} + λ_{margin}\,\text{margin}) + λ_{overlap}\,\text{overlap} + λ_{sparse}\,\text{sparse} + λ_{shared}\,\text{shared sparse} + λ_{mass}\,\text{mass}\). | lines 260–266 |
 
-The allocator does not add overlap a second time. `OptimizationAllocator` rejects a non-zero `lambda_disjoint` (`instantiations/contrastive/allocator.py` lines 48–53). The only extra term it can add is the partition penalty, `relu(sum of masks − 1)`, which is a different quantity (`allocator.py` lines 13–18 and 157–159). Contrastive presets set `lambda_disjoint` to 0 (`core/game_modes.py` lines 35, 44, 53). Manual mode rejects any other value (line 134). Competitive and mixed still differ through `lambda_overlap` (0.35 and 0.2), the margin weight, and whether a shared mask is used.
+The allocator does not add overlap a second time. `OptimizationAllocator` rejects a non-zero `lambda_disjoint` (`instantiations/contrastive/allocator.py` lines 64–69). The only extra term it can add is the partition penalty, `relu(sum of masks − 1)`, averaged over batch and regions — a different quantity (`allocator.py` lines 14–21 and 179). Contrastive presets set `lambda_disjoint` to 0 (`core/game_modes.py` lines 35, 44, 53). Manual mode defaults an omitted value to 0 and rejects any other value (lines 127–137). Competitive and mixed still differ through `lambda_overlap` (0.35 and 0.2), the margin weight, and whether a shared mask is used.
 
-The allocation loop freezes the classifier, runs Adam on the mask logits, adds the partition term when its weight is positive, steps, clamps the logits, and restores `requires_grad` (`allocator.py` lines 128–168). There is no learning-rate schedule on the masks.
+The allocation loop freezes the classifier, holds it in eval mode (`core/eval_mode.py`, applied at `allocator.py` line 154), runs Adam on the mask logits, adds the partition term when its weight is positive, steps, clamps the logits, and restores `requires_grad` (`allocator.py` lines 146–186). There is no learning-rate schedule on the masks. Interaction attention defaults to ignored on both sides (`attn_mix=0.0`, `attn_weight_blend=0.0`): the stock modules are untrained random projections, so nonzero blends are opt-in only.
 
 ## Shift loss
 
-One scalar, minimised. File: `instantiations/shift/objective.py`. Overlap is the single product \(m_{robust}\cdot m_{shortcut}\) (line 41), weighted by `lambda_disjoint` (line 90). The shift allocator checks that its weight matches the objective and does not add the product again (`instantiations/shift/allocator.py` lines 51–54 and 98–100). Shift presets keep a non-zero disjoint weight (`core/game_modes.py` lines 67 and 87).
+One scalar, minimised. File: `instantiations/shift/objective.py`. Overlap is the single product \(m_{robust}\cdot m_{shortcut}\) (line 41), weighted by `lambda_disjoint` (line 90). The shift allocator checks that its weight matches the objective and does not add the product again (`instantiations/shift/allocator.py` lines 57–60 and 98–100). The shortcut init carries a deterministic ±0.25-logit seeded jitter so the two masks do not start identical. Shift presets keep a non-zero disjoint weight (`core/game_modes.py` lines 67 and 87).
 
 | Quantity | Definition | Where |
 |---|---|---|
