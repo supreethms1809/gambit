@@ -13,6 +13,8 @@ from evaluation.scores import (
     deletion_matrix,
     deletion_specificity,
     disagreement_reduction,
+    environment_logit_gap,
+    logit_disagreement_reduction,
     two_patch_recovery,
 )
 
@@ -105,6 +107,33 @@ def test_shortcut_removal_reduces_disagreement_more_than_a_random_mask() -> None
         noise=0.0,
         seed=0,
     )
+    assert bool((delta > 0).all()), delta.tolist()
+
+
+def test_logit_gap_stays_sensitive_when_probabilities_saturate() -> None:
+    """A confident model has ~zero prob gap but a live logit gap; ΔD_z separates masks."""
+
+    class _Confident(nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            red = x[:, 0].mean(dim=(1, 2))
+            # Confident class 0 everywhere, with a logit gap ID vs OOD.
+            return torch.stack([10.0 + 4.0 * red, torch.zeros_like(red)], dim=1)
+
+    _image, red, _blue = _scene()
+    identified = torch.full((2, 3, 16, 16), 0.2)
+    identified[:, 0, 0:8, 0:8] = 1.0
+    ood = torch.full_like(identified, 0.2)
+    other = torch.zeros_like(red)
+    other[:, 0:8, 8:16] = 1.0
+    model = _Confident()
+    y = torch.zeros(2, dtype=torch.long)
+    assert bool((environment_logit_gap(model, identified, ood, y) > 0).all())
+    delta = logit_disagreement_reduction(
+        model, identified, [ood], y=y, shortcut=red, random_mask=other,
+        iters=0, noise=0.0, seed=0,
+    )
+    assert delta.shape == (2,)
+    assert torch.isfinite(delta).all()
     assert bool((delta > 0).all()), delta.tolist()
 
 
