@@ -67,6 +67,15 @@ def test_mass_in_and_translate_preserve_mass():
     assert torch.allclose(rolled.sum(dim=-1), mask.sum(dim=-1))
 
 
+def test_translate_always_moves_the_mask():
+    mask = torch.zeros(4, 16)
+    mask[:, 0] = 1
+    for seed in range(20):
+        rolled = random_translate(mask, torch.Generator().manual_seed(seed), 4, 4)
+        assert not torch.equal(rolled, mask), f"null equals the mask at seed {seed}"
+        assert torch.allclose(rolled.sum(dim=-1), mask.sum(dim=-1))
+
+
 def test_impute_pins_known_pixels():
     image = torch.rand(1, 3, 8, 8)
     keep = torch.zeros(1, 1, 8, 8)
