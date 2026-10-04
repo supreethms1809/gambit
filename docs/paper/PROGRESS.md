@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p6-results`.
+Branch: `paper/p6-audit`.
 
 ## Stage status
 
@@ -29,8 +29,9 @@ Branch: `paper/p6-results`.
 | S20 | done | merge `17c8fc5` | Resumable grid runner merged as PR #18. The contrastive grid was not launched. `--final` stays refused. |
 | S21 | done | merge `59f4109` | Shift-grid and ablation manifest merged as PR #19. Neither job was launched. |
 | S22 | done | merge `aea98e1` | Completion check merged as PR #20. The grids are unfinished. The tag `final-runs-v1` was not created. |
-| S23 | in review | `afb7739` | Results builder. Numbers come from the records. `results/paper/RESULTS.md` was not written. |
-| S24–S28 | todo | | Not started. |
+| S23 | done | merge `535e94e` | Results builder merged as PR #21. `results/paper/RESULTS.md` was not written. |
+| S24 | in review | `2d648c8` | Read-only audit. The paper file is absent. Masks were not checked. The audit does not pass. |
+| S25–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -74,6 +75,7 @@ Branch: `paper/p6-results`.
 - 2026-10-03. The shift manifest lists the six shift datasets, five seeds, ResNet-50 and ViT-B/16, and the five core shift methods. Ablation cells are one variant per removed component, including paired versus unpaired and the mass target on or off. Neither list was started. S20's contrastive log directory is absent, so that grid is not launched.
 - 2026-10-03. A final cell is complete only when its done marker exists. A failed marker is a rerun. The contrastive manifest names eight datasets, including ImageNet-S. Run-record checks cover mask range, area, probabilities, finiteness, and `n`. No paper record was checked. The tag `final-runs-v1` was not created.
 - 2026-10-03. `analysis/build_results.py` formats every table number from the records through `family_summary` or a seed-averaged mean. Family S stays without a baseline until val selection supplies one. `results/paper/RESULTS.md` was not written.
+- 2026-10-03. The results audit compares a markdown file with a fresh render and does not rewrite the file. A hand-edited number fails that comparison. RESULTS.md is absent. Masks were not checked. The fresh-session audit has not been run. The audit does not pass.
 
 ## Open issues
 
@@ -83,7 +85,7 @@ Branch: `paper/p6-results`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 8 of 15.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 12 of 15.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -93,6 +95,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S24)
+
+```
+149 passed, 11 warnings in 53.00s
+```
+
+The audit does not pass. RESULTS.md is absent. Masks were not checked. The test split was not read.
 
 ## Exit check (S23)
 
@@ -222,4 +232,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the results-builder pull request. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the results-audit pull request. Do not treat this audit as the fresh-session audit. Do not write `results/paper/RESULTS.md` from unfinished runs. Do not launch the shift grid, the ablations, or the contrastive grid. Do not pass `--final`, do not freeze `EVAL_PLAN.md`, and do not tag `final-runs-v1`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
