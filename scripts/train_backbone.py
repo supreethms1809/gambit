@@ -38,6 +38,27 @@ import torch.nn.functional as F
 REPO = Path(__file__).resolve().parent.parent
 
 TV_INPUT_SIZE = 224
+
+
+def paper_checkpoint_name(
+    dataset: str,
+    model_name: str,
+    pretrained: bool,
+    freeze_backbone: bool,
+    num_epochs: int,
+    lr: float,
+    seed: int,
+    convention: str = "raw",
+) -> str:
+    """Filename for one paper cell. ImageNet normalisation gets its own cache key."""
+    mode_tag = "lp" if freeze_backbone else "ft"
+    pre_tag = "pt" if pretrained else "rand"
+    lr_tag = f"lr{lr:g}"
+    conv_tag = "" if convention == "raw" else f"_{convention}"
+    return (
+        f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}"
+        f"_{lr_tag}{conv_tag}_seed{seed}.pt"
+    )
 COLORED_MNIST_CORRELATION = 0.9
 
 # Medical datasets ship pre-split; train on the train split only (relative to data_root).
@@ -693,14 +714,17 @@ def get_or_train(
         ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    mode_tag = "lp" if freeze_backbone else "ft"   # linear-probe vs fine-tune
-    pre_tag  = "pt" if pretrained else "rand"
+    from models.wrapper import NormalizedModel, maybe_wrap, read_input_convention
+
     # The learning rate belongs in the name: it is the difference between a working
     # fine-tune and one that converges to chance, and without it a re-run at a
     # corrected lr silently returns the broken checkpoint from the cache.
-    lr_tag = f"lr{lr:g}"
-    ckpt_name = (f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}"
-                 f"_{lr_tag}_seed{seed}.pt")
+    # ImageNet normalisation is a separate cache key so a raw checkpoint is not
+    # reused after the convention changes.
+    convention = read_input_convention()
+    ckpt_name = paper_checkpoint_name(
+        dataset, model_name, pretrained, freeze_backbone, num_epochs, lr, seed, convention,
+    )
     ckpt_path = ckpt_dir / ckpt_name
 
     if ckpt_path.exists() and not force:
@@ -710,6 +734,7 @@ def get_or_train(
     print(f"\n{'='*60}")
     print(f"  Training: dataset={dataset}  model={model_name}  "
           f"pretrained={pretrained}  freeze={freeze_backbone}  epochs={num_epochs}  seed={seed}")
+    print(f"  [train] input convention: {convention}")
     print(f"{'='*60}")
 
     # Get num_classes first (load one batch from the eval loader if train fails)
@@ -723,7 +748,7 @@ def get_or_train(
         return ckpt_path  # caller should handle missing file
 
     torch.manual_seed(seed)
-    model = _build_model(model_name, num_classes, pretrained=pretrained)
+    model = maybe_wrap(_build_model(model_name, num_classes, pretrained=pretrained), convention)
 
     # Skewed medical datasets need class-weighted loss and balanced-accuracy model
     # selection, or training collapses onto the majority class (HAM10000 is ~67%
@@ -749,13 +774,15 @@ def get_or_train(
 
     # Metadata-wrapped so eval_localization.py / eval_decomposition.py can load these
     # directly. scripts/ablation_contrastive.py reads either format.
+    inner = model.model if isinstance(model, NormalizedModel) else model
     torch.save({
-        "state_dict": model.state_dict(),
+        "state_dict": inner.state_dict(),
         "dataset": dataset,
         "model_name": model_name,
         "num_classes": num_classes,
         "seed": seed,
         "balanced": bool(balanced),
+        "input_convention": convention,
     }, ckpt_path)
     print(f"  [train] checkpoint saved: {ckpt_path}")
     return ckpt_path
