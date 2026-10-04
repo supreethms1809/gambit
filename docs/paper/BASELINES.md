@@ -37,6 +37,18 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** A Grad-CAM map can be all zeros when the target-layer activations are not the non-negative maps Grad-CAM assumes. The provider warns. An all-zero map that both sides produce still agrees. A non-finite map is a failure under the shared rule.
 - **Cost.** One backward per class for Grad-CAM. One path of forward and backward passes per class for IG.
 
+## Extremal Perturbations
+
+- **Reviewer question.** Fong et al. already optimise a mask at a fixed area.
+- **Citation.** Ruth C. Fong, Mandela Patrick, and Andrea Vedaldi, Understanding Deep Networks via Extremal Perturbations and Smooth Masks, ICCV 2019.
+- **Source.** TorchRay `extremal_perturbation`, commit `6a198ee61d229360a3def590410378d2ed6f1f06`, vendored at `third_party/torchray`. Licence CC BY-NC 4.0.
+- **Patches.** `Perturbation.to` keeps the moved pyramid. Upstream called `tensor.to` and discarded the result. `MaskGenerator` passes `indexing="ij"` to `torch.meshgrid`, which is the order current PyTorch uses and which a later release will require by name. Neither change alters the mask update.
+- **Defaults.** Area list `[0.1]`, blur perturbation, preserve variant, `simple_reward`, 800 iterations, step 7, sigma 21, jitter on (a deterministic horizontal flip on even steps), SGD learning rate 0.01, momentum 0.9. The pointing-game setting in the TorchRay benchmark uses areas `{0.025, 0.05, 0.1, 0.2}`, sums those masks, and smooths with a Gaussian whose standard deviation is 9% of the short side. The contrastive adapter scores \(z_k - z_l\) through `reward_func`. TorchRay's own `contrastive_reward` is \(z_c - \max_{c' \neq c} z_{c'}\), which is a different target and is not the one used here.
+- **Reproduction target.** TorchRay's published pointing-game table, VOC 2007 test, all / difficult: VGG16 88.0 / 76.1, ResNet50 88.9 / 78.7, for `extremal_perturbation`, averaged over 3 runs. That run uses the excitation-backprop paper's fine-tuned classifiers and the full 4952-image test set. Those classifiers and PASCAL VOC are not on disk, and TorchRay describes this benchmark as cluster-scale. It has not been run. The CI check is the toy square and an identity check against `extremal_perturbation` itself.
+- **Conversion.** The native mask at the requested area. It does not go through the shared top-a threshold. The area is the function's `areas` argument.
+- **Failure modes.** The call is one image at a time. A batch is a loop. TorchRay disables `requires_grad` on the classifier; the wrapper turns those flags back on. The kernel defaults (step 7, sigma 21) are for images around 224 px. A 32 px toy uses step 2 and sigma 4 so the mask can sit on an 8 px square. That is an argument to the same function.
+- **Cost.** One forward and backward of the classifier per iteration. The authors' default is 800 iterations per class per image.
+
 ## Counterfactual visual explanations
 
 - **Reviewer question.** Goyal et al. already answer why class k rather than class l on fine-grained data.
@@ -53,7 +65,7 @@ records the pin, the conversion, and the check each method has to pass first.
 
 | Method | Reviewer question | Stage |
 |---|---|---|
-| Extremal Perturbations | Fong et al. already optimise a mask at a fixed area. | S11 |
+| Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
 | Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
 | Attribution difference | Why not subtract two heatmaps? | S13 |
