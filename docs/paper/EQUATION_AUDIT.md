@@ -37,6 +37,18 @@ One scalar, minimised. File: `instantiations/shift/objective.py`. Overlap is the
 
 This mass target is an absolute budget of one evidence-unit, scaled with the grid. The contrastive mass target is the base-evidence mass, scaled the same way. They share `lambda_mass` and `mass_ref_regions`. They do not share a formula.
 
+## Unpaired group statistics
+
+`GroupStatisticsObjective` in the same file. Images are not paired across environments. `group` gives each image one group id. The kept-logit quantity is the paired one: baseline-subtracted, for the chosen class.
+
+| Quantity | Definition | Where |
+|---|---|---|
+| Per-group mean | Mean of the baseline-subtracted kept logit inside each group. | lines 174–175, 201–206 |
+| Variance across group means | Population variance of those means. Robust variance is penalised. Shortcut variance is rewarded through `lambda_gap`. | lines 177–178, 187 |
+| Loss | The reward is negated. Disjoint, sparse, and mass use the paired formulas, then the batch is averaged. | lines 180–190 |
+
+`lambda_gap` here is the weight on shortcut variance. It is not the paired in-distribution gap. The mass target is unchanged.
+
 ## Reporting
 
 `scripts/ablation_contrastive.py:compute_metrics` (lines 263–314) uses the same `pairwise_overlap`. It reports `kept_logit` and stores the same number under `suff`. `baseline_subtracted_kept_logit` is the shift quantity and is not called suff.

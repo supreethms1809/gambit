@@ -2,8 +2,8 @@
 
 Each CUB bird is drawn twice: once on a land Places background and once on a
 water Places background. The bird pixels stay. The background is the shortcut.
-This is the counterfactual pair. The unpaired natural-groups objective is a
-later stage.
+This is the counterfactual pair. The unpaired natural-groups objective is
+``GroupStatisticsObjective``.
 
 Backgrounds are the Places365 validation images of the four categories used by
 Sagawa et al.: bamboo forest and broadleaf forest (land), lake/natural and
