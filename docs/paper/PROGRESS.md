@@ -15,7 +15,7 @@ Branch: `main`.
 | S06 | done | `7724885` | D1–D7 on val. Open routes recorded in `results/paper/degenerate/REPORT.md`. |
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
 | S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
-| S09 | launched | `dcb5f71` | Queue relaunched after the review-fix merge. Cells 1–3 from `1981031` were archived and are being retrained. |
+| S09 | launched | `dcb5f71` | Live Mac queue is still that process. New launches, including Spark, use `5e78f56`. |
 | S10 | done | `c15aeed`, merge `ec9239e` | Harness merged as PR #7. |
 | S11 | done | merge `061ddaa` | Adapter merged as PR #8. The VOC pointing game is not run. |
 | S12 | done | merge `a965754` | Algorithm 1 merged as PR #9. The CUB edit-count reproduction is not run. |
@@ -81,6 +81,7 @@ Branch: `main`.
 - 2026-10-04. `paper/p6-review-fixes` is on `main` (`6b23854`, audit line refs `dcb5f71`). The pre-fix checkpoints and done markers for seeds 0–2 are in `results/paper/checkpoints/stale_1981031/` and `results/paper/logs/train/stale_1981031/`. The queue was relaunched from `dcb5f71`. Parent shell 1571, python 1587, caffeinate 1588. Log: `results/paper/logs/train/driver.log`. 110 cells. Cell 1 restarted as CIFAR-10 ResNet-50 linear probe, seed 0.
 - 2026-10-04. Raw-[0,1] training stays: train and eval are consistently unnormalised, which is correct for raw-trained checkpoints but leaves ImageNet-pretrained features underused (measured 0.389 raw vs 0.816 normalised on a CIFAR-10 probe). `NormalizedModel` stays unused outside its test until a normalised-weights setting needs it. Revisit only with a val-measured comparison, not by wrapping silently.
 - 2026-10-04. Shift split discipline verified, no fix needed: `WaterbirdsPairs` and `PlantedPatchCIFAR` read the paper indices via `load_indices` (cub200/cifar10), backgrounds are disjointly split, and `ColoredMNIST` preserves MNIST row order so the mnist indices align.
+- 2026-10-04. Environment pin is `c71fd37` (`requirements.txt`, conda env name `gambit`). Input convention is `e7a1a24`: absent `results/paper/input_convention.txt` means raw, and an ImageNet winner uses a separate checkpoint name. Hard budget and the family-C foil executor are `5e78f56`. Suite before these commits: 174 passed. The cached CIFAR-10 probe has not finished, so the convention file is not written. Contrastive allocation changed; stored degenerate reports are stale and must be rerun. Classifier training on the raw path is otherwise the same Adam, cosine, and cross-entropy loop.
 
 ## Open issues
 
@@ -90,7 +91,8 @@ Branch: `main`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue relaunched 2026-10-04 from code `dcb5f71`. Parent shell 1571, python 1587 (`scripts/launch_paper_training.py`), caffeinate 1588. Log: `results/paper/logs/train/driver.log`. 110 cells. Pre-fix seeds 0–2 are archived under `stale_1981031` and are being retrained. Cell 1 had started. Do not start a second queue.
+- Training queue on this Mac is cell 1 (CIFAR-10 ResNet-50 linear probe, seed 0, MPS, process code `dcb5f71`). A watcher stops it after that cell, runs the cached-feature probe, and resumes on `5e78f56`. Do not start a second queue on this Mac. Log: `results/paper/logs/train/driver.log`. Pre-fix seeds 0–2 stay under `stale_1981031`.
+- VOC 2007 is unpacked at `data/voc2007/VOCdevkit/VOC2007` (9963 images, 4952 test ids). The public CUB VGG-16 file is `data/weights/cub_vgg16_model.ckpt` (a later reimplementation, not yet scored against the 7.4 / 5.3 edit counts). ImageNet val is not on disk: this machine has no Hugging Face token and no Kaggle credentials.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -245,4 +247,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Leave the training queue running from `dcb5f71` and do not start a second one. Check `results/paper/logs/train/driver.log`. Gate G0 stays closed until the open reproductions are run or recorded as omissions. Do not run the G1 pilot, do not apply val selection, do not freeze `EVAL_PLAN.md`, and do not tag `eval-plan-frozen` or `final-runs-v1` before that. Do not pass `--final`. Do not launch the contrastive grid, the shift grid, or the ablations. Do not write `results/paper/RESULTS.md`. ImageNet-1k is not on disk. The ImageNet-9 challenge test archive stays unextracted.
+Spark may run its own full queue from `5e78f56` (`git pull` on `main`). This Mac must not start a second trainer. With no `results/paper/input_convention.txt`, both trains stay raw, which is the comparable run. The watcher `scripts/pause_after_cell.py` still owns the Mac queue until cell 1 finishes; if that probe writes `imagenet`, the Mac retrains and the two machines are no longer the same workload. Gate G0 stays closed: VOC is unpacked, ImageNet val is missing, and the CVE checkpoint is not scored. Do not run the G1 pilot, do not apply val selection, do not freeze `EVAL_PLAN.md`, and do not tag `eval-plan-frozen` or `final-runs-v1` before that. Do not pass `--final`. Do not launch the contrastive grid, the shift grid, or the ablations. Do not write `results/paper/RESULTS.md`. The ImageNet-9 challenge test archive stays unextracted. Rerun `scripts/check_degenerate.py` on val after the probe releases the GPU, with `--device cpu` if a trainer is already on the GPU.
