@@ -61,6 +61,26 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** A non-finite feature map raises. If the query map is already predicted as the distractor class, the edit list is empty. If the class never flips, `flipped` is false and the caller counts a failure rather than dropping the image.
 - **Cost.** One decision-network evaluation per candidate pair per step. On the paper's 7×7 map that is 2,401 evaluations per edit.
 
+## Attribution difference
+
+- **Reviewer question.** Why not subtract two heatmaps?
+- **Source.** `baselines.shift_maps.environment_maps`. The maps are the shared Grad-CAM or integrated-gradients attributions, one per environment. There is no separate reference implementation: the reduction is the baseline.
+- **Patches.** None.
+- **Defaults.** Index 0 is the in-distribution map. The robust map is the elementwise minimum across environments. The shortcut map is the largest absolute gap between the in-distribution map and any other environment.
+- **Reproduction.** The constructed-map test in `tests/test_shift_baselines.py`. A patch that exists only in the in-distribution map is the shortcut, and the square shared by every environment is the robust map. There is no single published number for this reduction.
+- **Conversion.** The shared budget conversion, applied to each of the two maps.
+- **Failure modes.** Fewer than two environments raises. A non-finite map raises.
+- **Cost.** One attribution per environment, then an elementwise reduction.
+
+## Per-environment Extremal Perturbations
+
+- **Reviewer question.** Same mask method, differenced across environments.
+- **Source.** `per_environment_extremal` calls `class_masks` on each environment, then `environment_maps`. The TorchRay pin, patches, and defaults are the Extremal Perturbations entry.
+- **Reproduction target.** The same VOC pointing game as Extremal Perturbations. It has not been run. The CI check is that two identical environments keep that mask as the robust map and a zero shortcut.
+- **Conversion.** Each environment uses the native area mask. The difference is taken after that conversion.
+- **Failure modes.** The same as Extremal Perturbations, once per environment.
+- **Cost.** One Extremal Perturbations run per environment per image.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
@@ -68,9 +88,7 @@ records the pin, the conversion, and the check each method has to pass first.
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
 | Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
-| Attribution difference | Why not subtract two heatmaps? | S13 |
-| SpRAy | Explanation-based shortcut discovery already exists. | S13 |
-| Per-environment Extremal Perturbations | Same mask method, differenced across environments. | S13 |
+| SpRAy | Explanation-based shortcut discovery already exists. | S13, official CoRelAy and Zennit. |
 | Contrastive Grad-CAM | Gradient-based contrastive saliency exists. | S14 |
 | SCOUT | Discriminant why-A-not-B explanations exist. | S14 |
 | RISE | Sampling-based perturbation would do the same. | S14 |
