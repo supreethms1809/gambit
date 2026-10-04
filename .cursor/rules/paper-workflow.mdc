@@ -10,7 +10,7 @@ Read `docs/paper/PROGRESS.md` before editing. Specs are in `docs/paper/PLAN.md`.
 Environment, from the repo root:
 
 ```bash
-source /opt/anaconda3/etc/profile.d/conda.sh && conda activate marl
+source /opt/anaconda3/etc/profile.d/conda.sh && conda activate gambit
 PYTHONPATH=. python -m pytest tests/
 ```
 

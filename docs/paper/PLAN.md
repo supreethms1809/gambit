@@ -110,7 +110,7 @@ The plan works in Cursor as is. These additions replace the parts that relied on
 
 **1. Rules files (written in S01, committed).**
 - **`AGENTS.md`** at the repo root, and **`.cursor/rules/paper-workflow.mdc`** with `alwaysApply: true`, holding the same content. It contains:
-  - **Environment:** `source /opt/anaconda3/etc/profile.d/conda.sh && conda activate marl`, then run everything from the repo root with `PYTHONPATH=.`. Tests: `PYTHONPATH=. python -m pytest tests/`.
+  - **Environment:** `source /opt/anaconda3/etc/profile.d/conda.sh && conda activate gambit`, then run everything from the repo root with `PYTHONPATH=.`. Tests: `PYTHONPATH=. python -m pytest tests/`.
   - **Session start and end protocol** (from "Continuity mechanics"), and "read `docs/paper/PROGRESS.md` first".
   - **Commit rules** from "Version control":
     - `git add <specific paths>` only, never `git add -A` or `git add .`, because `data/`, checkpoints and logs must never be staged;
@@ -309,7 +309,7 @@ and dossier. A summary follows. The full rules are in **Baseline protocol**.
 - The Extended tier runs on all datasets if Phase 0 compute allows. Otherwise it runs on a stated, matched random subsample, never silently dropped.
 
 ### B2. Pinned, unmodified reference code
-- Third-party code is vendored under `third_party/<name>@<commit>`, with its licence. Library versions are pinned in `environment.yml`.
+- Third-party code is vendored under `third_party/<name>@<commit>`, with its licence. Library versions are pinned in `requirements.txt`.
 - Any patch needed to run on our stack (for example, TorchRay on current PyTorch/MPS) is its own commit, with a one-line reason, listed in the dossier. Patches may change only API or device, never the algorithm.
 - Each method's authors' recommended defaults are recorded.
 
@@ -546,7 +546,7 @@ reimplementation. That time is deliberate. The main schedule risk is compute: CV
 - **New:**
   - `evaluation/` (shared scorer)
   - `baselines/` (one adapter per method in B1, all emitting per-hypothesis maps)
-  - `third_party/` (pinned TorchRay, RISE, SCOUT, CoRelAy/Zennit), `environment.yml`
+  - `third_party/` (pinned TorchRay, RISE, SCOUT, CoRelAy/Zennit), `requirements.txt`
   - `models/wrapper.py` (raw [0,1] input, normalisation inside the model)
   - `docs/paper/BASELINES.md` (dossier), `tests/test_baselines.py` (toy model, edge cases, symmetry, cross-implementation)
   - `analysis/{stats,build_results}.py`

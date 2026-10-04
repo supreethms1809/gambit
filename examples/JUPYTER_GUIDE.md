@@ -6,7 +6,7 @@ This guide shows how to run contrastive CDEA directly in a notebook and switch b
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 jupyter lab
 ```

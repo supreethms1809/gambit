@@ -4,7 +4,7 @@ Use these commands to retrain the model and run both explanation modes.
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 ```
 

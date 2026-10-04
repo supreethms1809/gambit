@@ -149,7 +149,7 @@ Recommended to run in your env:
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/tests/test_<your_game>.py
 ```

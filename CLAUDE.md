@@ -14,8 +14,10 @@ Uses the `marl` conda environment:
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 ```
+
+Create that env from `requirements.txt` (`conda create -n gambit python=3.12`, then `pip install -r requirements.txt`). The older `marl` env is broader than this repo.
 
 All scripts must be run from the repository root with `PYTHONPATH=.` so that `core`, `modality`, `base_evidence`, and `instantiations` are importable.
 

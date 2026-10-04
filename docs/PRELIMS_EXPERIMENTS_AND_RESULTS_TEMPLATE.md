@@ -7,7 +7,7 @@ Use this as a fill-in template after longer training runs complete.
 ### 1.1 Environment
 
 - Repository: `/Users/ssuresh/gambit`
-- Python environment: `conda activate marl`
+- Python environment: `conda activate gambit`
 - Device used: `[TODO: mps/cuda/cpu]`
 - Seed policy: `[TODO: single seed / multi-seed list]`
 - Game mode policy: `[TODO: mixed (default) / ablation list]`
@@ -37,7 +37,7 @@ Use this as a fill-in template after longer training runs complete.
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/examples/contrastive_explanation.py \
   --dataset stanford_dogs \
@@ -60,7 +60,7 @@ PYTHONPATH=. python /Users/ssuresh/gambit/examples/contrastive_explanation.py \
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/examples/contrastive_explanation_ig.py \
   --dataset stanford_dogs \
@@ -82,7 +82,7 @@ PYTHONPATH=. python /Users/ssuresh/gambit/examples/contrastive_explanation_ig.py
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/scripts/eval_robust_shortcut.py \
   --game_mode mixed

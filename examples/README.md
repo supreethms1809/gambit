@@ -113,7 +113,7 @@ Run the second CDEA game (robust evidence vs shortcut evidence) with:
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/scripts/eval_robust_shortcut.py --game_mode mixed
 ```
@@ -140,7 +140,7 @@ To run with custom values:
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 PYTHONPATH=. python /Users/ssuresh/gambit/scripts/eval_robust_shortcut.py \
   --num_images 400 \
@@ -160,7 +160,7 @@ For an end-to-end notebook workflow (Grad-CAM and Integrated Gradients) use:
 Quick start:
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
-conda activate marl
+conda activate gambit
 cd /Users/ssuresh/gambit
 jupyter lab
 ```
