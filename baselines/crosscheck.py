@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 from base_evidence.gradcam_regions import GradCAMRegionsProvider, _find_target_layer
 from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
+from core.eval_mode import eval_mode
 from core.types import HypothesisSet
 from evaluation.metrics import spearman
 
@@ -49,7 +50,8 @@ def library_gradcam(
     targets = [ClassifierOutputTarget(int(i)) for i in ids.tolist()]
     was_training = model.training
     try:
-        with pgc.GradCAM(model=model, target_layers=[layer]) as cam:
+        # Eval mode: hooks must record the deterministic inference function.
+        with eval_mode(model), pgc.GradCAM(model=model, target_layers=[layer]) as cam:
             outputs = cam.activations_and_grads(x.detach())
             cam.model.zero_grad()
             loss = sum(target(output) for target, output in zip(targets, outputs))

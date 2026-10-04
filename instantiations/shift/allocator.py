@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 import torch
 import torch.nn.functional as F
+from core.eval_mode import eval_mode
 from core.types import Tensor, HypothesisSet, EnvBatch
 
 
@@ -78,30 +79,33 @@ class RobustShortcutOptimizationAllocator:
             p.requires_grad_(False)
 
         try:
-            for _ in range(self.num_steps):
-                optimizer.zero_grad()
-                m_rob = torch.sigmoid(m_rob_logits)
-                m_sho = torch.sigmoid(m_sho_logits)
-                masks = {"robust": m_rob, "shortcut": m_sho}
-                out = self.objective.compute(
-                    x=x,
-                    model=model,
-                    unit_space=unit_space,
-                    hypotheses=hypotheses,
-                    masks=masks,
-                    evidence=evidence,
-                    tokens=tokens,
-                    attn=attn,
-                    env=env,
-                    **kwargs,
-                )
-                loss = out["loss"]
-                # Objective already includes disjointness term; do not add it again here.
-                loss.backward()
-                optimizer.step()
-                with torch.no_grad():
-                    m_rob_logits.clamp_(-3.0, 3.0)
-                    m_sho_logits.clamp_(-3.0, 3.0)
+            # Eval mode: train-mode forwards would update BatchNorm stats and
+            # sample dropout, so the explained function would drift mid-run.
+            with eval_mode(model):
+                for _ in range(self.num_steps):
+                    optimizer.zero_grad()
+                    m_rob = torch.sigmoid(m_rob_logits)
+                    m_sho = torch.sigmoid(m_sho_logits)
+                    masks = {"robust": m_rob, "shortcut": m_sho}
+                    out = self.objective.compute(
+                        x=x,
+                        model=model,
+                        unit_space=unit_space,
+                        hypotheses=hypotheses,
+                        masks=masks,
+                        evidence=evidence,
+                        tokens=tokens,
+                        attn=attn,
+                        env=env,
+                        **kwargs,
+                    )
+                    loss = out["loss"]
+                    # Objective already includes disjointness term; do not add it again here.
+                    loss.backward()
+                    optimizer.step()
+                    with torch.no_grad():
+                        m_rob_logits.clamp_(-3.0, 3.0)
+                        m_sho_logits.clamp_(-3.0, 3.0)
         finally:
             for p, req in zip(model.parameters(), model_requires_grad):
                 p.requires_grad_(req)

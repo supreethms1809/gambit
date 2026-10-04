@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 import torch
 import torch.nn.functional as F
+from core.eval_mode import eval_mode
 from core.types import Tensor, HypothesisSet, EnvBatch
 
 
@@ -133,42 +134,46 @@ class OptimizationAllocator:
 
         optimizer = torch.optim.Adam(params, lr=self.lr)
 
-        # Freeze model so only mask params get gradients
+        # Freeze model so only mask params get gradients. Eval mode as well:
+        # train-mode forwards would update BatchNorm stats and sample dropout,
+        # so the explained function would drift across the optimization steps.
         model_requires_grad = [p.requires_grad for p in model.parameters()]
         for p in model.parameters():
             p.requires_grad_(False)
 
         try:
-            for _ in range(self.num_steps):
-                optimizer.zero_grad()
-                # Clamp logits so masks stay in (0.05, 0.95) for non-trivial allocation
-                m_unique = torch.sigmoid(m_unique_logits)
-                m_shared = torch.sigmoid(m_shared_logits) if m_shared_logits is not None else None
-                masks = {"unique": m_unique}
-                if m_shared is not None:
-                    masks["shared"] = m_shared
+            with eval_mode(model):
+                for _ in range(self.num_steps):
+                    optimizer.zero_grad()
+                    # Logits are clamped to [-logit_clip, logit_clip]; the sigmoid
+                    # keeps masks away from exact 0/1 for non-trivial allocation.
+                    m_unique = torch.sigmoid(m_unique_logits)
+                    m_shared = torch.sigmoid(m_shared_logits) if m_shared_logits is not None else None
+                    masks = {"unique": m_unique}
+                    if m_shared is not None:
+                        masks["shared"] = m_shared
 
-                out = self.objective.compute(
-                    x=x,
-                    model=model,
-                    unit_space=unit_space,
-                    hypotheses=hypotheses,
-                    masks=masks,
-                    evidence=evidence,
-                    tokens=tokens,
-                    attn=attn,
-                    env=env,
-                    **kwargs,
-                )
-                loss = out["loss"]
-                if self.lambda_partition > 0:
-                    loss = loss + self.lambda_partition * _partition_penalty(m_unique, m_shared)
-                loss.backward()
-                optimizer.step()
-                with torch.no_grad():
-                    m_unique_logits.clamp_(-self.logit_clip, self.logit_clip)
-                    if m_shared_logits is not None:
-                        m_shared_logits.clamp_(-self.logit_clip, self.logit_clip)
+                    out = self.objective.compute(
+                        x=x,
+                        model=model,
+                        unit_space=unit_space,
+                        hypotheses=hypotheses,
+                        masks=masks,
+                        evidence=evidence,
+                        tokens=tokens,
+                        attn=attn,
+                        env=env,
+                        **kwargs,
+                    )
+                    loss = out["loss"]
+                    if self.lambda_partition > 0:
+                        loss = loss + self.lambda_partition * _partition_penalty(m_unique, m_shared)
+                    loss.backward()
+                    optimizer.step()
+                    with torch.no_grad():
+                        m_unique_logits.clamp_(-self.logit_clip, self.logit_clip)
+                        if m_shared_logits is not None:
+                            m_shared_logits.clamp_(-self.logit_clip, self.logit_clip)
         finally:
             for p, req in zip(model.parameters(), model_requires_grad):
                 p.requires_grad_(req)
