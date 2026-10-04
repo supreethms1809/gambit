@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p2-training`.
+Branch: `paper/p2-baselines`.
 
 ## Stage status
 
@@ -16,7 +16,8 @@ Branch: `paper/p2-training`.
 | S07 | done | `e956015` | CIFAR-100, Oxford-IIIT Pet (37), CUB-200. ImageNet-S is waiting on ImageNet-1k. |
 | S08 | done | `0090a78` | Waterbirds pairs, ImageNet-9 backgrounds, planted-patch CIFAR-10, ColoredMNIST recolor check. |
 | S09 | launched | `1981031` | Training queue is running. See the background job below. |
-| S10–S28 | todo | | Not started. |
+| S10 | in review | `c15aeed` | Harness, margin attribution, toy test, cross-check. PR is for you to review. Not merged. |
+| S11–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -42,6 +43,10 @@ Branch: `paper/p2-training`.
 - 2026-10-03. The val contact sheet was inspected. The same bird sits on a forest photo and a beach photo, with the mask on that bird. The two CIFAR patches move and then disappear. A ColoredMNIST digit keeps its shape across three hues. An ImageNet-9 dog keeps its pose across original, mixed-same, and mixed-rand backgrounds.
 - 2026-10-03. Paper training is an ImageNet linear probe for the contrastive datasets (frozen backbone, Adam, cosine schedule, cross-entropy, lr 1e-3, 15 epochs). Shift datasets are a full fine-tune at lr 1e-4. Checkpoint selection stays val balanced accuracy. ViT-B/16 uses batch 16. ResNet-50 linear probes use batch 32. Shift fine-tunes use batch 16. Waterbirds also uses class-weighted loss. Seeds are 0–4. ImageNet-S is not in the grid.
 - 2026-10-03. ColoredMNIST colors are fixed with seed 43, and training uses the MNIST paper train indices. Older ColoredMNIST checkpoints were fit on the full 60k training pool, including the val images. Those checkpoints are not the paper models.
+- 2026-10-03. `IntegratedGradientsRegionsProvider` sums channels and clamps at zero. The previous absolute channel sum counted evidence against the class as support. Stored IG maps from before `c15aeed` are invalid.
+- 2026-10-03. The Grad-CAM cross-check compares the target-layer ReLU map, pooled with the same adaptive average pool as our provider. pytorch-grad-cam's returned image is min-max scaled and resized for display, and that display step is not the comparison. IG uses the right Riemann sum on both sides. Captum's default quadrature is Gauss-Legendre.
+- 2026-10-03. Library pins for that check are grad-cam 1.5.7 and captum 0.9.0, in `baselines/versions.py`. The CIFAR-10 checkpoint in the check was trained on raw `[0, 1]` input, so both implementations call it directly.
+- 2026-10-03. GradientShap draws path coefficients with NumPy. A repeat seeds `torch.manual_seed` and `numpy.random.seed`. Failed rows stay in the batch and take a seeded area-a floor.
 
 ## Open issues
 
@@ -51,7 +56,7 @@ Branch: `paper/p2-training`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. First cell: CIFAR-10 ResNet-50 linear probe, seed 0, on MPS.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive at the S10 check. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. First cell: CIFAR-10 ResNet-50 linear probe, seed 0, on MPS. The log had reached epoch 7 of 15.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -62,14 +67,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
 
-## Exit check (S09)
+## Exit check (S10)
 
 ```
-80 passed, 8 warnings in 6.01s
+89 passed, 10 warnings in 39.79s
 ```
 
-`scripts/model_table.py` scored the existing CIFAR-10 ResNet-18 val checkpoint and wrote `results/paper/model_table/smoke.json`. That file is a check of the script, not a paper-table row.
+`PYTHONPATH=. python scripts/crosscheck_evidence.py` exited 0. Code `c15aeed`. Output: `results/paper/crosscheck/val100.json`. 100 CIFAR-10 val images. The test split was not read.
 
 ## Next session
 
-Stage **S10**. Baseline harness. Leave the training queue running and check `results/paper/logs/train/driver.log` before starting. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the S10 pull request on `paper/p2-baselines`. The baseline protocol says you merge it. After that merge, stage **S11** is Extremal Perturbations. Leave the training queue running and check `results/paper/logs/train/driver.log` before starting. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
