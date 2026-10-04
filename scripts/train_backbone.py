@@ -158,16 +158,62 @@ def _subset_targets(ds) -> Optional[list]:
     return [int(t) for t in targets]
 
 
+def _worker_init(_worker_id: int) -> None:
+    """One thread per prefetch worker so the pool does not oversubscribe the CPU."""
+    torch.set_num_threads(1)
+
+
+class _ResizeTo(torch.utils.data.Dataset):
+    """Bilinear resize of a tensor image. Stays raw ``[0, 1]``; no normalization.
+
+    Defined at module scope so a CUDA prefetch worker can unpickle it.
+    """
+
+    def __init__(self, inner, size: int):
+        self.inner = inner
+        self.size = int(size)
+
+    def __len__(self) -> int:
+        return len(self.inner)
+
+    def __getitem__(self, index: int):
+        image, label = self.inner[index]
+        image = F.interpolate(
+            image.unsqueeze(0),
+            size=(self.size, self.size),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)
+        return image, label
+
+
 def _dataloader(ds, batch_size: int, shuffle: bool, seed: int) -> torch.utils.data.DataLoader:
-    """Shuffle from ``seed``, separate from the backbone's initialization stream."""
+    """Shuffle from ``seed``, separate from the backbone's initialization stream.
+
+    CUDA prefetches batches in worker processes. MPS stays in-process: worker
+    processes deadlock against MPS (project notes, B6).
+    """
     from torch.utils.data import DataLoader
 
     generator = None
     if shuffle:
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(seed))
+    workers = 8 if torch.cuda.is_available() else 0
+    kwargs = {}
+    if workers:
+        kwargs["persistent_workers"] = True
+        kwargs["prefetch_factor"] = 4
+        kwargs["pin_memory"] = True
+        kwargs["multiprocessing_context"] = "spawn"
+        kwargs["worker_init_fn"] = _worker_init
     return DataLoader(
-        ds, batch_size=batch_size, shuffle=shuffle, num_workers=0, generator=generator,
+        ds,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=workers,
+        generator=generator,
+        **kwargs,
     )
 
 
@@ -232,48 +278,16 @@ def get_train_loader(
 
     if dataset == "colored_cifar10":
         from instantiations.shift.biased_data import ColoredCIFAR10
-        from torchvision import transforms
         base_ds = ColoredCIFAR10(root=str(data_root), train=True, download=True,
                                  correlation=COLORED_MNIST_CORRELATION)
-
-        class _ResizeWrapper(torch.utils.data.Dataset):
-            def __init__(self, inner):
-                self.inner = inner
-
-            def __len__(self):
-                return len(self.inner)
-
-            def __getitem__(self, i):
-                x, y = self.inner[i]
-                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
-                                  mode="bilinear", align_corners=False).squeeze(0)
-                # No normalization: the explanation pipeline consumes raw [0,1].
-                return x, y
-
-        ds = _ResizeWrapper(base_ds)
+        ds = _ResizeTo(base_ds, image_size)
         return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "texture_mnist":
         from instantiations.shift.biased_data import TextureBiasedMNIST
-        from torchvision import transforms
         base_ds = TextureBiasedMNIST(root=str(data_root), train=True, download=True,
                                      correlation=COLORED_MNIST_CORRELATION)
-
-        class _ResizeWrapper(torch.utils.data.Dataset):
-            def __init__(self, inner):
-                self.inner = inner
-
-            def __len__(self):
-                return len(self.inner)
-
-            def __getitem__(self, i):
-                x, y = self.inner[i]
-                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
-                                  mode="bilinear", align_corners=False).squeeze(0)
-                # No normalization: the explanation pipeline consumes raw [0,1].
-                return x, y
-
-        ds = _ResizeWrapper(base_ds)
+        ds = _ResizeTo(base_ds, image_size)
         return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "colored_mnist":
@@ -282,21 +296,7 @@ def get_train_loader(
         # train split, so the val images are held out for checkpoint selection.
         base_ds = ColoredMNIST(root=str(data_root), train=True, download=False,
                                correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED)
-
-        class _ResizeWrapper(torch.utils.data.Dataset):
-            def __init__(self, inner):
-                self.inner = inner
-
-            def __len__(self):
-                return len(self.inner)
-
-            def __getitem__(self, i):
-                x, y = self.inner[i]
-                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
-                                  mode="bilinear", align_corners=False).squeeze(0)
-                return x, y
-
-        ds = _paper_subset(_ResizeWrapper(base_ds), "mnist", "train")
+        ds = _paper_subset(_ResizeTo(base_ds, image_size), "mnist", "train")
         return _dataloader(ds, batch_size, True, seed), 10
 
     if dataset == "planted_patch":
