@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p4-selection`.
+Branch: `paper/p5-grid`.
 
 ## Stage status
 
@@ -25,8 +25,9 @@ Branch: `paper/p4-selection`.
 | S16 | done | merge `8715ded` | Unpaired group-statistics objective merged as PR #14. The paired objective is unchanged. |
 | S17 | done | merge `a0ff742` | Scores and the draft plan merged as PR #15. `EVAL_PLAN.md` is not frozen. |
 | S18 | done | merge `25c8842` | Gate G1 does not run. Merged as PR #16. The tag `g1-pilot` was not created. |
-| S19 | in review | `ad13b66` | Val selection rule only. It has not been applied. `EVAL_PLAN.md` is not frozen. |
-| S20–S28 | todo | | Not started. |
+| S19 | done | merge `9f4f090` | Val selection rule merged as PR #17. It has not been applied. `EVAL_PLAN.md` is not frozen. |
+| S20 | in review | `c36d478` | Resumable grid runner. The contrastive grid was not launched. `--final` stays refused. |
+| S21–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -66,6 +67,7 @@ Branch: `paper/p4-selection`.
 - 2026-10-03. Primary scores live in `evaluation/scores.py`. CD@a uses ROAD. ΔD subtracts a random mask of equal area. Holm adjusted p-values are the cumulative maximum of (m − i) p_(i). `docs/paper/EVAL_PLAN.md` is a draft. The tag `eval-plan-frozen` was not created. The test split stays locked.
 - 2026-10-03. Gate G1 does not run. G0 is still closed, and the paper dev checkpoints are 2 of 110 cells, both CIFAR-10. HAM10000 has no paper checkpoint yet. The tag `g1-pilot` was not created. No stop-or-continue decision is logged.
 - 2026-10-03. Val selection maximises the mean CD@5% among candidates that close D1–D5. Ties keep the earliest candidate. An open route is not a fallback. The rule has not been applied to val. The tag `eval-plan-frozen` was not created.
+- 2026-10-03. The final-grid runner skips a cell whose done marker exists. `--final` is refused while `EVAL_PLAN.md` says it is not frozen, even if the file names the freeze marker. The contrastive grid was not launched.
 
 ## Open issues
 
@@ -75,7 +77,7 @@ Branch: `paper/p4-selection`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 1 of 15.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cells 1 and 2 finished: CIFAR-10 ResNet-50 linear probe, seeds 0 and 1. Cell 3 (`cifar10_resnet50_lp_lr0.001_seed2`) had reached epoch 3 of 15.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -85,6 +87,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S20)
+
+```
+134 passed, 11 warnings in 67.43s
+```
+
+The contrastive grid was not launched. The test split was not read.
 
 ## Exit check (S19)
 
@@ -182,4 +192,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the selection-rule pull request. Do not apply it to val, do not freeze `EVAL_PLAN.md`, and do not create `eval-plan-frozen`. Do not create `g1-pilot` or start a pilot comparison while G0 is closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the final-grid pull request. Do not launch the contrastive grid, do not pass `--final`, and do not freeze `EVAL_PLAN.md`. Gate G0 stays closed. Leave the training queue running and check `results/paper/logs/train/driver.log`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
