@@ -125,14 +125,25 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** Fewer than one mask raises. A keep-probability outside \((0, 1]\) raises. A non-finite map raises. The margin call raises when the foil is missing.
 - **Cost.** One forward of the classifier per mask. The authors' ResNet-50 setting is 8000 forwards per image.
 
+## Random area-a mask
+
+- **Reviewer question.** Is the metric satisfied by chance?
+- **Source.** `baselines.adapter.random_floor`. A constant field makes every entry a tie, and the shared top-a conversion draws the area from the seed.
+- **Patches.** None.
+- **Defaults.** The area is the same fraction `a` as the method it is compared with. The seed is the caller's seed.
+- **Reproduction.** There is no published number. `tests/test_baselines.py` checks that a constant map keeps the area, that the seed fixes the ties, and that a non-finite row is replaced by this floor and kept in the batch.
+- **Conversion.** The shared budget conversion. The floor is that conversion applied to a constant map.
+- **Failure modes.** The floor is the score for a failed row. It is not itself a failure.
+- **Cost.** One seeded ranking of the pixels. No model call.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
 |---|---|---|
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
-| Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
 | SpRAy on the VOC horse analysis | The four strategies above. | Still needs their Fisher-vector classifier and VOC 2007. |
 | RISE deletion and insertion | The published ImageNet table above. | Still needs ImageNet-1k. |
+| Grad-CAM pointing game | TorchRay's published Grad-CAM number on VOC 2007. | Still needs VOC 2007 and the fine-tuned classifiers. |
 
 Method-specific conversions that are not the shared top-a rule (CVE edit order, SpRAy cluster relevance, Extremal Perturbations' native area mask) are added with the method that needs them.

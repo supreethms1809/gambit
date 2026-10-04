@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p2-extended`.
+Branch: `paper/p2-g0`.
 
 ## Stage status
 
@@ -20,8 +20,9 @@ Branch: `paper/p2-extended`.
 | S11 | done | merge `061ddaa` | Adapter merged as PR #8. The VOC pointing game is not run. |
 | S12 | done | merge `a965754` | Algorithm 1 merged as PR #9. The CUB edit-count reproduction is not run. |
 | S13 | done | merge `4fb5895` | Attribution difference merged as `db760b0`. SpRAy merged as PR #11. The VOC horse analysis is not run. |
-| S14 | in review | `71aa526` | Contrastive Grad-CAM and official RISE. SCOUT is recorded as not a drop-in explainer. ImageNet deletion/insertion and the qualitative figures are not run. |
-| S15–S28 | todo | | Not started. |
+| S14 | done | merge `6d038e2` | Contrastive Grad-CAM and official RISE merged as PR #12. SCOUT is recorded as not a drop-in explainer. ImageNet deletion/insertion and the qualitative figures are not run. |
+| S15 | in review | `d7f956c` | Gate G0 does not pass. The tag `g0-baselines` was not created. Open Core reproductions are listed in `docs/paper/G0.md`. |
+| S16–S28 | todo | | Not started. |
 
 ## Decisions
 
@@ -56,6 +57,7 @@ Branch: `paper/p2-extended`.
 - 2026-10-03. The shift attribution difference takes the elementwise minimum across environments as the robust map and the largest absolute gap from the in-distribution map as the shortcut. Per-environment Extremal Perturbations applies that reduction to native class masks.
 - 2026-10-03. SpRAy clustering is CoRelAy `SpectralClustering` at `bc80524`. Relevance is Zennit `EpsilonPlus` at `3e98348`. Each image receives its cluster's mean relevance. The published VOC horse analysis has not been run. `metrohash-python` 1.1.3.3 is the CoRelAy import dependency.
 - 2026-10-03. Contrastive Grad-CAM backpropagates cross-entropy toward the foil class. That target is not the logit margin. Official RISE is vendored at `d91ea00`. The device follows the machine, and a missing save path skips `masks.npy`. The margin map reweights those masks by \(z_k - z_l\). ResNet-50 deletion \(0.1076 \pm 0.0005\) and insertion \(0.7267 \pm 0.0006\) are the reproduction target and have not been run. SCOUT's public repository trains a hardness predictor on CUB and ADE, so it was not vendored.
+- 2026-10-03. Gate G0 does not pass. Core reproductions still open: the Grad-CAM and Extremal Perturbations pointing games, the CVE edit counts, and the SpRAy horse analysis. The tag `g0-baselines` was not created. No pilot comparison runs. The random area-a floor has a dossier entry.
 
 ## Open issues
 
@@ -65,7 +67,7 @@ Branch: `paper/p2-extended`.
 - ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cell 1 finished: CIFAR-10 ResNet-50 linear probe, seed 0. Cell 2 (`cifar10_resnet50_lp_lr0.001_seed1`) had reached epoch 10 of 15.
+- Training queue, started 2026-10-03. PID 74115 (`python scripts/launch_paper_training.py`), caffeinate PID 74116, parent shell 74099. Still alive. Log: `results/paper/logs/train/driver.log`. Done markers: `results/paper/logs/train/*.done`. Checkpoints: `results/paper/checkpoints/`. 110 cells. Code `1981031`. Cell 1 finished: CIFAR-10 ResNet-50 linear probe, seed 0. Cell 2 (`cifar10_resnet50_lp_lr0.001_seed1`) had reached epoch 11 of 15.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -75,6 +77,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S15)
+
+```
+111 passed, 11 warnings in 61.07s
+```
+
+Gate G0 does not pass. The tag `g0-baselines` was not created. The test split was not read.
 
 ## Exit check (S14)
 
@@ -132,4 +142,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the extended-baselines pull request. None of these methods is comparison-ready: the VOC pointing game, the CUB edit counts, the VOC horse analysis, the RISE deletion/insertion table, and the contrastive qualitative figures stay open. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the G0 pull request. The gate stays closed, and the tag `g0-baselines` stays uncreated, until the VOC pointing game, the CUB edit counts, and the VOC horse analysis have been run. Do not start a pilot comparison. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
