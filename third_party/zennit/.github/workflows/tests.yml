@@ -1,0 +1,148 @@
+# This workflow will run the unit tests, the linters, the static type checker, the spell checker, and will build the documentation
+name: Tests, Linter, Docs
+
+# This workflow runs when commits are pushed to the main/develop branch or when a pull request for the main/develop branch is opened or pushed to
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# This workflow contains multiple jobs for unit testing, linting, type checking, spell checking, and building
+jobs:
+
+  # Runs the unit tests on Python 3.11, 3.12, and 3.13
+  unit-tests:
+
+    # The job will run on the latest version of Ubuntu using a matrix strategy, where the unit tests are run using Python 3.11, 3.12, and 3.13
+    name: Unit Test Zennit on Python ${{matrix.python-version}}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tox-environment: py311
+            python-version: "3.11.11"
+          - tox-environment: py312
+            python-version: "3.12.9"
+          - tox-environment: py313
+            python-version: "3.13.2"
+
+    # The job contains several steps: 1) checking out the repository, 2) installing the Python project management tool uv, 3) installing the correct
+    # Python version, 4) setting up the test environment by installing Zennit and its dependencies, and finally 5) running the unit tests
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.6.14
+      - name: Install Python
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install Zennit and its Dependencies
+        run: uv sync --dev
+      - name: Run Unit Tests
+        run: uv run tox run -e ${{ matrix.tox-environment }}
+
+  # Runs the PyLint linter
+  pylint:
+
+    # The job will run on the latest version of Ubuntu
+    name: Lint Zennit Using PyLint
+    runs-on: ubuntu-latest
+
+    # The job contains several steps: 1) checking out the repository, 2) installing the Python project management tool uv, 3) installing the correct
+    # Python version, 4) setting up the test environment by installing Zennit and its dependencies, and 5) running the PyLint linter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.6.14
+      - name: Install Python
+        run: uv python install 3.13.2
+      - name: Install Zennit and its Dependencies
+        run: uv sync --dev
+      - name: Run PyLint Linter
+        run: uv run tox run -e pylint
+
+  # Runs the PyCodeStyle linter
+  pycodestyle:
+
+    # The job will run on the latest version of Ubuntu
+    name: Lint Zennit Using PyCodeStyle
+    runs-on: ubuntu-latest
+
+    # The job contains several steps: 1) checking out the repository, 2) installing the Python project management tool uv, 3) installing the correct
+    # Python version, 4) setting up the test environment by installing Zennit and its dependencies, and 5) running the PyCodeStyle linter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.6.14
+      - name: Install Python
+        run: uv python install 3.13.2
+      - name: Install Zennit and its Dependencies
+        run: uv sync --dev
+      - name: Run PyCodeStyle
+        run: uv run tox run -e pycodestyle
+
+  # Runs the PyDocLint docstring linter
+  pydoclint:
+
+    # The job will run on the latest version of Ubuntu
+    name: Lint Zennit Docstrings Using PyDocLint
+    runs-on: ubuntu-latest
+
+    # The job contains several steps: 1) checking out the repository, 2) installing the Python project management tool uv, 3) installing the correct
+    # Python version, 4) setting up the test environment by installing Zennit and its dependencies, and 5) running the PyDocLint docstring linter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.6.14
+      - name: Install Python
+        run: uv python install 3.13.2
+      - name: Install Zennit and its Dependencies
+        run: uv sync --dev
+      - name: Run PyDocLint
+        run: uv run tox run -e pydoclint
+
+  # Builds the documentation using Sphinx
+  build-documentation:
+
+    # The job will run on the latest version of Ubuntu; usually, when a job fails, the entire workflow will fail, but in this case, we do not want the
+    # the workflow to fail if the documentation build fails
+    name: Build Zennit Documentation
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    # The job contains several steps: 1) checking out the repository, 2) installing the Python project management tool uv, 3) installing the correct
+    # Python version, 4) installing TeX Live, which is required by Pybtex, a replacement for BibTeX, used by Sphinx to generate the citations in the
+    # documentation, and 5) building the documentation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.6.14
+      - name: Install Python
+        run: uv python install 3.13.2
+      - name: Install TeX Live for Pybtex and Pandoc for nbsphinx
+        run: sudo apt-get update -y && sudo apt-get install -y texlive texlive-latex-extra dvipng pandoc
+      - name: Build Documentation
+        run: uv run tox run -e docs

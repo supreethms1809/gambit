@@ -81,6 +81,18 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** The same as Extremal Perturbations, once per environment.
 - **Cost.** One Extremal Perturbations run per environment per image.
 
+## Spectral Relevance Analysis
+
+- **Reviewer question.** Explanation-based shortcut discovery already exists.
+- **Citation.** Sebastian Lapuschkin, Stephan Wäldchen, Alexander Binder, Grégoire Montavon, Wojciech Samek, and Klaus-Robert Müller, Unmasking Clever Hans predictors and assessing what machines really learn, Nature Communications 2019.
+- **Source.** CoRelAy `SpectralClustering`, commit `bc80524b6ff4f7a2ccd60219465d8badc5f437e1`, vendored at `third_party/corelay`. Relevance for a module is Zennit `EpsilonPlus`, commit `3e98348aa95e908f550ab2a13fca2245c30f7de3`, vendored at `third_party/zennit`. Both are LGPL-3.0-or-later. CoRelAy imports `metrohash`, installed as `metrohash-python` 1.1.3.3.
+- **Patches.** None. The vendor directories are added to `sys.path` only for the import.
+- **Defaults.** Euclidean distance, symmetric sparse 10-nearest neighbors, symmetric normalized Laplacian, 32 eigenvalues, k-means with 2 clusters. k-means uses `random_state` and `n_init=10`. The 32-eigenvalue default needs more maps than 32. A smaller stack passes a smaller `n_eigval`.
+- **Reproduction target.** Their Fisher-vector classifier on PASCAL VOC 2007 horse images separates four strategies: horse and rider, a portrait source tag, riding context, and a landscape source tag. The source tag is present in about one-fifth of the horse images. That run has not been started. The CI check is two synthetic relevance prototypes.
+- **Conversion.** Each image receives the mean relevance map of its cluster. That map then uses the shared budget conversion.
+- **Failure modes.** Fewer than three maps raises. `n_eigval` greater than or equal to the number of maps raises. A non-finite map raises.
+- **Cost.** One LRP backward per image, then one spectral clustering of the stack.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
@@ -88,7 +100,7 @@ records the pin, the conversion, and the check each method has to pass first.
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
 | Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
-| SpRAy | Explanation-based shortcut discovery already exists. | S13, official CoRelAy and Zennit. |
+| SpRAy on the VOC horse analysis | The four strategies above. | Still needs their Fisher-vector classifier and VOC 2007. |
 | Contrastive Grad-CAM | Gradient-based contrastive saliency exists. | S14 |
 | SCOUT | Discriminant why-A-not-B explanations exist. | S14 |
 | RISE | Sampling-based perturbation would do the same. | S14 |
