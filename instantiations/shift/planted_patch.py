@@ -5,8 +5,8 @@ are drawn from a seed so the ground-truth masks are known. ``present`` has
 both patches, ``moved`` has the same patches in disjoint new positions, and
 ``removed`` is the untouched image.
 
-The confirmatory two-patch recovery metric (mass of each class mask on its
-own patch) is a later stage. This loader is the shift pair.
+The confirmatory two-patch recovery metric is ``evaluation.scores.two_patch_recovery``.
+This loader is the shift pair.
 """
 
 from __future__ import annotations
