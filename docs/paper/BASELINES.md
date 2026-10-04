@@ -49,12 +49,24 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** The call is one image at a time. A batch is a loop. TorchRay disables `requires_grad` on the classifier; the wrapper turns those flags back on. The kernel defaults (step 7, sigma 21) are for images around 224 px. A 32 px toy uses step 2 and sigma 4 so the mask can sit on an 8 px square. That is an argument to the same function.
 - **Cost.** One forward and backward of the classifier per iteration. The authors' default is 800 iterations per class per image.
 
+## Counterfactual visual explanations
+
+- **Reviewer question.** Goyal et al. already answer why class k rather than class l on fine-grained data.
+- **Citation.** Yash Goyal, Ziyan Wu, Jan Ernst, Dhruv Batra, Devi Parikh, and Stefan Lee, Counterfactual Visual Explanations, ICML 2019.
+- **Source.** No official release is assumed. `baselines/cve.py` is Algorithm 1: greedy sequential search. Each step replaces one query cell with one distractor cell, the pair that most raises the distractor's log-probability, and stops when the argmax is the distractor class. Query cells already replaced are excluded. A distractor cell may be copied again. Ties keep the earliest query index, then the earliest source index.
+- **Patches.** None. The pool-then-linear scorer is the same replacement, written as a change to the pooled vector. `tests/test_cve.py` checks it against editing the cells and calling the head.
+- **Defaults.** The paper's reported CUB and MNIST numbers use this exhaustive search, on the last convolutional feature map. The continuous relaxation in their Section 2.3 is a different procedure and is not this adapter. The search runs until the class flips, or until every query cell has been replaced.
+- **Reproduction target.** CUB-200, their VGG-16 (79.4% test accuracy), last conv map 7×7×512. Mean edits until the decision changes: 7.4 for a random distractor class, 5.3 for an attribute nearest-neighbor class. After the flip, edited regions fall inside the bird segmentation 97% of the time, near a keypoint 75% (query) and 80% (distractor), and on the same keypoint in both birds 20% of the time. Their MNIST CNN (98.4% test, features 4×4×20) takes 2.67 edits on average. That CUB run has not been started: it needs their classifier and the keypoint and segmentation annotations. The CI check is the toy square.
+- **Conversion.** `earliest_edits` keeps a prefix of the query cells in edit order. Cells the search never replaced stay off. This is not the shared top-a threshold.
+- **Failure modes.** A non-finite feature map raises. If the query map is already predicted as the distractor class, the edit list is empty. If the class never flips, `flipped` is false and the caller counts a failure rather than dropping the image.
+- **Cost.** One decision-network evaluation per candidate pair per step. On the paper's 7×7 map that is 2,401 evaluations per edit.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
 |---|---|---|
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
-| Counterfactual Visual Explanations | Goyal et al. already answer why k rather than l on fine-grained data. | S12 |
+| CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
 | Random area-a mask | Is the metric satisfied by chance? | The floor is `baselines.adapter.random_floor`. |
 | Attribution difference | Why not subtract two heatmaps? | S13 |
 | SpRAy | Explanation-based shortcut discovery already exists. | S13 |
