@@ -55,7 +55,9 @@ class IntegratedGradientsRegionsProvider:
 
         avg_grads = total_grads / float(self.steps)
         attr = delta * avg_grads
-        ev = attr.abs().sum(dim=1, keepdim=True)  # nonnegative salience
+        # Sum across channels first, then drop evidence against the class.
+        # Absolute values would treat that opposing signal as support.
+        ev = attr.sum(dim=1, keepdim=True).clamp_min(0)
         ev = F.adaptive_avg_pool2d(ev, (self.grid_h, self.grid_w))
         return ev.flatten(1)
 
