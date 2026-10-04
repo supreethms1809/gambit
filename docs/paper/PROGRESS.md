@@ -1,7 +1,7 @@
 # Progress
 
 Source of truth for the stage sequence: `docs/paper/PLAN.md`.
-Branch: `paper/p2-shift-baselines`.
+Branch: `paper/p2-spray`.
 
 ## Stage status
 
@@ -19,7 +19,7 @@ Branch: `paper/p2-shift-baselines`.
 | S10 | done | `c15aeed`, merge `ec9239e` | Harness merged as PR #7. |
 | S11 | done | merge `061ddaa` | Adapter merged as PR #8. The VOC pointing game is not run. |
 | S12 | done | merge `a965754` | Algorithm 1 merged as PR #9. The CUB edit-count reproduction is not run. |
-| S13 | in review | `8510013` | Attribution difference and per-environment Extremal Perturbations. SpRAy is not started. |
+| S13 | in review | `ae3925e` | Attribution difference merged as `db760b0`. SpRAy clusters with CoRelAy. The VOC horse analysis is not run. |
 | S14–S28 | todo | | Not started. |
 
 ## Decisions
@@ -52,7 +52,8 @@ Branch: `paper/p2-shift-baselines`.
 - 2026-10-03. GradientShap draws path coefficients with NumPy. A repeat seeds `torch.manual_seed` and `numpy.random.seed`. Failed rows stay in the batch and take a seeded area-a floor.
 - 2026-10-03. TorchRay is vendored at `6a198ee` under CC BY-NC 4.0. Two patches: `Perturbation.to` keeps the moved pyramid, and the mask kernel passes `indexing="ij"` to `meshgrid`. The margin adapter scores \(z_k - z_l\). TorchRay's `contrastive_reward` is a different target and is not used. The published pointing-game numbers are the reproduction target in `docs/paper/BASELINES.md`. VOC 2007 and the fine-tuned classifiers are not on disk, so that run has not been started.
 - 2026-10-03. CVE is Goyal et al. Algorithm 1: greedy replacement of one spatial cell at a time until the argmax is the distractor class. The pool-then-linear scorer is that same replacement. Their Section 2.3 relaxation is not used. The CUB edit counts (7.4 random, 5.3 attribute nearest neighbor) are the reproduction target and have not been run.
-- 2026-10-03. The shift attribution difference takes the elementwise minimum across environments as the robust map and the largest absolute gap from the in-distribution map as the shortcut. Per-environment Extremal Perturbations applies that reduction to native class masks. SpRAy still needs official CoRelAy and Zennit.
+- 2026-10-03. The shift attribution difference takes the elementwise minimum across environments as the robust map and the largest absolute gap from the in-distribution map as the shortcut. Per-environment Extremal Perturbations applies that reduction to native class masks.
+- 2026-10-03. SpRAy clustering is CoRelAy `SpectralClustering` at `bc80524`. Relevance is Zennit `EpsilonPlus` at `3e98348`. Each image receives its cluster's mean relevance. The published VOC horse analysis has not been run. `metrohash-python` 1.1.3.3 is the CoRelAy import dependency.
 
 ## Open issues
 
@@ -72,6 +73,14 @@ Log (local, gitignored): `results/paper/logs/throughput_mps.json`.
 |---|---|
 | ResNet-50 | 24.8 |
 | ViT-B/16 | 10.1 |
+
+## Exit check (S13 SpRAy)
+
+```
+104 passed, 11 warnings in 32.65s
+```
+
+The VOC horse analysis was not run. The test split was not read.
 
 ## Exit check (S13)
 
@@ -113,4 +122,4 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Review the shift-baseline pull request. SpRAy is the remainder of S13 and needs official CoRelAy and Zennit. The VOC pointing game and the CUB edit counts stay open. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
+Review the SpRAy pull request. The VOC horse analysis, the VOC pointing game, and the CUB edit counts stay open. Leave the training queue running and check `results/paper/logs/train/driver.log`. Do not pass `--final`. ImageNet-S is still blocked on ImageNet-1k. The ImageNet-9 challenge test archive stays unextracted.
