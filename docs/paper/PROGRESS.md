@@ -82,17 +82,22 @@ Branch: `main`.
 - 2026-10-04. Raw-[0,1] training stays: train and eval are consistently unnormalised, which is correct for raw-trained checkpoints but leaves ImageNet-pretrained features underused (measured 0.389 raw vs 0.816 normalised on a CIFAR-10 probe). `NormalizedModel` stays unused outside its test until a normalised-weights setting needs it. Revisit only with a val-measured comparison, not by wrapping silently.
 - 2026-10-04. Shift split discipline verified, no fix needed: `WaterbirdsPairs` and `PlantedPatchCIFAR` read the paper indices via `load_indices` (cub200/cifar10), backgrounds are disjointly split, and `ColoredMNIST` preserves MNIST row order so the mnist indices align.
 - 2026-10-04. Environment pin is `c71fd37` (`requirements.txt`, conda env name `gambit`). Input convention is `e7a1a24`: absent `results/paper/input_convention.txt` means raw, and an ImageNet winner uses a separate checkpoint name. Hard budget and the family-C foil executor are `5e78f56`. Suite before these commits: 174 passed. The cached CIFAR-10 probe has not finished, so the convention file is not written. Contrastive allocation changed; stored degenerate reports are stale and must be rerun. Classifier training on the raw path is otherwise the same Adam, cosine, and cross-entropy loop.
+- 2026-10-05. Branch `paper/fix-checkpoint-convention` (Claude Code review). Fixed: (1) no checkpoint loader read `input_convention`, so ImageNet-convention checkpoints would be scored on raw input. Every load now goes through `models.wrapper.load_checkpoint_into` (`ablation_contrastive._build_model`, `model_table`, `examples/contrastive_explanation.load_checkpoint`, `eval_robust_shortcut`). (2) A wrapped ViT picked its patch embedding as the Grad-CAM layer. `_find_target_layer` unwraps. (3) Margin and contrastive Grad-CAM raised on ViT and the library CAM adapters used the wrong layer. pytorch-grad-cam now gets the ViT token reshape. (4) GradientShap noise left [0, 1] and would fail every row on a wrapped model. Its path points are clamped. Suite: 184 passed (`marl` env).
+- 2026-10-05. Decisions with the user: ImageNet val (on Spark) is the 8th contrastive unit, using torchvision `IMAGENET1K_V1` weights, with no ImageNet-S masks. Waterbirds groups are ablation AS1, not a shift unit. A sixth independent shift dataset will be added (recommended COCO-on-Places), with placeholder `sixth_shift_tbd` in `scripts/shift_grid.py`. CD@a uses unique masks only. Shared on both sides is the sensitivity check (`evaluation/foil_masks.py`). The shift area is piloted on val before the freeze.
+- 2026-10-05. `docs/paper/EVAL_PLAN.md` rewritten as the full plan (still a draft, not frozen). Selection gates on D1, D2, D4, D5. D3 is recorded, not gated (`analysis/selection.py`). The shift primary is logit ΔD on the predicted class. CVE is ResNet-50 only and is compared on CD1@5%.
 
 ## Open issues
 
 - Stored numbers under `results/` are pre-audit. The ablation tables are invalid: they used a class-ordered prefix, and pets/dogs eval included training images. Do not quote them.
 - S05 invalidates stored ablation `suff` and `overlap` columns. Those files were already pre-audit.
-- `docs/paper/EVAL_PLAN.md` does not exist. The test split stays locked.
-- ImageNet-S still needs a local ImageNet-1k copy. Do not download ImageNet-1k without being asked.
+- `docs/paper/EVAL_PLAN.md` is the full draft (2026-10-05). It is not frozen. The test split stays locked. Its section 12 lists what the freeze needs.
+- ImageNet val is on Spark, not on this Mac. ImageNet cells (contrastive unit 8 and the RISE reproduction) run on Spark. ImageNet-S masks are not needed.
 - Waterbirds backgrounds are the 400 Places365 validation photos of the four official categories, not the Places training set. A later training run may need a larger background pool.
 - The ImageNet-9 challenge test archive is `data/imagenet9/backgrounds_challenge_data.tar.gz`. Do not extract it before the eval plan is frozen.
-- Training queue on this Mac is cell 1 (CIFAR-10 ResNet-50 linear probe, seed 0, MPS, process code `dcb5f71`). A watcher stops it after that cell, runs the cached-feature probe, and resumes on `5e78f56`. Do not start a second queue on this Mac. Log: `results/paper/logs/train/driver.log`. Pre-fix seeds 0–2 stay under `stale_1981031`.
-- VOC 2007 is unpacked at `data/voc2007/VOCdevkit/VOC2007` (9963 images, 4952 test ids). The public CUB VGG-16 file is `data/weights/cub_vgg16_model.ckpt` (a later reimplementation, not yet scored against the 7.4 / 5.3 edit counts). ImageNet val is not on disk: this machine has no Hugging Face token and no Kaggle credentials.
+- VOC 2007 is unpacked at `data/voc2007/VOCdevkit/VOC2007` (9963 images, 4952 test ids). The public CUB VGG-16 file is `data/weights/cub_vgg16_model.ckpt` (a later reimplementation, not yet scored against the 7.4 / 5.3 edit counts). ImageNet val is not on this Mac. It is on Spark.
+- This Mac has no `gambit` conda env. The rules name `gambit`, which exists on Spark only. The Mac suite runs in `marl`. Create `gambit` here from `requirements.txt`, or note per machine in `AGENTS.md`.
+- The Mac training queue is not running. The log ends at the restart of cell 1 after the probe, with no process alive. Confirm Spark owns training before restarting anything here.
+- Checkpoints trained before `load_checkpoint_into` are fine. Their metadata carries `input_convention`, so they now reload correctly.
 
 ## Throughput (MPS, batch 4, 224, random init, 15 steps)
 
@@ -247,4 +252,17 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Spark may run its own full queue from `5e78f56` (`git pull` on `main`). This Mac must not start a second trainer. With no `results/paper/input_convention.txt`, both trains stay raw, which is the comparable run. The watcher `scripts/pause_after_cell.py` still owns the Mac queue until cell 1 finishes; if that probe writes `imagenet`, the Mac retrains and the two machines are no longer the same workload. Gate G0 stays closed: VOC is unpacked, ImageNet val is missing, and the CVE checkpoint is not scored. Do not run the G1 pilot, do not apply val selection, do not freeze `EVAL_PLAN.md`, and do not tag `eval-plan-frozen` or `final-runs-v1` before that. Do not pass `--final`. Do not launch the contrastive grid, the shift grid, or the ablations. Do not write `results/paper/RESULTS.md`. The ImageNet-9 challenge test archive stays unextracted. Rerun `scripts/check_degenerate.py` on val after the probe releases the GPU, with `--device cpu` if a trainer is already on the GPU.
+Read `docs/paper/EVAL_PLAN.md` first. It is the full plan, and its section 12 is the freeze checklist. Work in this order:
+
+1. Merge `paper/fix-checkpoint-convention` (the user reviews the PR). Spark must pull it before any evaluation, because its checkpoints are ImageNet-convention and need `load_checkpoint_into`.
+2. Build the per-cell executor (EVAL_PLAN section 10). It loads through `load_checkpoint_into`, draws the frozen test sample, produces every method's M_k and M_l as defined in section 4.2 (including CD1 for CVE and the shift maps in 4.3), and writes the record schema. Test it on val only.
+3. Rerun `scripts/check_degenerate.py` under the hard budget (section 6.1), on the paper seed-0 checkpoints once they exist. Use `--device cpu` if a trainer holds the GPU.
+4. G0 reproductions:
+   - Grad-CAM and Extremal Perturbations pointing game on VOC (on disk);
+   - CVE edit counts on CUB;
+   - RISE on ImageNet val (Spark);
+   - a feasible SpRAy target, or a recorded omission.
+5. Choose and prepare the sixth shift dataset (section 2.2). Replace `sixth_shift_tbd` in `scripts/shift_grid.py`.
+6. Then the shift-area pilot (6.3), selection (6.2), and G1 (section 11).
+
+Do not freeze `EVAL_PLAN.md` or tag `eval-plan-frozen`, `g0-baselines`, `g1-pilot`, or `final-runs-v1` before their conditions hold. Do not pass `--final`. Do not launch the final grids. Do not write `results/paper/RESULTS.md`. The ImageNet-9 challenge archive stays unextracted. This Mac must not start a second trainer while Spark owns training.
