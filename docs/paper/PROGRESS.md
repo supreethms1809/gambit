@@ -85,6 +85,17 @@ Branch: `main`.
 - 2026-10-05. Branch `paper/fix-checkpoint-convention` (Claude Code review). Fixed: (1) no checkpoint loader read `input_convention`, so ImageNet-convention checkpoints would be scored on raw input. Every load now goes through `models.wrapper.load_checkpoint_into` (`ablation_contrastive._build_model`, `model_table`, `examples/contrastive_explanation.load_checkpoint`, `eval_robust_shortcut`). (2) A wrapped ViT picked its patch embedding as the Grad-CAM layer. `_find_target_layer` unwraps. (3) Margin and contrastive Grad-CAM raised on ViT and the library CAM adapters used the wrong layer. pytorch-grad-cam now gets the ViT token reshape. (4) GradientShap noise left [0, 1] and would fail every row on a wrapped model. Its path points are clamped. Suite: 184 passed (`marl` env).
 - 2026-10-05. Decisions with the user: ImageNet val (on Spark) is the 8th contrastive unit, using torchvision `IMAGENET1K_V1` weights, with no ImageNet-S masks. Waterbirds groups are ablation AS1, not a shift unit. A sixth independent shift dataset will be added (recommended COCO-on-Places), with placeholder `sixth_shift_tbd` in `scripts/shift_grid.py`. CD@a uses unique masks only. Shared on both sides is the sensitivity check (`evaluation/foil_masks.py`). The shift area is piloted on val before the freeze.
 - 2026-10-05. `docs/paper/EVAL_PLAN.md` rewritten as the full plan (still a draft, not frozen). Selection gates on D1, D2, D4, D5. D3 is recorded, not gated (`analysis/selection.py`). The shift primary is logit ΔD on the predicted class. CVE is ResNet-50 only and is compared on CD1@5%.
+- 2026-10-05. End-to-end runner on branch `paper/e2e-runner`.
+  - Entry points: `scripts/paper_run.py` runs one cell, `scripts/launch_paper_eval.py` runs the resumable grid, `scripts/smoke_e2e.py` runs everything on a few val images. Modules: `evaluation/run_{models,data,methods,cell}.py`.
+  - The ImageNet split and loader are in (`write_paper_splits.py --only imagenet`).
+  - **Smoke run:** 26 cells, every unit except ImageNet (no data on this Mac), both backbones, every method, all 22 ablations, all selection candidates. Method errors: none. Report: `results/paper/smoke/REPORT.md`. Cells ran at clean commits `aeabe4c` (23 cells) and `f66d44c` (3 cells, resume flag only). Commit `0965528`'s message cites a wrong range; the commits above are the right ones.
+  - **Bugs the smoke run found and fixed:**
+    - SpRAy cast to float64 on MPS;
+    - `CamLibraryProvider` never released pytorch-grad-cam hooks (activations piled up on every later forward pass);
+    - RISE ran with autograd on (33 GB at 200 masks);
+    - runner outputs were not git-ignored, so `--final` would have refused every cell after the first;
+    - the Stanford Dogs shift unit read every annotated image instead of the split (the runner restricts it).
+  - **Cost** (pass counts, hardware-independent): Extremal Perturbations is 3200 passes per image per area, about 6× CDEA. It dominates the budget; see `docs/paper/SPARK_RUNBOOK.md`.
 
 ## Open issues
 
@@ -252,17 +263,16 @@ The VOC pointing game was not run. The test split was not read.
 
 ## Next session
 
-Read `docs/paper/EVAL_PLAN.md` first. It is the full plan, and its section 12 is the freeze checklist. Work in this order:
+Read `docs/paper/SPARK_RUNBOOK.md`. In order:
 
-1. Merge `paper/fix-checkpoint-convention` (the user reviews the PR). Spark must pull it before any evaluation, because its checkpoints are ImageNet-convention and need `load_checkpoint_into`.
-2. Build the per-cell executor (EVAL_PLAN section 10). It loads through `load_checkpoint_into`, draws the frozen test sample, produces every method's M_k and M_l as defined in section 4.2 (including CD1 for CVE and the shift maps in 4.3), and writes the record schema. Test it on val only.
-3. Rerun `scripts/check_degenerate.py` under the hard budget (section 6.1), on the paper seed-0 checkpoints once they exist. Use `--device cpu` if a trainer holds the GPU.
-4. G0 reproductions:
-   - Grad-CAM and Extremal Perturbations pointing game on VOC (on disk);
-   - CVE edit counts on CUB;
-   - RISE on ImageNet val (Spark);
-   - a feasible SpRAy target, or a recorded omission.
-5. Choose and prepare the sixth shift dataset (section 2.2). Replace `sixth_shift_tbd` in `scripts/shift_grid.py`.
-6. Then the shift-area pilot (6.3), selection (6.2), and G1 (section 11).
+1. Merge PR #23 then the `paper/e2e-runner` PR. Spark pulls `main`.
+2. On Spark:
+   - `write_paper_splits.py --only imagenet`, and commit the split file;
+   - run the smoke run (runbook step 1) to get CUDA pass rates and the ImageNet cells.
+3. Decide the Extremal Perturbations area cost (a subset, or wire TorchRay's multi-area call), then set n per seed from the Spark timings.
+4. The val runs for selection (`--candidates`), the shift-area pilot, and G1 (runbook step 2). Still open:
+   - a selection driver that turns candidate records plus degenerate routes into `select_config` input;
+   - the G0 reproductions;
+   - the sixth shift dataset.
 
-Do not freeze `EVAL_PLAN.md` or tag `eval-plan-frozen`, `g0-baselines`, `g1-pilot`, or `final-runs-v1` before their conditions hold. Do not pass `--final`. Do not launch the final grids. Do not write `results/paper/RESULTS.md`. The ImageNet-9 challenge archive stays unextracted. This Mac must not start a second trainer while Spark owns training.
+Do not freeze `EVAL_PLAN.md` or pass `--final` before EVAL_PLAN section 12 is complete. This Mac must not start a second trainer while Spark owns training.
