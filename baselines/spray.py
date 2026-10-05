@@ -54,7 +54,8 @@ def cluster_mean_relevance(
         raise ValueError("n_clusters must be at least 2")
 
     SpectralClustering, EigenDecomposition, SparseKNN, KMeans = _import_corelay()
-    data = maps.detach().to(dtype=torch.float64).cpu().reshape(count, -1).numpy()
+    # CPU before float64: MPS has no float64.
+    data = maps.detach().cpu().to(dtype=torch.float64).reshape(count, -1).numpy()
     pipeline = SpectralClustering(
         embedding=EigenDecomposition(n_eigval=eigenvalues),
         affinity=SparseKNN(n_neighbors=int(n_neighbors), symmetric=True),

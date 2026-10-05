@@ -53,3 +53,14 @@ def test_epsilon_plus_relevance_matches_the_image() -> None:
     assert relevance.shape == (2, 32, 32)
     assert torch.isfinite(relevance).all()
     assert model(image).shape == (2, 2)
+
+
+def test_cluster_mean_relevance_accepts_an_mps_tensor():
+    import pytest
+
+    if not torch.backends.mps.is_available():
+        pytest.skip("MPS not available")
+    maps = torch.rand(6, 4, 4).to("mps")
+    means, labels = cluster_mean_relevance(maps, n_clusters=2, n_eigval=2, n_neighbors=3, seed=0)
+    assert means.shape == maps.shape
+    assert labels.shape == (6,)
