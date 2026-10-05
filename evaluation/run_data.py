@@ -64,8 +64,22 @@ def contrastive_sample(
     for x, y in loader:
         xs.append(x)
         ys.append(torch.as_tensor(y))
-    index = list(getattr(loader.dataset, "indices", range(len(loader.dataset))))
+    index = root_indices(loader.dataset)
     return ContrastiveSample(x=torch.cat(xs)[:n], labels=torch.cat(ys)[:n].long(), index=index[:n])
+
+
+def root_indices(ds) -> list[int]:
+    """Indices into the underlying dataset, through any nesting of Subsets.
+
+    The eval loader is Subset(Subset(dataset, split), sample); a record's
+    image_index must name the image in the dataset, not its rank in the sample.
+    """
+    from torch.utils.data import Subset
+
+    if not isinstance(ds, Subset):
+        return list(range(len(ds)))
+    inner = root_indices(ds.dataset)
+    return [inner[i] for i in ds.indices]
 
 
 def _resize(x: torch.Tensor) -> torch.Tensor:
