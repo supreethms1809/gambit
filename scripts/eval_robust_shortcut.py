@@ -83,10 +83,10 @@ def _build_backbone(model_name: str, num_classes: int, pretrained: bool,
         # train_backbone.get_or_train and examples/contrastive_explanation.save_checkpoint.
         # Assuming the raw form here silently broke every shift eval once training
         # switched to the wrapped one, so accept both.
-        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        if isinstance(state, dict) and "state_dict" in state:
-            state = state["state_dict"]
-        m.load_state_dict(state)
+        from models.wrapper import load_checkpoint_into
+
+        blob = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        m = load_checkpoint_into(m, blob)
         print(f"  [model] loaded checkpoint: {checkpoint}")
     return m
 

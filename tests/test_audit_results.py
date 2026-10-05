@@ -62,8 +62,8 @@ def test_a_generated_file_matches_and_a_hand_edit_does_not(tmp_path: Path) -> No
 def test_masks_need_every_dataset_and_the_paper_file_is_absent() -> None:
     assert masks_checked([]) is False
     assert masks_checked(required_datasets()) is True
-    assert "imagenet_s" in required_datasets()
-    assert "waterbirds_groups" in required_datasets()
+    assert "imagenet" in required_datasets()
+    assert "sixth_shift_tbd" in required_datasets()
     report = paper_audit()
     assert report["passed"] is False
     assert report["results_present"] is False

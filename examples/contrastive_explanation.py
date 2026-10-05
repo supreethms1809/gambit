@@ -493,12 +493,13 @@ def load_checkpoint(
     """
     path = Path(path)
     ck = torch.load(path, map_location=device, weights_only=True)
-    state_dict = ck["state_dict"]
     dataset_name = ck["dataset"]
     model_name = ck["model_name"]
     num_classes = ck["num_classes"]
+    from models.wrapper import load_checkpoint_into
+
     model = get_torchvision_model(model_name, num_classes, pretrained=False)
-    model.load_state_dict(state_dict, strict=True)
+    model = load_checkpoint_into(model, ck)
     model = model.to(device).eval()
     _, _, class_names, _ = _get_dataloaders(dataset_name, batch_size=1, tv_size=TV_INPUT_SIZE)
     return model, dataset_name, class_names, num_classes

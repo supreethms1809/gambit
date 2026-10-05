@@ -59,14 +59,13 @@ SLOW_METHODS = ("scorecam", "ablationcam")
 
 
 def _find_target_layer(model: nn.Module) -> nn.Module:
-    """Last spatial Conv2d, matching GradCAMRegionsProvider's convention."""
-    last = None
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            last = m
-    if last is None:
-        raise ValueError("no Conv2d found; CAM methods need a convolutional backbone")
-    return last
+    """The layer GradCAMRegionsProvider uses: last Conv2d, or a ViT's last encoder block.
+
+    A bare last-Conv2d search picks a ViT's patch embedding, so this delegates.
+    """
+    from base_evidence.gradcam_regions import _find_target_layer as provider_layer
+
+    return provider_layer(model)
 
 
 def _deinplace(model: nn.Module) -> nn.Module:
@@ -121,7 +120,10 @@ class CamLibraryProvider:
         # pytorch-grad-cam runs on CPU-or-CUDA tensors and does its own backward; MPS
         # tensors are moved to CPU because several of its methods index with numpy.
         xin = x.detach()
-        cam = self._cls()(model=model, target_layers=[layer])
+        from base_evidence.gradcam_regions import cam_reshape_transform
+
+        cam = self._cls()(model=model, target_layers=[layer],
+                          reshape_transform=cam_reshape_transform(model))
         out = torch.zeros(B, K, self.grid_h * self.grid_w)
         for k in range(K):
             ids = hypotheses.ids[:, k].clamp_min(0).tolist()
@@ -147,6 +149,14 @@ class CaptumRegionsProvider:
         import captum.attr as ca
         if self.method in ("deeplift", "guidedbackprop"):
             model = _deinplace(model)
+        if self.method == "gradientshap":
+            # GradientShap adds Gaussian noise (stdevs=0.09) to the input, which leaves
+            # [0, 1]. NormalizedModel rejects that range, so the path points are
+            # clamped back to the image domain the model is defined on.
+            inner = model
+
+            def model(inp, _inner=inner):  # noqa: E306
+                return _inner(inp.clamp(0.0, 1.0))
         return {
             "deeplift": ca.DeepLift, "gradientshap": ca.GradientShap,
             "inputxgradient": ca.InputXGradient, "guidedbackprop": ca.GuidedBackprop,

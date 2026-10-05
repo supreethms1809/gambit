@@ -30,7 +30,7 @@ CONTRASTIVE_DATASETS = (
     "oxford_pets",
     "stanford_dogs",
     "cub200",
-    "imagenet_s",
+    "imagenet",
     "ham10000",
     "brain_tumor",
 )
@@ -52,11 +52,18 @@ ABLATION_LOG = REPO / "results" / "paper" / "logs" / "ablations"
 
 
 def contrastive_cells() -> list[dict]:
-    """Job list for the eight contrastive datasets. ImageNet-S is included and blocked."""
+    """Job list for the eight contrastive datasets. ImageNet runs on Spark.
+
+    CVE is ResNet-50 only: a ViT's CLS head does not read patch tokens after
+    the last block, so there is no spatial decision network to edit
+    (EVAL_PLAN.md section 4.2).
+    """
     cells = []
     for dataset in CONTRASTIVE_DATASETS:
         for model in MODELS:
             for method in CONTRASTIVE_METHODS:
+                if method == "cve" and model == "vit_b_16":
+                    continue
                 for seed in SEEDS:
                     cells.append({
                         "id": f"contrastive_{dataset}_{model}_{method}_seed{seed}",

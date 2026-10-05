@@ -1,4 +1,4 @@
-"""The val rule maximises the score among candidates that close D1–D5.
+"""The val rule maximises the score among candidates that close the gating routes.
 
 Nothing here freezes the evaluation plan or reads a split.
 """
@@ -80,3 +80,25 @@ def test_the_plan_stays_unfrozen() -> None:
         text=True,
     )
     assert tags.strip() == ""
+
+
+def test_open_d3_is_reported_but_does_not_gate() -> None:
+    open_d3 = dict(CLOSED)
+    open_d3["D3"] = True
+    chosen = select_config(
+        [
+            _candidate("suppresses_foil", 0.9, open_d3),
+            _candidate("tight", 0.4, CLOSED),
+        ]
+    )
+    assert chosen["selected"] == "suppresses_foil"
+    assert chosen["rejected"] == []
+
+
+def test_d3_must_still_be_recorded() -> None:
+    missing_d3 = {k: v for k, v in CLOSED.items() if k != "D3"}
+    try:
+        select_config([_candidate("x", 0.5, missing_d3)])
+    except ValueError:
+        return
+    raise AssertionError("a candidate without a D3 record should raise")

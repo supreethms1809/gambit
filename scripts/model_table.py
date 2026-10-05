@@ -30,8 +30,10 @@ def _load(path: Path, device: torch.device) -> tuple[torch.nn.Module, dict]:
     blob = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(blob, dict) or "state_dict" not in blob:
         raise ValueError(f"{path} is not a metadata checkpoint")
+    from models.wrapper import load_checkpoint_into
+
     model = _build_model(blob["model_name"], int(blob["num_classes"]), pretrained=False)
-    model.load_state_dict(blob["state_dict"])
+    model = load_checkpoint_into(model, blob)
     model.to(device).eval()
     return model, blob
 

@@ -31,9 +31,8 @@ def test_shift_cells_cover_the_six_datasets_and_five_methods() -> None:
     assert len(cells) == 6 * 2 * 5 * 5
     assert {cell["dataset"] for cell in cells} == set(SHIFT_DATASETS)
     assert {cell["method"] for cell in cells} == set(SHIFT_METHODS)
-    unpaired = [cell for cell in cells if cell["dataset"] == "waterbirds_groups"]
-    assert unpaired and all(cell["objective"] == "unpaired" for cell in unpaired)
-    assert all(cell["objective"] == "paired" for cell in cells if cell["dataset"] != "waterbirds_groups")
+    assert "waterbirds_groups" not in SHIFT_DATASETS
+    assert all(cell["objective"] == "paired" for cell in cells)
     assert all("split" not in cell for cell in cells)
     assert len({cell["id"] for cell in cells}) == len(cells)
 

@@ -24,6 +24,11 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
     - ViT (torchvision VisionTransformer): last transformer encoder block.
     Raises ValueError if neither is found and no target_layer is provided.
     """
+    from models.wrapper import unwrap
+
+    # A NormalizedModel hides the ViT type; without unwrapping, the last Conv2d
+    # of a ViT is its patch embedding, which is the wrong Grad-CAM layer.
+    model = unwrap(model)
     try:
         from torchvision.models import VisionTransformer
         if isinstance(model, VisionTransformer):
@@ -40,6 +45,32 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
             "Pass target_layer explicitly for non-CNN/non-ViT architectures."
         )
     return last_conv
+
+
+def cam_reshape_transform(model: nn.Module):
+    """pytorch-grad-cam ``reshape_transform`` for a ViT, ``None`` for a CNN.
+
+    pytorch-grad-cam needs 4-D activations. A ViT block emits ``(B, 1 + N, D)``
+    tokens; this drops CLS and lays the N patch tokens on their square grid,
+    the same convention ``GradCAMRegionsProvider`` uses.
+    """
+    from models.wrapper import unwrap
+
+    try:
+        from torchvision.models import VisionTransformer
+    except ImportError:
+        return None
+    if not isinstance(unwrap(model), VisionTransformer):
+        return None
+
+    def reshape(tokens: Tensor) -> Tensor:
+        patches = tokens[:, 1:, :]
+        side = int(round(patches.shape[1] ** 0.5))
+        if side * side != patches.shape[1]:
+            raise ValueError(f"{patches.shape[1]} patch tokens do not form a square grid")
+        return patches.reshape(tokens.shape[0], side, side, tokens.shape[2]).permute(0, 3, 1, 2)
+
+    return reshape
 
 
 class GradCAMRegionsProvider:

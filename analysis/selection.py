@@ -1,10 +1,14 @@
 """Val selection rule. This does not freeze the evaluation plan.
 
 The score is the mean CD@5% on the dev val sets, already averaged by the
-caller. A candidate is eligible only when D1–D5 are all closed. The eligible
-candidate with the highest score is selected. Ties keep the earliest
-candidate. If none are eligible, nothing is selected: a candidate that leaves
-a route open is not a fallback.
+caller. A candidate is eligible only when the gating routes (D1, D2, D4, D5)
+are closed. D1 and D5 close by construction under the hard mass budget, so
+they gate as an assertion. D3, the share of the margin won by foil
+suppression, is recorded and reported but does not gate: for "k rather than
+l", evidence that lowers l is legitimate (EVAL_PLAN.md section 6.1). The
+eligible candidate with the highest score is selected. Ties keep the
+earliest candidate. If none are eligible, nothing is selected: a candidate
+that leaves a gating route open is not a fallback.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import math
 from typing import Mapping, Sequence
 
 ROUTES = ("D1", "D2", "D3", "D4", "D5")
+GATING_ROUTES = ("D1", "D2", "D4", "D5")
 
 
 def config_hash(config: Mapping) -> str:
@@ -32,7 +37,7 @@ def _open_routes(routes: Mapping) -> list[str]:
         flag = routes[name]
         if not isinstance(flag, bool):
             raise TypeError(f"{name} must be a bool")
-        if flag:
+        if flag and name in GATING_ROUTES:
             opened.append(name)
     return opened
 
