@@ -265,7 +265,7 @@ The VOC pointing game was not run. The test split was not read.
 
 Read `docs/paper/SPARK_RUNBOOK.md`. In order:
 
-1. Merge PR #23 then the `paper/e2e-runner` PR. Spark pulls `main`.
+1. PR #23 (merge `3e53de3`) and PR #24 (merge `6599249`) are on `main` (2026-10-05). Spark pulls `main` before any evaluation, because its ImageNet-convention checkpoints need `load_checkpoint_into`.
 2. On Spark:
    - `write_paper_splits.py --only imagenet`, and commit the split file;
    - run the smoke run (runbook step 1) to get CUDA pass rates and the ImageNet cells.
