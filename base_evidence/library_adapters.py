@@ -122,14 +122,17 @@ class CamLibraryProvider:
         xin = x.detach()
         from base_evidence.gradcam_regions import cam_reshape_transform
 
-        cam = self._cls()(model=model, target_layers=[layer],
-                          reshape_transform=cam_reshape_transform(model))
         out = torch.zeros(B, K, self.grid_h * self.grid_w)
-        for k in range(K):
-            ids = hypotheses.ids[:, k].clamp_min(0).tolist()
-            targets = [ClassifierOutputTarget(int(i)) for i in ids]
-            g = cam(input_tensor=xin, targets=targets)          # (B, H, W) numpy
-            out[:, k] = _pool(torch.from_numpy(g).float(), self.grid_h, self.grid_w)
+        # The context manager releases pytorch-grad-cam's hooks. Without it they stay
+        # on the layer and append that layer's activations on every later forward
+        # pass, which exhausted 64 GB on MPS within one smoke cell.
+        with self._cls()(model=model, target_layers=[layer],
+                         reshape_transform=cam_reshape_transform(model)) as cam:
+            for k in range(K):
+                ids = hypotheses.ids[:, k].clamp_min(0).tolist()
+                targets = [ClassifierOutputTarget(int(i)) for i in ids]
+                g = cam(input_tensor=xin, targets=targets)          # (B, H, W) numpy
+                out[:, k] = _pool(torch.from_numpy(g).float(), self.grid_h, self.grid_w)
         return out.to(x.device)
 
 

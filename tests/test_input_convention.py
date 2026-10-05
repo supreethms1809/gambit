@@ -152,3 +152,19 @@ def test_gradientshap_noise_does_not_trip_the_wrapper_range_check():
     field = CaptumRegionsProvider("gradientshap", 2, 2).explain(x, model, hypotheses)
     assert field.shape == (2, 2, 4)
     assert torch.isfinite(field).all()
+
+
+def test_library_cam_provider_releases_its_hooks():
+    from torchvision.models import resnet18
+
+    from base_evidence.library_adapters import CamLibraryProvider, _find_target_layer
+    from baselines.hypotheses import shared_hypotheses
+
+    model = resnet18(weights=None, num_classes=4).eval()
+    layer = _find_target_layer(model)
+    before = (len(layer._forward_hooks), len(layer._backward_hooks))
+    x = torch.rand(1, 3, 64, 64)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    CamLibraryProvider("layercam", 2, 2).explain(x, model, hypotheses)
+    assert (len(layer._forward_hooks), len(layer._backward_hooks)) == before
