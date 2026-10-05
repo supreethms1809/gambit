@@ -49,3 +49,52 @@ def test_maybe_wrap_is_the_identity_for_raw_and_a_layer_for_imagenet():
     assert isinstance(wrapped, NormalizedModel)
     raw = torch.rand(1, 3, 4, 4)
     wrapped(raw)
+
+
+def _tiny():
+    torch.manual_seed(0)
+    return nn.Sequential(nn.Conv2d(3, 4, 3, padding=1), nn.Flatten(), nn.Linear(4 * 8 * 8, 3))
+
+
+def _saved_like_get_or_train(model: nn.Module, convention: str) -> dict:
+    inner = model.model if isinstance(model, NormalizedModel) else model
+    return {"state_dict": inner.state_dict(), "input_convention": convention}
+
+
+def test_imagenet_checkpoint_reloads_with_its_normalisation():
+    from models.wrapper import load_checkpoint_into
+
+    trained = maybe_wrap(_tiny(), CONVENTION_IMAGENET).eval()
+    blob = _saved_like_get_or_train(trained, CONVENTION_IMAGENET)
+    x = torch.rand(2, 3, 8, 8)
+    with torch.no_grad():
+        expected = trained(x)
+        torch.manual_seed(1)
+        loaded = load_checkpoint_into(_tiny(), blob).eval()
+        assert isinstance(loaded, NormalizedModel)
+        assert torch.allclose(loaded(x), expected, atol=1e-6)
+        # The bug this guards: the bare network on raw input is a different function.
+        bare = _tiny()
+        bare.load_state_dict(blob["state_dict"])
+        assert not torch.allclose(bare.eval()(x), expected, atol=1e-3)
+
+
+def test_raw_and_legacy_checkpoints_stay_unwrapped():
+    from models.wrapper import checkpoint_input_convention, load_checkpoint_into
+
+    model = _tiny()
+    legacy_metadata = {"state_dict": model.state_dict()}
+    bare_state = model.state_dict()
+    assert checkpoint_input_convention(legacy_metadata) == CONVENTION_RAW
+    assert checkpoint_input_convention(bare_state) == CONVENTION_RAW
+    assert not isinstance(load_checkpoint_into(_tiny(), legacy_metadata), NormalizedModel)
+    assert not isinstance(load_checkpoint_into(_tiny(), bare_state), NormalizedModel)
+
+
+def test_unknown_convention_is_refused():
+    import pytest
+
+    from models.wrapper import checkpoint_input_convention
+
+    with pytest.raises(ValueError):
+        checkpoint_input_convention({"state_dict": {}, "input_convention": "zscore"})

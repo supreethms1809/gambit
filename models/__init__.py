@@ -6,9 +6,12 @@ from models.wrapper import (
     IMAGENET_MEAN,
     IMAGENET_STD,
     NormalizedModel,
+    checkpoint_input_convention,
     choose_input_convention,
+    load_checkpoint_into,
     maybe_wrap,
     read_input_convention,
+    unwrap,
 )
 
 __all__ = [
@@ -17,7 +20,10 @@ __all__ = [
     "IMAGENET_MEAN",
     "IMAGENET_STD",
     "NormalizedModel",
+    "checkpoint_input_convention",
     "choose_input_convention",
+    "load_checkpoint_into",
     "maybe_wrap",
     "read_input_convention",
+    "unwrap",
 ]

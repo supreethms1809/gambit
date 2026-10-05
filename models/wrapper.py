@@ -63,6 +63,40 @@ def maybe_wrap(model: nn.Module, convention: str) -> nn.Module:
     raise ValueError(f"input convention must be one of {CONVENTIONS}, got {convention!r}")
 
 
+def checkpoint_input_convention(blob) -> str:
+    """The input convention a checkpoint was trained under.
+
+    ``get_or_train`` saves the unwrapped state dict with an ``input_convention``
+    key. A bare state dict, or metadata without the key, predates the switch and
+    was trained on raw input.
+    """
+    if isinstance(blob, dict) and "state_dict" in blob:
+        convention = blob.get("input_convention", CONVENTION_RAW)
+        if convention not in CONVENTIONS:
+            raise ValueError(f"input convention must be one of {CONVENTIONS}, got {convention!r}")
+        return convention
+    return CONVENTION_RAW
+
+
+def load_checkpoint_into(model: nn.Module, blob) -> nn.Module:
+    """Load ``blob`` into the bare ``model`` and restore its training-time input layer.
+
+    Every checkpoint load goes through here. Loading the state dict alone would
+    feed raw input to a model trained on normalised input, which is the
+    train/eval mismatch this wrapper exists to prevent.
+    """
+    state = blob["state_dict"] if isinstance(blob, dict) and "state_dict" in blob else blob
+    model.load_state_dict(state)
+    return maybe_wrap(model, checkpoint_input_convention(blob))
+
+
+def unwrap(model: nn.Module) -> nn.Module:
+    """The classifier inside a ``NormalizedModel``, for code that inspects layer types."""
+    while isinstance(model, NormalizedModel):
+        model = model.model
+    return model
+
+
 class NormalizedModel(nn.Module):
     def __init__(
         self,
