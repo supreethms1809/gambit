@@ -15,7 +15,7 @@ Test, only after the freeze (refused before it, and on a dirty tree):
     PYTHONPATH=. python scripts/launch_paper_eval.py --split test --final --config-hash <hash>
 
 Image counts per seed default to the plan's minimums (section 2.4); set the
-frozen values with ``--n-contrastive`` and ``--n-shift``.
+frozen values per backbone, e.g. ``--n-contrastive resnet50:200,vit_b_16:64``.
 """
 
 from __future__ import annotations
@@ -50,6 +50,22 @@ N_MIN = {("contrastive", "resnet50"): 200, ("contrastive", "vit_b_16"): 64,
          ("shift", "resnet50"): 128, ("shift", "vit_b_16"): 32}
 
 
+def parse_n(value) -> dict:
+    """``"resnet50:200,vit_b_16:64"`` -> per-backbone n. A bare number is refused:
+    one n for both backbones would give ViT the ResNet budget (EVAL_PLAN 2.4)."""
+    if not value:
+        return {}
+    out = {}
+    for part in str(value).split(","):
+        if ":" not in part:
+            raise SystemExit(f"n must be per backbone, e.g. resnet50:200,vit_b_16:64 (got {value!r})")
+        name, count = part.split(":", 1)
+        if name not in BACKBONES:
+            raise SystemExit(f"unknown backbone {name!r} in n")
+        out[name] = int(count)
+    return out
+
+
 def grid(args) -> list[dict]:
     datasets = set(args.datasets.split(",")) if args.datasets else None
     backbones = args.backbones.split(",")
@@ -74,8 +90,7 @@ def spec_for(cell: dict, args):
     from evaluation.run_cell import CellSpec
 
     game, dataset, backbone, seed = cell["game"], cell["dataset"], cell["backbone"], cell["seed"]
-    n = (args.n_contrastive if game == "contrastive" else args.n_shift) or {}
-    n = n.get(backbone) if isinstance(n, dict) else n
+    n = parse_n(args.n_contrastive if game == "contrastive" else args.n_shift).get(backbone)
     n = n or N_MIN[(game, backbone)]
     if game == "contrastive":
         methods = [m for m in CONTRASTIVE_CORE + (CONTRASTIVE_EXTENDED if args.extended else ())
@@ -107,8 +122,8 @@ def main() -> None:
     p.add_argument("--datasets", default=None, help="units for this machine, comma list")
     p.add_argument("--backbones", default=",".join(BACKBONES))
     p.add_argument("--seeds", default="0,1,2,3,4")
-    p.add_argument("--n-contrastive", type=int, default=None)
-    p.add_argument("--n-shift", type=int, default=None)
+    p.add_argument("--n-contrastive", default=None, help="per backbone, e.g. resnet50:200,vit_b_16:64")
+    p.add_argument("--n-shift", default=None, help="per backbone, e.g. resnet50:128,vit_b_16:32")
     p.add_argument("--areas", default="0.025,0.05,0.10")
     p.add_argument("--shift-areas", default="0.05,0.10,0.25")
     p.add_argument("--extended", action="store_true", help="also run the Extended baselines")
