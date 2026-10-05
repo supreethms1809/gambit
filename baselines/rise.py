@@ -73,7 +73,10 @@ def class_maps(
     was_training = model.training
     model.eval()
     try:
-        maps = [explainer(x[i : i + 1])[int(class_idx)] for i in range(x.shape[0])]
+        # RISE needs no gradients. Without no_grad every masked batch keeps its
+        # autograd graph until the forward returns: ~30 GB at 200 masks on ResNet-50.
+        with torch.no_grad():
+            maps = [explainer(x[i : i + 1])[int(class_idx)] for i in range(x.shape[0])]
     finally:
         model.train(was_training)
     out = torch.stack(maps, dim=0)
@@ -106,16 +109,18 @@ def margin_maps(
     model.eval()
     try:
         rows = []
-        for i in range(x.shape[0]):
-            stack = masks * x[i : i + 1]
-            weights = []
-            k = int(kept[i])
-            foil_i = int(foil[i])
-            for start in range(0, count, batch):
-                logits = model(stack[start : start + batch])
-                weights.append(logits[:, k] - logits[:, foil_i])
-            weight = torch.cat(weights, dim=0)
-            rows.append((weight @ flat).view(height, width) / count / p1)
+        # No gradients: see class_maps.
+        with torch.no_grad():
+            for i in range(x.shape[0]):
+                stack = masks * x[i : i + 1]
+                weights = []
+                k = int(kept[i])
+                foil_i = int(foil[i])
+                for start in range(0, count, batch):
+                    logits = model(stack[start : start + batch])
+                    weights.append(logits[:, k] - logits[:, foil_i])
+                weight = torch.cat(weights, dim=0)
+                rows.append((weight @ flat).view(height, width) / count / p1)
     finally:
         model.train(was_training)
     out = torch.stack(rows, dim=0)

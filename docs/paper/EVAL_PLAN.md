@@ -180,7 +180,7 @@ Rerun `scripts/check_degenerate.py` on the dev val sets. The stored report preda
 |---|---|---|
 | CDEA | backend {Grad-CAM, IG} × λ_margin {0.5, 1, 2} × λ_overlap {0.1, 0.2, 0.4}. 50 steps, lr 0.2, λ_shared_sparse 0.25. ViT: IG only | 18 (9 on ViT) |
 | Margin attribution | {Grad-CAM, IG-16, IG-32} | 3 |
-| Contrastive Extremal Perturbations | max_iter {300, 800} × smoothing {0, TorchRay default} | 4 |
+| Contrastive Extremal Perturbations | max_iter {300, 800} × `smooth` {0 (TorchRay default), 0.1} | 4 |
 | RISE | n_masks {2000, 4000} × cell size {7, 8}, p1 0.5 | 4 |
 | CVE | Distractor rule fixed. No knobs | 1 |
 | CDEA-shift | λ_gap {0.5, 1, 1.5} × λ_mass {0.1, 0.5} × λ_disjoint {0.2, 0.4} | 12 |
@@ -261,11 +261,12 @@ Confounds are stated per row: forward passes, number of masks, K.
   - mask area, forward/backward counts, wall-clock;
   - code commit and platform.
 
-  Rows are stored as `.csv.gz` under `results/paper/runs/<game>/<dataset>/<backbone>/<method>/seed<s>.csv.gz`, with a JSON summary. A cell is complete only when its done marker exists (`scripts/completion_check.py`). Record assertions: masks in [0, 1], area = a ± tolerance, finite values, and n as planned.
-- **Executor (still to be built).**
-  - `evaluation/executor.py` currently scores a given pair of masks.
-  - The full per-cell runner must load the checkpoint through `load_checkpoint_into`, draw the frozen test sample, run each method's map function, apply sections 4–5, and write records.
-  - It is built and tested on val before the freeze. Its smoke test is the G1 pilot.
+  Rows are stored as `results/paper/runs/<split>/<game>/<dataset>/<backbone>/seed<s>/records.csv.gz`, one file per cell with every method, beside a `summary.json`. A cell is complete only when its done marker exists (`scripts/completion_check.py`). Record assertions: masks in [0, 1], area = a ± tolerance, finite values, and n as planned.
+- **Executor.**
+  - `scripts/paper_run.py` runs one cell. `scripts/launch_paper_eval.py` runs the grid, resumably, with `--datasets` per machine. `scripts/smoke_e2e.py` runs every unit, method, ablation, and selection candidate on a few val images.
+  - Code: `evaluation/run_models.py` (loading, always through `load_checkpoint_into`), `evaluation/run_data.py` (samples with seed 1000 + s through the locked loaders), `evaluation/run_methods.py` (section 4 maps, ablations, candidates), `evaluation/run_cell.py` (scoring, records).
+  - The Stanford Dogs shift unit is restricted to the paper split by path. The older `scripts/eval_robust_shortcut_dogs.py` read every annotated image. Background styles come from train images only.
+  - Run instructions are in `docs/paper/SPARK_RUNBOOK.md`.
 
 ## 11. Gates this plan depends on
 - **G0:** every Core baseline has its reproduction (B3) or a recorded, justified omission. VOC is unpacked. ImageNet val is on Spark, so the RISE reproduction runs there.
@@ -278,7 +279,7 @@ The plan is frozen only after all of the following are recorded in this file and
 3. Selected configs and their hashes for every method (6.2), and the shift area (6.3) and comparator (6.4).
 4. The sixth shift dataset chosen and prepared (2.2).
 5. n per seed and backbone, test-sample seeds (2.4), and machine assignments (10).
-6. The executor built, with tests passing on val.
+6. The executor's smoke run (`results/paper/smoke/REPORT.md`) shows no method errors on the machine that runs each unit.
 7. The cross-platform cell and the run-to-run repeats done on val.
 
 Then add a line reading `frozen: true` at the top of this file, commit, and tag `eval-plan-frozen`. After the freeze, any change to this file is a new dated section with its reason. Results computed before that section are reported under the old plan.

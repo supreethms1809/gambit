@@ -152,3 +152,33 @@ def test_gradientshap_noise_does_not_trip_the_wrapper_range_check():
     field = CaptumRegionsProvider("gradientshap", 2, 2).explain(x, model, hypotheses)
     assert field.shape == (2, 2, 4)
     assert torch.isfinite(field).all()
+
+
+def test_library_cam_provider_releases_its_hooks():
+    from torchvision.models import resnet18
+
+    from base_evidence.library_adapters import CamLibraryProvider, _find_target_layer
+    from baselines.hypotheses import shared_hypotheses
+
+    model = resnet18(weights=None, num_classes=4).eval()
+    layer = _find_target_layer(model)
+    before = (len(layer._forward_hooks), len(layer._backward_hooks))
+    x = torch.rand(1, 3, 64, 64)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    CamLibraryProvider("layercam", 2, 2).explain(x, model, hypotheses)
+    assert (len(layer._forward_hooks), len(layer._backward_hooks)) == before
+
+
+def test_rise_maps_carry_no_autograd_graph():
+    from baselines.hypotheses import shared_hypotheses
+    from baselines.rise import class_maps, margin_maps
+
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Conv2d(3, 4, 3, padding=1), nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+                          nn.Linear(4, 3)).eval()
+    x = torch.rand(1, 3, 16, 16)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    assert not margin_maps(model, x, hypotheses, n_masks=8, s=4, batch=4).requires_grad
+    assert not class_maps(model, x, 0, n_masks=8, s=4, batch=4).requires_grad

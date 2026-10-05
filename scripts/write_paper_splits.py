@@ -266,6 +266,34 @@ def _cub200() -> dict:
     )
 
 
+def _imagenet() -> dict:
+    """ImageNet-1k val only. No training: the unit uses the torchvision weights.
+
+    ``data/imagenet/val`` must be in ImageFolder layout (one folder per wnid).
+    Val is 10 images per class (20%), carved with seed 43; test is the other 40.
+    """
+    from torchvision.datasets import ImageFolder
+
+    relative = "imagenet/val"
+    ds = ImageFolder(str(DATA / relative))
+    indices = list(range(len(ds)))
+    label_of = {i: str(ds.targets[i]) for i in indices}
+    test, val = carve_grouped(
+        indices,
+        {i: str(i) for i in indices},
+        val_fraction=0.2,
+        seed=VAL_CARVE_SEED,
+        by_class=label_of,
+    )
+    return _spec(
+        "imagenet",
+        "ImageNet-1k val only; 20% of each class is our val carve (seed 43), the rest is test; no train split",
+        {"train": relative, "val": relative, "test": relative},
+        {"train": [], "val": val, "test": test},
+        {split: len(ds) for split in ("train", "val", "test")},
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Write data/splits/<dataset>.json")
     parser.add_argument(
@@ -286,6 +314,10 @@ def main() -> None:
         ("oxford_pets", _oxford_pets),
         ("cub200", _cub200),
     ]
+    if (DATA / "imagenet" / "val").is_dir():
+        jobs.append(("imagenet", _imagenet))
+    if args.only and "imagenet" in args.only and not any(n == "imagenet" for n, _ in jobs):
+        jobs.append(("imagenet", _imagenet))
     if args.only:
         wanted = set(args.only)
         jobs = [(name, build) for name, build in jobs if name in wanted]
