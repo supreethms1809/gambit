@@ -40,12 +40,16 @@ def contrastive_gradcam(
     """``(B, H, W)`` Grad-CAM of cross-entropy toward the foil class."""
     import pytorch_grad_cam as pgc
 
+    from base_evidence.gradcam_regions import cam_reshape_transform
+
     _, foil = foil_pair(hypotheses)
     layer = _layer(model, target_layer)
     targets = [CrossEntropyContrastTarget(int(q)) for q in foil.tolist()]
     was_training = model.training
     try:
-        with pgc.GradCAM(model=model, target_layers=[layer]) as cam:
+        with pgc.GradCAM(
+            model=model, target_layers=[layer], reshape_transform=cam_reshape_transform(model),
+        ) as cam:
             heat = cam(input_tensor=x.detach(), targets=targets)
     finally:
         model.train(was_training)

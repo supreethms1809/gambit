@@ -47,6 +47,32 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
     return last_conv
 
 
+def cam_reshape_transform(model: nn.Module):
+    """pytorch-grad-cam ``reshape_transform`` for a ViT, ``None`` for a CNN.
+
+    pytorch-grad-cam needs 4-D activations. A ViT block emits ``(B, 1 + N, D)``
+    tokens; this drops CLS and lays the N patch tokens on their square grid,
+    the same convention ``GradCAMRegionsProvider`` uses.
+    """
+    from models.wrapper import unwrap
+
+    try:
+        from torchvision.models import VisionTransformer
+    except ImportError:
+        return None
+    if not isinstance(unwrap(model), VisionTransformer):
+        return None
+
+    def reshape(tokens: Tensor) -> Tensor:
+        patches = tokens[:, 1:, :]
+        side = int(round(patches.shape[1] ** 0.5))
+        if side * side != patches.shape[1]:
+            raise ValueError(f"{patches.shape[1]} patch tokens do not form a square grid")
+        return patches.reshape(tokens.shape[0], side, side, tokens.shape[2]).permute(0, 3, 1, 2)
+
+    return reshape
+
+
 class GradCAMRegionsProvider:
     """BaseEvidenceProvider: Grad-CAM pooled to grid_h x grid_w regions. Returns (B, K, R) nonneg.
 

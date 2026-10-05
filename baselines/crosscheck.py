@@ -43,6 +43,8 @@ def library_gradcam(
 ) -> torch.Tensor:
     """``(B, R)`` library Grad-CAM pooled the same way as our provider."""
     import pytorch_grad_cam as pgc
+
+    from base_evidence.gradcam_regions import cam_reshape_transform
     from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
     layer = target_layer or _find_target_layer(model)
@@ -51,7 +53,9 @@ def library_gradcam(
     was_training = model.training
     try:
         # Eval mode: hooks must record the deterministic inference function.
-        with eval_mode(model), pgc.GradCAM(model=model, target_layers=[layer]) as cam:
+        with eval_mode(model), pgc.GradCAM(
+            model=model, target_layers=[layer], reshape_transform=cam_reshape_transform(model),
+        ) as cam:
             outputs = cam.activations_and_grads(x.detach())
             cam.model.zero_grad()
             loss = sum(target(output) for target, output in zip(targets, outputs))

@@ -49,6 +49,8 @@ def margin_gradcam(
     """``(B, H, W)`` Grad-CAM of z_k - z_l. k and l are the shared hypothesis pair."""
     import pytorch_grad_cam as pgc
 
+    from base_evidence.gradcam_regions import cam_reshape_transform
+
     kept, foil = foil_pair(hypotheses)
     layer = _layer(model, target_layer)
     targets = [
@@ -57,7 +59,9 @@ def margin_gradcam(
     was_training = model.training
     try:
         # Eval mode: attribution must see the deterministic inference function.
-        with eval_mode(model), pgc.GradCAM(model=model, target_layers=[layer]) as cam:
+        with eval_mode(model), pgc.GradCAM(
+            model=model, target_layers=[layer], reshape_transform=cam_reshape_transform(model),
+        ) as cam:
             heat = cam(input_tensor=x.detach(), targets=targets)
     finally:
         model.train(was_training)

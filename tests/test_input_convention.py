@@ -122,3 +122,19 @@ def test_gradcam_target_layer_sees_through_the_wrapper():
     wrapped = maybe_wrap(vit, CONVENTION_IMAGENET)
     assert _find_target_layer(wrapped) is vit.encoder.layers[-1]
     assert _find_target_layer(wrapped) is not vit.conv_proj
+
+
+def test_margin_gradcam_runs_on_a_wrapped_vit():
+    from torchvision.models import vit_b_16
+
+    from baselines.hypotheses import shared_hypotheses
+    from baselines.margin import margin_gradcam
+
+    torch.manual_seed(0)
+    model = maybe_wrap(vit_b_16(weights=None), CONVENTION_IMAGENET).eval()
+    x = torch.rand(2, 3, 224, 224)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    heat = margin_gradcam(model, x, hypotheses)
+    assert heat.shape == (2, 224, 224)
+    assert torch.isfinite(heat).all()
