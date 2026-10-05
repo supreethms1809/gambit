@@ -64,17 +64,30 @@ def patch_layout(
             margin + (x - margin + dx) % span,
         )
 
-    for attempt in range(span):
-        dy = span // 2 + attempt
-        dx = span // 3 + attempt
+    def separated(dy: int, dx: int) -> tuple[tuple[int, int], tuple[int, int]] | None:
         moved = [shift(origin, dy, dx) for origin in present]
-        boxes = [_box(origin, patch) for origin in present + moved]
-        if all(
-            not _overlap(boxes[i], boxes[j])
+        boxes = [_box(origin, patch) for origin in (*present, *moved)]
+        if any(
+            _overlap(boxes[i], boxes[j])
             for i in range(len(boxes))
             for j in range(i + 1, len(boxes))
         ):
-            return present[0], present[1], moved[0], moved[1]
+            return None
+        return moved[0], moved[1]
+
+    # The half-span diagonal is enough for almost every index. Layouts that
+    # succeed here stay put; only the misses search the rest of the offsets.
+    for attempt in range(span):
+        found = separated(span // 2 + attempt, span // 3 + attempt)
+        if found is not None:
+            return present[0], present[1], found[0], found[1]
+    for dy in range(span):
+        for dx in range(span):
+            if dy == 0 and dx == 0:
+                continue
+            found = separated(dy, dx)
+            if found is not None:
+                return present[0], present[1], found[0], found[1]
     raise RuntimeError(f"could not move patches at index {index}")
 
 

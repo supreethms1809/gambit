@@ -76,10 +76,27 @@ def test_composite_keeps_the_bird_and_swaps_the_background():
     assert (land[:, bg_px] - water[:, bg_px]).abs().mean() > 0.5
 
 
+def _boxes_disjoint(origins, patch: int = 32) -> bool:
+    boxes = [(y, x, y + patch, x + patch) for y, x in origins]
+    return all(
+        boxes[i][2] <= boxes[j][0]
+        or boxes[j][2] <= boxes[i][0]
+        or boxes[i][3] <= boxes[j][1]
+        or boxes[j][3] <= boxes[i][1]
+        for i in range(len(boxes))
+        for j in range(i + 1, len(boxes))
+    )
+
+
 def test_two_patches_move_without_overlapping_and_remove_cleanly():
     for index in range(30):
         a, b, a_moved, b_moved = patch_layout(index, seed=0)
         assert len({a, b, a_moved, b_moved}) == 4
+        assert _boxes_disjoint((a, b, a_moved, b_moved))
+    # The half-span search cannot separate this draw. The full offset search must.
+    hard = patch_layout(32864, seed=0)
+    assert len(set(hard)) == 4
+    assert _boxes_disjoint(hard)
     root = REPO / "data"
     if not (root / "cifar-10-batches-py").is_dir():
         pytest.skip("CIFAR-10 is not on disk")
