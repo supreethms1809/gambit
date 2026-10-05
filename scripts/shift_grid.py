@@ -25,7 +25,10 @@ SHIFT_DATASETS = (
     "stanford_dogs",
     "planted_patch",
     "colored_mnist",
-    "waterbirds_groups",
+    # Placeholder until the sixth independent shift dataset is chosen
+    # (EVAL_PLAN.md section 2.2). It keeps the completion check failing until
+    # then. Waterbirds natural groups are ablation AS1, not a unit.
+    "sixth_shift_tbd",
 )
 SHIFT_METHODS = (
     "cdea_shift",
@@ -50,10 +53,13 @@ def marker_progress(log_dir: Path) -> dict[str, int | bool]:
 
 
 def shift_cells() -> list[dict]:
-    """Job list for the shift grid. ``waterbirds_groups`` is the unpaired objective."""
+    """Job list for the shift grid. Every unit uses the paired objective.
+
+    The unpaired objective is ablation AS1 on Waterbirds, not a dataset unit.
+    """
     cells = []
     for dataset in SHIFT_DATASETS:
-        objective = "unpaired" if dataset == "waterbirds_groups" else "paired"
+        objective = "paired"
         for model in MODELS:
             for method in SHIFT_METHODS:
                 for seed in SEEDS:

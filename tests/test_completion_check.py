@@ -44,9 +44,11 @@ def test_every_done_marker_completes_a_manifest(tmp_path: Path) -> None:
 
 def test_contrastive_manifest_names_the_eight_datasets() -> None:
     cells = contrastive_cells()
-    assert len(cells) == 8 * 2 * 7 * 5
+    # CVE is ResNet-50 only.
+    assert len(cells) == 8 * (2 * 7 - 1) * 5
+    assert not [c for c in cells if c["method"] == "cve" and c["model"] == "vit_b_16"]
     assert {cell["dataset"] for cell in cells} == set(CONTRASTIVE_DATASETS)
-    assert "imagenet_s" in CONTRASTIVE_DATASETS
+    assert "imagenet" in CONTRASTIVE_DATASETS
     assert {cell["method"] for cell in cells} == set(CONTRASTIVE_METHODS)
     assert all("split" not in cell for cell in cells)
 
