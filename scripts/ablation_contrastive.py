@@ -55,7 +55,7 @@ MODEL_CHOICES = ["smallcnn", "resnet18", "resnet34", "resnet50", "mobilenet_v2",
                  "efficientnet_b0", "efficientnet_v2_s", "vit_b_16", "vit_b_32"]
 DATASET_CHOICES = [
     "mnist", "cifar10", "cifar100", "pets", "oxford_pets", "stanford_dogs",
-    "cub200", "ham10000", "brain_tumor",
+    "cub200", "ham10000", "brain_tumor", "imagenet",
 ]
 
 
@@ -75,6 +75,7 @@ DATASET_NUM_CLASSES = {
     "stanford_dogs": 120,
     "ham10000": 7,
     "brain_tumor": 3,
+    "imagenet": 1000,
 }
 
 
@@ -222,6 +223,15 @@ def _get_eval_loader(
         ])
         ds = open_unsplit(dataset, split, data_root, transform=t)
         num_classes = len(set(ds.targets))
+    elif dataset == "imagenet":
+        # The torchvision weights' own eval transform, then a 224 crop like every unit.
+        t = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(image_size if image_size is not None else 224),
+            transforms.ToTensor(),
+        ])
+        ds = ImageFolder(root=str(data_root / root_rel), transform=t)
+        num_classes = len(ds.classes)
     elif dataset in MEDICAL_EVAL_ROOTS:
         target_size = image_size if image_size is not None else 224
         t = transforms.Compose([transforms.Resize((target_size, target_size)), transforms.ToTensor()])
