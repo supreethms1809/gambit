@@ -27,6 +27,7 @@ Usage (standalone)::
 from __future__ import annotations
 
 import argparse
+import os
 import warnings
 from pathlib import Path
 from typing import Optional, Tuple
@@ -199,7 +200,10 @@ def _dataloader(ds, batch_size: int, shuffle: bool, seed: int) -> torch.utils.da
     if shuffle:
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(seed))
-    workers = 8 if torch.cuda.is_available() else 0
+    # One queue uses 8 workers. Extra seed queues set GAMBIT_LOADER_WORKERS
+    # so several trainers do not spawn more workers than the machine has cores.
+    default_workers = 8 if torch.cuda.is_available() else 0
+    workers = int(os.environ.get("GAMBIT_LOADER_WORKERS", str(default_workers)))
     kwargs = {}
     if workers:
         kwargs["persistent_workers"] = True
@@ -439,20 +443,7 @@ def get_val_loader(
             correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED,
         )
 
-        class _ResizeWrapper(torch.utils.data.Dataset):
-            def __init__(self, inner):
-                self.inner = inner
-
-            def __len__(self):
-                return len(self.inner)
-
-            def __getitem__(self, i):
-                x, y = self.inner[i]
-                x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
-                                  mode="bilinear", align_corners=False).squeeze(0)
-                return x, y
-
-        ds = _paper_subset(_ResizeWrapper(base), "mnist", "val")
+        ds = _paper_subset(_ResizeTo(base, image_size), "mnist", "val")
         return _dataloader(ds, batch_size, False, 0)
     if dataset == "planted_patch":
         from instantiations.shift.planted_patch import PlantedPatchClassifier
