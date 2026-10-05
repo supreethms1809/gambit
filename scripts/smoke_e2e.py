@@ -99,6 +99,8 @@ def main() -> None:
     p.add_argument("--device", default="auto")
     p.add_argument("--only", default=None, help="comma list of datasets to keep")
     p.add_argument("--no-production-timing", action="store_true")
+    p.add_argument("--resume", action="store_true",
+                   help="reuse cells whose summary.json already exists; the report covers all cells")
     args = p.parse_args()
     from scripts.paper_run import run
 
@@ -116,6 +118,15 @@ def main() -> None:
             print(f"skip  {tag}: data not on this machine", flush=True)
             continue
         spec.model_source = _source(spec.dataset, spec.backbone, spec.seed)
+        done = Path(spec.out_dir) / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}" / "summary.json"
+        if args.resume and done.is_file():
+            summary = json.loads(done.read_text())
+            method_seconds = sum(m.get("seconds", 0.0) for m in summary["methods"].values())
+            results.append({"cell": tag, "status": "ok", "seconds": method_seconds,
+                            "model_source": spec.model_source, "summary": str(done),
+                            "methods": summary["methods"], "rows": summary["rows"], "resumed": True})
+            print(f"reuse {tag}", flush=True)
+            continue
         start = time.perf_counter()
         try:
             path = run(spec, args.device)
