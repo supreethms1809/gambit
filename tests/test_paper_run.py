@@ -93,6 +93,43 @@ def test_runner_outputs_do_not_dirty_the_tree():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    for path in ("results/paper/runs/contrastive/x/records.csv.gz", "results/paper/smoke/REPORT.md"):
+    # Paths a run creates between cells. (The committed smoke REPORT.md is tracked,
+    # so check-ignore does not apply to it.)
+    for path in ("results/paper/runs/val/contrastive/x/records.csv.gz",
+                 "results/paper/smoke/fast_knobs/val/contrastive/x/summary.json"):
         out = subprocess.run(["git", "check-ignore", "-q", path], cwd=root)
         assert out.returncode == 0, f"{path} is not ignored"
+
+
+def test_records_path_separates_val_and_test(tmp_path):
+    from evaluation.run_cell import CellSpec, _write
+    from evaluation.run_models import LoadedModel
+
+    for split in ("val", "test"):
+        spec = CellSpec(game="contrastive", dataset="cifar10", backbone="resnet50", seed=0,
+                        split=split, out_dir=str(tmp_path))
+        out = _write(spec, [{"split": split}], {"rows": 1}, device=None)
+        assert out.parts[-5] == split
+    assert (tmp_path / "val").is_dir() and (tmp_path / "test").is_dir()
+
+
+def test_n_is_set_per_backbone():
+    import pytest
+
+    from scripts.launch_paper_eval import parse_n
+
+    assert parse_n("resnet50:200,vit_b_16:64") == {"resnet50": 200, "vit_b_16": 64}
+    assert parse_n(None) == {}
+    with pytest.raises(SystemExit):
+        parse_n("200")
+
+
+def test_record_index_names_the_dataset_image():
+    from torch.utils.data import Subset
+
+    from evaluation.run_data import root_indices
+
+    base = list(range(100))
+    split = Subset(base, [10, 20, 30, 40, 50])
+    sample = Subset(split, [4, 1])
+    assert root_indices(sample) == [50, 20]

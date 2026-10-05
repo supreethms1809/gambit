@@ -261,7 +261,7 @@ Confounds are stated per row: forward passes, number of masks, K.
   - mask area, forward/backward counts, wall-clock;
   - code commit and platform.
 
-  Rows are stored as `.csv.gz` under `results/paper/runs/<game>/<dataset>/<backbone>/<method>/seed<s>.csv.gz`, with a JSON summary. A cell is complete only when its done marker exists (`scripts/completion_check.py`). Record assertions: masks in [0, 1], area = a ± tolerance, finite values, and n as planned.
+  Rows are stored as `results/paper/runs/<split>/<game>/<dataset>/<backbone>/seed<s>/records.csv.gz`, one file per cell with every method, beside a `summary.json`. A cell is complete only when its done marker exists (`scripts/completion_check.py`). Record assertions: masks in [0, 1], area = a ± tolerance, finite values, and n as planned.
 - **Executor.**
   - `scripts/paper_run.py` runs one cell. `scripts/launch_paper_eval.py` runs the grid, resumably, with `--datasets` per machine. `scripts/smoke_e2e.py` runs every unit, method, ablation, and selection candidate on a few val images.
   - Code: `evaluation/run_models.py` (loading, always through `load_checkpoint_into`), `evaluation/run_data.py` (samples with seed 1000 + s through the locked loaders), `evaluation/run_methods.py` (section 4 maps, ablations, candidates), `evaluation/run_cell.py` (scoring, records).

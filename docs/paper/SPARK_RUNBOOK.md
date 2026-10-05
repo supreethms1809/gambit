@@ -71,7 +71,7 @@ One machine owns each dataset (EVAL_PLAN 10). Example for Spark:
 ```bash
 PYTHONPATH=. caffeinate -i python scripts/launch_paper_eval.py --split test --final \
     --config-hash <frozen hash> --datasets imagenet,cifar100,cub200,stanford_dogs \
-    --n-contrastive <n> --n-shift <n> --ablations --extended \
+    --n-contrastive resnet50:<n>,vit_b_16:<n> --n-shift resnet50:<n>,vit_b_16:<n> --ablations --extended \
     > results/paper/logs/eval_spark.log 2>&1 &
 ```
 
@@ -79,6 +79,6 @@ On Linux, drop `caffeinate` and use `nohup` or `tmux`. The run is resumable: rer
 the same command skips cells with a done marker. A failed cell leaves
 `results/paper/runs/_markers/test/<cell>.failed` with its error.
 
-Records go to `results/paper/runs/<game>/<dataset>/<backbone>/seed<s>/records.csv.gz`,
+Records go to `results/paper/runs/<split>/<game>/<dataset>/<backbone>/seed<s>/records.csv.gz`,
 with a `summary.json` (per-method status, seconds, pass counts, provenance).
 `scripts/completion_check.py` and `analysis/build_results.py` read them.
