@@ -23,12 +23,14 @@ class FamilyCExecutor:
         seed: int = 0,
         iters: int = 24,
         noise: float = 0.01,
+        include_shared: bool = False,
     ):
         self.model = model
         self.fraction = float(fraction)
         self.seed = int(seed)
         self.iters = int(iters)
         self.noise = float(noise)
+        self.include_shared = bool(include_shared)
 
     def hypotheses(self, images: torch.Tensor) -> HypothesisSet:
         was_training = self.model.training
@@ -53,7 +55,7 @@ class FamilyCExecutor:
             hypotheses = self.hypotheses(images)
         class_k, class_l = pair_classes(hypotheses)
         mask_k, mask_l = pair_budget_masks(
-            unique, shared, self.fraction, self.seed, **upsample,
+            unique, shared, self.fraction, self.seed, self.include_shared, **upsample,
         )
         return contrastive_deletion(
             self.model,

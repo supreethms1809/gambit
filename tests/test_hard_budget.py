@@ -59,13 +59,24 @@ def test_allocator_returns_the_budget_and_drops_invalid_rows():
     assert torch.allclose(masks["shared"].sum(), torch.tensor(1.0), atol=1e-4)
 
 
-def test_foil_scores_add_shared_to_rank_0_and_rank_1_only():
+def test_foil_scores_use_unique_masks_by_default():
     unique = torch.zeros(1, 3, 4)
     unique[0, 0, 0] = 1.0
     unique[0, 1, 1] = 1.0
     unique[0, 2, 2] = 5.0
     shared = torch.tensor([[0.2, 0.0, 0.0, 0.3]])
     kept, foil = pair_scores(unique, shared)
+    assert torch.allclose(kept, torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+    assert torch.allclose(foil, torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+
+
+def test_foil_scores_add_shared_to_rank_0_and_rank_1_in_the_sensitivity_check():
+    unique = torch.zeros(1, 3, 4)
+    unique[0, 0, 0] = 1.0
+    unique[0, 1, 1] = 1.0
+    unique[0, 2, 2] = 5.0
+    shared = torch.tensor([[0.2, 0.0, 0.0, 0.3]])
+    kept, foil = pair_scores(unique, shared, include_shared=True)
     assert torch.allclose(kept, torch.tensor([[1.2, 0.0, 0.0, 0.3]]))
     assert torch.allclose(foil, torch.tensor([[0.2, 1.0, 0.0, 0.3]]))
 
