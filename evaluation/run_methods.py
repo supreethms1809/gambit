@@ -57,6 +57,7 @@ class Knobs:
     cdea_steps: int = 50
     shift_steps: int = 50
     cve_distractor_tries: int = 32
+    extremal_smooth: float = 0.0
     fast: bool = False
 
 
@@ -298,14 +299,14 @@ def margin_ig_pair(model, x, h, backbone, knobs, device) -> PairMaps:
 def extremal_contrastive_pair(model, x, h, backbone, knobs, device, area: float = 0.05) -> PairMaps:
     from baselines.extremal import margin_masks
 
-    kw = dict(area=area, max_iter=knobs.extremal_max_iter)
+    kw = dict(area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth)
     return PairMaps(k=margin_masks(model, x, h, **kw), l=margin_masks(model, x, swapped(h), **kw), grid=None)
 
 
 def extremal_class_pair(model, x, h, backbone, knobs, device, area: float = 0.05) -> PairMaps:
     from baselines.extremal import class_masks
 
-    kw = dict(area=area, max_iter=knobs.extremal_max_iter)
+    kw = dict(area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth)
     return PairMaps(k=class_masks(model, x, h.ids[:, 0], **kw), l=class_masks(model, x, h.ids[:, 1], **kw), grid=None)
 
 
@@ -555,10 +556,10 @@ class _GroupAllocator:
         return self.inner.allocate(**kwargs)
 
 
-def attribution_difference_maps(model, sample, backbone, knobs, device) -> ShiftMaps:
+def attribution_difference_maps(model, sample, backbone, knobs, device, backend: Optional[str] = None) -> ShiftMaps:
     from baselines.shift_maps import environment_maps
 
-    provider = evidence_provider(default_backend(backbone), backbone, knobs)
+    provider = evidence_provider(backend or default_backend(backbone), backbone, knobs)
     gh, gw = grid_of(backbone)
     h = _single(_predicted(model, sample.x_id))
     per_env = [provider.explain(xe, model, h)[:, 0].reshape(-1, gh, gw) for xe in sample.env.xs]
@@ -591,7 +592,7 @@ def extremal_per_env_maps(model, sample, backbone, knobs, device, area: float = 
 
     pred = _predicted(model, sample.x_id)
     robust, shortcut = per_environment_extremal(model, list(sample.env.xs), pred, area=area,
-                                                max_iter=knobs.extremal_max_iter)
+                                                max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth)
     return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
 
 
@@ -614,3 +615,44 @@ def shift_method(name: str):
         "extremal_per_env": extremal_per_env_maps,
         "random_floor": random_shift_maps,
     }[name]
+
+
+# ---------------------------------------------------------------------------
+# Val selection candidates (EVAL_PLAN.md section 6.2). Each name is
+# ``method@variant``. A CdeaConfig or ShiftConfig replaces the method's config;
+# a dict replaces Knobs fields; {"backend": ...} picks the evidence backend.
+# ---------------------------------------------------------------------------
+
+def _cdea_grid() -> dict:
+    out = {}
+    for backend in ("gradcam", "ig"):
+        for margin in (0.5, 1.0, 2.0):
+            for overlap in (0.1, 0.2, 0.4):
+                out[f"cdea@{backend}_m{margin:g}_o{overlap:g}"] = CdeaConfig(
+                    backend=backend, lambda_margin=margin, lambda_overlap=overlap)
+    return out
+
+
+CONTRASTIVE_CANDIDATES: dict = {
+    **_cdea_grid(),
+    "margin_gradcam@default": {},
+    "margin_ig@ig16": {"ig_steps": 16},
+    "margin_ig@ig32": {"ig_steps": 32},
+    **{f"extremal@it{it}_sm{sm:g}": {"extremal_max_iter": it, "extremal_smooth": sm}
+       for it in (300, 800) for sm in (0.0, 0.1)},
+    **{f"rise_margin@m{n}_s{s}": {"rise_masks": n, "rise_cell": s} for n in (2000, 4000) for s in (7, 8)},
+}
+
+SHIFT_CANDIDATES: dict = {
+    **{f"cdea_shift@g{g:g}_mass{m:g}_d{d:g}": ShiftConfig(lambda_gap=g, lambda_mass=m, lambda_disjoint=d)
+       for g in (0.5, 1.0, 1.5) for m in (0.1, 0.5) for d in (0.2, 0.4)},
+    "attribution_difference@gradcam": {"backend": "gradcam"},
+    "attribution_difference@ig": {"backend": "ig"},
+}
+
+
+def candidate_applies(name: str, backbone: str) -> bool:
+    """ViT has no Grad-CAM evidence (EVAL_PLAN 4.2); CVE has no candidates."""
+    if backbone.startswith("vit") and ("@gradcam" in name or name == "margin_gradcam@default"):
+        return False
+    return True

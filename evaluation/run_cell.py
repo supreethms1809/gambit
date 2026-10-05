@@ -22,7 +22,9 @@ import torch.nn.functional as F
 
 from evaluation.run_methods import (
     ABLATIONS,
+    CONTRASTIVE_CANDIDATES,
     SHIFT_ABLATIONS,
+    SHIFT_CANDIDATES,
     CdeaConfig,
     Knobs,
     PairMaps,
@@ -120,6 +122,7 @@ class CellSpec:
     n: int = 1
     methods: Sequence[str] = ()
     ablations: Sequence[str] = ()
+    candidates: Sequence[str] = ()     # "method@variant" names for val selection
     areas: Sequence[float] = (0.05,)
     operators: Sequence[str] = ("road", "blur")
     model_source: str = "auto"
@@ -145,11 +148,26 @@ def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     return out
 
 
-def _method_runs(spec: CellSpec) -> list[tuple[str, Optional[str]]]:
-    """``(method, ablation)`` pairs: the methods, then CDEA once per ablation."""
-    runs = [(m, None) for m in spec.methods]
-    runs += [("cdea_shift" if spec.game == "shift" else "cdea", a) for a in spec.ablations]
+def _method_runs(spec: CellSpec) -> list[tuple[str, Optional[str], Optional[str]]]:
+    """``(method, ablation, candidate)``: the methods, CDEA per ablation, then each candidate."""
+    runs = [(m, None, None) for m in spec.methods]
+    runs += [("cdea_shift" if spec.game == "shift" else "cdea", a, None) for a in spec.ablations]
+    runs += [(c.split("@", 1)[0], None, c) for c in spec.candidates]
     return runs
+
+
+_COST_KNOBS = {"extremal_max_iter", "rise_masks", "ig_steps"}
+
+
+def _candidate_knobs(spec: CellSpec, override: dict) -> "Knobs":
+    """Knob overrides for a candidate. Under ``fast`` the cost knobs keep the fast
+    values: the smoke run checks that a candidate runs, not what it scores."""
+    from dataclasses import replace as _replace
+
+    fields = {k: v for k, v in override.items() if k != "backend"}
+    if spec.knobs.fast:
+        fields = {k: v for k, v in fields.items() if k not in _COST_KNOBS}
+    return _replace(spec.knobs, **fields)
 
 
 # ---------------------------------------------------------------------------
@@ -175,16 +193,20 @@ def run_contrastive(spec: CellSpec, device) -> Path:
     rows: list[dict] = []
     status: dict[str, dict] = {}
 
-    for method, ablation in _method_runs(spec):
-        label = method if ablation is None else f"{method}:{ablation}"
+    for method, ablation, candidate in _method_runs(spec):
+        label = candidate or (method if ablation is None else f"{method}:{ablation}")
         areas = spec.areas if method in AREA_DEPENDENT else (None,)
         for area_for_map in areas:
             counter.reset()
             start = time.perf_counter()
             try:
+                override = CONTRASTIVE_CANDIDATES[candidate] if candidate else None
+                knobs = _candidate_knobs(spec, override) if isinstance(override, dict) else spec.knobs
                 if ablation is not None:
                     cfg = ABLATIONS[ablation](CdeaConfig(backend=default_backend(spec.backbone)))
                     maps = cdea_pair(model, x, h, spec.backbone, spec.knobs, device, cfg)
+                elif isinstance(override, CdeaConfig):
+                    maps = cdea_pair(model, x, h, spec.backbone, spec.knobs, device, override)
                 else:
                     fn = contrastive_method(method)
                     kwargs = {}
@@ -194,7 +216,7 @@ def run_contrastive(spec: CellSpec, device) -> Path:
                         kwargs["dataset"] = spec.dataset
                     if method in {"cve", "random_floor", "rise_margin"}:
                         kwargs["seed"] = spec.seed
-                    maps = fn(model, x, h, spec.backbone, spec.knobs, device, **kwargs)
+                    maps = fn(model, x, h, spec.backbone, knobs, device, **kwargs)
             except Exception as exc:  # recorded, not raised: one method must not sink the cell
                 status[label] = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
                                  "trace": traceback.format_exc(limit=4)}
@@ -281,14 +303,21 @@ def run_shift(spec: CellSpec, device) -> Path:
     rows: list[dict] = []
     status: dict[str, dict] = {}
 
-    for method, ablation in _method_runs(spec):
-        label = method if ablation is None else f"{method}:{ablation}"
+    for method, ablation, candidate in _method_runs(spec):
+        label = candidate or (method if ablation is None else f"{method}:{ablation}")
         areas = spec.areas if method in AREA_DEPENDENT else (None,)
         for area_for_map in areas:
             counter.reset()
             start = time.perf_counter()
             try:
-                if ablation is not None:
+                override = SHIFT_CANDIDATES[candidate] if candidate else None
+                if isinstance(override, ShiftConfig):
+                    maps = cdea_shift_maps(model, sample, spec.backbone, spec.knobs, device, override, seed=spec.seed)
+                elif isinstance(override, dict):
+                    knobs = _candidate_knobs(spec, override)
+                    maps = shift_method(method)(model, sample, spec.backbone, knobs, device,
+                                                **({"backend": override["backend"]} if "backend" in override else {}))
+                elif ablation is not None:
                     cfg = SHIFT_ABLATIONS[ablation](ShiftConfig(backend=default_backend(spec.backbone)))
                     if cfg.objective == "unpaired" and spec.dataset != "waterbirds":
                         raise ValueError("the unpaired objective (AS1) is defined on Waterbirds only")

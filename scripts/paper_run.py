@@ -25,12 +25,15 @@ if str(REPO) not in sys.path:
 
 from evaluation.run_methods import (  # noqa: E402
     ABLATIONS,
+    CONTRASTIVE_CANDIDATES,
     CONTRASTIVE_CORE,
     CONTRASTIVE_EXTENDED,
     FAST,
     SHIFT_ABLATIONS,
+    SHIFT_CANDIDATES,
     SHIFT_CORE,
     Knobs,
+    candidate_applies,
 )
 
 
@@ -58,6 +61,8 @@ def parse(argv=None):
     p.add_argument("--n", type=int, default=1)
     p.add_argument("--methods", default="core", help="core | all | none | comma list")
     p.add_argument("--ablations", default="none", help="all | none | comma list")
+    p.add_argument("--candidates", default="none",
+                   help="val selection grid (EVAL_PLAN 6.2): all | none | comma list of method@variant")
     p.add_argument("--areas", default="0.05")
     p.add_argument("--operators", default="road,blur")
     p.add_argument("--model-source", default="auto", choices=["auto", "paper", "checkpoint", "imagenet", "smoke"])
@@ -76,16 +81,19 @@ def spec_from_args(args):
     if args.game == "contrastive":
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
+        candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
         operators = tuple(o.strip() for o in args.operators.split(","))
     else:
         methods = _list(args.methods, SHIFT_CORE, SHIFT_CORE)
         ablations = _list(args.ablations, tuple(SHIFT_ABLATIONS))
+        candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
         operators = ("road",)
+    candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.game == "contrastive" and args.backbone != "resnet50" and "cve" in methods:
         methods.remove("cve")   # CVE is ResNet-50 only (EVAL_PLAN 4.2)
     return CellSpec(
         game=args.game, dataset=args.dataset, backbone=args.backbone, seed=args.seed,
-        split=args.split, n=args.n, methods=methods, ablations=ablations,
+        split=args.split, n=args.n, methods=methods, ablations=ablations, candidates=candidates,
         areas=tuple(float(a) for a in args.areas.split(",")), operators=operators,
         model_source=args.model_source, checkpoint=args.checkpoint, final=args.final,
         config_hash=args.config_hash, knobs=FAST if args.fast else Knobs(), out_dir=args.out,

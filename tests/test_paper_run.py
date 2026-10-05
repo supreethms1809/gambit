@@ -54,10 +54,10 @@ def test_vit_uses_ig_and_skips_cve():
 def test_ablations_run_as_cdea_variants():
     spec = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10", "--methods", "none",
                                  "--ablations", "A2_no_margin,A3_no_overlap"]))
-    assert _method_runs(spec) == [("cdea", "A2_no_margin"), ("cdea", "A3_no_overlap")]
+    assert _method_runs(spec) == [("cdea", "A2_no_margin", None), ("cdea", "A3_no_overlap", None)]
     spec = spec_from_args(parse(["--game", "shift", "--dataset", "waterbirds", "--methods", "none",
                                  "--ablations", "all"]))
-    assert {m for m, _ in _method_runs(spec)} == {"cdea_shift"}
+    assert {m for m, _a, _c in _method_runs(spec)} == {"cdea_shift"}
 
 
 def test_pass_counter_counts_forward_and_backward_images():
@@ -70,3 +70,18 @@ def test_pass_counter_counts_forward_and_backward_images():
     assert counter.forward == 6
     assert counter.backward == 4
     counter.close()
+
+
+def test_selection_candidates_cover_the_plan_grid():
+    from evaluation.run_methods import CONTRASTIVE_CANDIDATES, SHIFT_CANDIDATES, candidate_applies
+
+    cdea = [c for c in CONTRASTIVE_CANDIDATES if c.startswith("cdea@")]
+    assert len(cdea) == 18
+    assert len([c for c in cdea if candidate_applies(c, "vit_b_16")]) == 9
+    assert len([c for c in CONTRASTIVE_CANDIDATES if c.startswith("extremal@")]) == 4
+    assert len([c for c in CONTRASTIVE_CANDIDATES if c.startswith("rise_margin@")]) == 4
+    assert len([c for c in SHIFT_CANDIDATES if c.startswith("cdea_shift@")]) == 12
+    spec = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10", "--methods", "none",
+                                 "--candidates", "all", "--backbone", "vit_b_16"]))
+    assert "margin_gradcam@default" not in spec.candidates
+    assert all("@gradcam" not in c for c in spec.candidates)
