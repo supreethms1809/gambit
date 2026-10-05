@@ -149,6 +149,14 @@ class CaptumRegionsProvider:
         import captum.attr as ca
         if self.method in ("deeplift", "guidedbackprop"):
             model = _deinplace(model)
+        if self.method == "gradientshap":
+            # GradientShap adds Gaussian noise (stdevs=0.09) to the input, which leaves
+            # [0, 1]. NormalizedModel rejects that range, so the path points are
+            # clamped back to the image domain the model is defined on.
+            inner = model
+
+            def model(inp, _inner=inner):  # noqa: E306
+                return _inner(inp.clamp(0.0, 1.0))
         return {
             "deeplift": ca.DeepLift, "gradientshap": ca.GradientShap,
             "inputxgradient": ca.InputXGradient, "guidedbackprop": ca.GuidedBackprop,

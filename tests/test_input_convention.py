@@ -138,3 +138,17 @@ def test_margin_gradcam_runs_on_a_wrapped_vit():
     heat = margin_gradcam(model, x, hypotheses)
     assert heat.shape == (2, 224, 224)
     assert torch.isfinite(heat).all()
+
+
+def test_gradientshap_noise_does_not_trip_the_wrapper_range_check():
+    from base_evidence.library_adapters import CaptumRegionsProvider
+    from baselines.hypotheses import shared_hypotheses
+
+    torch.manual_seed(0)
+    model = maybe_wrap(_tiny(), CONVENTION_IMAGENET).eval()
+    x = torch.rand(2, 3, 8, 8)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    field = CaptumRegionsProvider("gradientshap", 2, 2).explain(x, model, hypotheses)
+    assert field.shape == (2, 2, 4)
+    assert torch.isfinite(field).all()
