@@ -26,6 +26,24 @@ PYTHONPATH=. python scripts/smoke_e2e.py --out results/paper/smoke_spark
 Read `results/paper/smoke_spark/REPORT.md`. "Method errors" must say "None".
 The "Per-image cost at the paper's knobs" table is what sets n per seed (step 3).
 
+### What the Mac smoke run measured (2026-10-05, MPS, one CIFAR-10 val image)
+
+Pass counts do not depend on hardware. Seconds are MPS and only show the ratios between methods.
+
+| method | ResNet-50 passes (fwd / bwd) | ResNet-50 s | ViT-B/16 passes | ViT-B/16 s |
+|---|---|---|---|---|
+| Extremal Perturbations (per area, k and l) | 1600 / 1600 | 30.0 | 1600 / 1600 | 654 |
+| CDEA (50 steps, K = 5) | 312 / 255 | 4.9 | 387 / 330 | 136 |
+| base evidence | 5 / 5 | 0.1 | 80 / 80 (IG) | 32.5 |
+| margin IG (16 steps) | 16 / 16 | 0.3 | 16 / 16 | 6.0 |
+| margin Grad-CAM, CVE, random | ≤ 11 / ≤ 2 | ≤ 0.5 | ≤ 2 / ≤ 2 | 0.1 |
+
+**Extremal Perturbations is most of the budget.** It is area-dependent, so `--areas 0.025,0.05,0.10` runs it three times per image. At n = 200, 5 seeds, and 8 units on ResNet-50, it alone is 3 × 200 × 5 × 8 × 3200 ≈ 77M passes. Before setting n, measure the pass rate on Spark (step 1) and consider:
+- running the 2.5% and 10% areas on a subset;
+- TorchRay's multi-area call (`areas=[...]` optimises every area's mask in one run, the method's own batched mode), which would make the area sweep roughly the cost of one area. This is not wired in yet.
+
+ViT-B/16 cells cost about 20× ResNet-50 on MPS. The fast-knob ViT cells with every ablation and candidate took 20–24 minutes each.
+
 ## 2. Val runs (before the freeze)
 
 These feed val selection (EVAL_PLAN 6.2), the shift-area pilot (6.3), and G1 (section 11).
