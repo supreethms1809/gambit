@@ -24,6 +24,11 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
     - ViT (torchvision VisionTransformer): last transformer encoder block.
     Raises ValueError if neither is found and no target_layer is provided.
     """
+    from models.wrapper import unwrap
+
+    # A NormalizedModel hides the ViT type; without unwrapping, the last Conv2d
+    # of a ViT is its patch embedding, which is the wrong Grad-CAM layer.
+    model = unwrap(model)
     try:
         from torchvision.models import VisionTransformer
         if isinstance(model, VisionTransformer):

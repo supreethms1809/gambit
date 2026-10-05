@@ -111,3 +111,14 @@ def test_eval_model_builder_restores_the_checkpoint_convention(tmp_path):
     x = torch.rand(1, 3, 32, 32)
     with torch.no_grad():
         assert torch.allclose(loaded(x), trained(x), atol=1e-5)
+
+
+def test_gradcam_target_layer_sees_through_the_wrapper():
+    from torchvision.models import vit_b_16
+
+    from base_evidence.gradcam_regions import _find_target_layer
+
+    vit = vit_b_16(weights=None)
+    wrapped = maybe_wrap(vit, CONVENTION_IMAGENET)
+    assert _find_target_layer(wrapped) is vit.encoder.layers[-1]
+    assert _find_target_layer(wrapped) is not vit.conv_proj
