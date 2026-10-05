@@ -98,3 +98,16 @@ def test_unknown_convention_is_refused():
 
     with pytest.raises(ValueError):
         checkpoint_input_convention({"state_dict": {}, "input_convention": "zscore"})
+
+
+def test_eval_model_builder_restores_the_checkpoint_convention(tmp_path):
+    from scripts.ablation_contrastive import _build_model
+
+    trained = maybe_wrap(_build_model("resnet18", 3), CONVENTION_IMAGENET).eval()
+    path = tmp_path / "ck.pt"
+    torch.save(_saved_like_get_or_train(trained, CONVENTION_IMAGENET), path)
+    loaded = _build_model("resnet18", 3, checkpoint=str(path)).eval()
+    assert isinstance(loaded, NormalizedModel)
+    x = torch.rand(1, 3, 32, 32)
+    with torch.no_grad():
+        assert torch.allclose(loaded(x), trained(x), atol=1e-5)

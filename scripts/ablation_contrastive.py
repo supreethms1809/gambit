@@ -59,14 +59,6 @@ DATASET_CHOICES = [
 ]
 
 
-def _load_state_dict(checkpoint: str):
-    """Read either checkpoint format: a raw state_dict (train_backbone.py) or a
-    metadata-wrapped dict (examples/contrastive_explanation.py save_checkpoint)."""
-    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-    if isinstance(state, dict) and "state_dict" in state:
-        return state["state_dict"]
-    return state
-
 # Medical datasets ship pre-split; evaluate on the held-out split (relative to data_root).
 # Keep in sync with MEDICAL_SPLIT_ROOTS in examples/contrastive_explanation.py.
 MEDICAL_EVAL_ROOTS = {
@@ -132,8 +124,12 @@ def _build_model(model_name: str, num_classes: int, pretrained: bool = False,
     else:
         raise ValueError(f"model_name must be one of: {', '.join(MODEL_CHOICES)}")
     if checkpoint is not None:
-        state = _load_state_dict(checkpoint)
-        model.load_state_dict(state)
+        from models.wrapper import load_checkpoint_into
+
+        # The blob, not just its state dict: an ImageNet-convention checkpoint
+        # needs its normalisation layer back.
+        blob = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        model = load_checkpoint_into(model, blob)
         print(f"  [model] loaded checkpoint: {checkpoint}")
     return model
 
