@@ -85,3 +85,14 @@ def test_selection_candidates_cover_the_plan_grid():
                                  "--candidates", "all", "--backbone", "vit_b_16"]))
     assert "margin_gradcam@default" not in spec.candidates
     assert all("@gradcam" not in c for c in spec.candidates)
+
+
+def test_runner_outputs_do_not_dirty_the_tree():
+    """A --final grid writes here between cells; a visible file would refuse the next cell."""
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for path in ("results/paper/runs/contrastive/x/records.csv.gz", "results/paper/smoke/REPORT.md"):
+        out = subprocess.run(["git", "check-ignore", "-q", path], cwd=root)
+        assert out.returncode == 0, f"{path} is not ignored"
