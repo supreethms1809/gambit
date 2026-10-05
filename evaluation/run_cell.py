@@ -137,7 +137,9 @@ class CellSpec:
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
 
-    out = Path(spec.out_dir) / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}"
+    # The split is in the path: a test run must never overwrite the val records
+    # that selection was made from.
+    out = Path(spec.out_dir) / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}"
     out.mkdir(parents=True, exist_ok=True)
     if rows:
         keys = sorted({k for r in rows for k in r})

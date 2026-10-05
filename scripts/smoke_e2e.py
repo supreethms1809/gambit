@@ -118,7 +118,7 @@ def main() -> None:
             print(f"skip  {tag}: data not on this machine", flush=True)
             continue
         spec.model_source = _source(spec.dataset, spec.backbone, spec.seed)
-        done = Path(spec.out_dir) / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}" / "summary.json"
+        done = Path(spec.out_dir) / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}" / "summary.json"
         if args.resume and done.is_file():
             summary = json.loads(done.read_text())
             method_seconds = sum(m.get("seconds", 0.0) for m in summary["methods"].values())
