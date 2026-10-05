@@ -232,4 +232,9 @@ results/**/*.pdf
 results/**/*.sh
 results/paper/logs/
 results/paper/model_table/
+# Runner outputs are written while a --final grid runs. git_state counts
+# untracked files as dirty, so leaving these visible would make every cell
+# after the first refuse to run. Commit finished records with `git add -f`.
+results/paper/runs/
+results/paper/smoke/
 cdae_extendedAbs/*.docx
