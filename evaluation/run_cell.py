@@ -8,8 +8,9 @@ row whose map is non-finite is scored on the random floor and flagged
 
 from __future__ import annotations
 
-import gzip
 import csv
+import gzip
+import os
 import time
 import traceback
 from dataclasses import asdict, dataclass, field
@@ -223,7 +224,10 @@ def run_contrastive(spec: CellSpec, device) -> Path:
                 continue
             seconds = time.perf_counter() - start
             status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
-                             "backward_images": counter.backward, "extra": _jsonable(maps.extra)}
+                             "backward_images": counter.backward, "extra": _jsonable(maps.extra),
+                             "device_mb_after": device_memory_mb(device)}
+            if os.environ.get("GAMBIT_TRACE_MEMORY"):
+                print(f"[mem] {label}: {status[label]['device_mb_after']:.0f} MB", flush=True)
             for area in (spec.areas if area_for_map is None else (area_for_map,)):
                 rows += _score_pair(model, x, maps, k, l, full, area, spec, label, sample, budget_or_floor,
                                     seconds, counter)
@@ -335,7 +339,10 @@ def run_shift(spec: CellSpec, device) -> Path:
                 continue
             seconds = time.perf_counter() - start
             status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
-                             "backward_images": counter.backward, "extra": _jsonable(maps.extra)}
+                             "backward_images": counter.backward, "extra": _jsonable(maps.extra),
+                             "device_mb_after": device_memory_mb(device)}
+            if os.environ.get("GAMBIT_TRACE_MEMORY"):
+                print(f"[mem] {label}: {status[label]['device_mb_after']:.0f} MB", flush=True)
             grid_kw = {}
             if maps.grid is not None:
                 grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=IMAGE_SIZE, width=IMAGE_SIZE)
@@ -370,6 +377,16 @@ def run_shift(spec: CellSpec, device) -> Path:
 
 
 # ---------------------------------------------------------------------------
+
+def device_memory_mb(device) -> float:
+    """Live tensor memory on the device, for spotting leaks across methods."""
+    kind = getattr(device, "type", str(device))
+    if kind == "cuda":
+        return torch.cuda.memory_allocated(device) / 2**20
+    if kind == "mps":
+        return torch.mps.current_allocated_memory() / 2**20
+    return float("nan")
+
 
 def _summary(spec: CellSpec, loaded, status: dict, rows: list[dict]) -> dict:
     spec_dict = asdict(spec)
