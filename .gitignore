@@ -237,4 +237,5 @@ results/paper/model_table/
 # after the first refuse to run. Commit finished records with `git add -f`.
 results/paper/runs/
 results/paper/smoke/
+paper_final/
 cdae_extendedAbs/*.docx
