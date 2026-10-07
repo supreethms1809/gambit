@@ -12,6 +12,11 @@ pipeline that is known to run end to end.
 * A unit with no paper checkpoint on this machine uses the smoke model (an
   ImageNet backbone with a random head). Its numbers are meaningless; the
   report marks it. A unit whose data is missing is reported as skipped.
+* ``--checkpoint-dir`` reads short-trained smoke checkpoints from their own
+  directory instead (``launch_paper_training.py --epochs 1 --ckpt-dir ...``),
+  so smoke models never sit beside the paper checkpoints.
+* ``--jobs N`` runs N datasets at a time in separate processes, then runs the
+  paper-knob timing cells alone so their seconds are not inflated by sharing.
 
     PYTHONPATH=. python scripts/smoke_e2e.py --out results/paper/smoke
 """
@@ -50,12 +55,17 @@ ABLATION_UNIT = "cifar10"
 SHIFT_ABLATION_UNIT = "waterbirds"
 
 
-def _source(dataset: str, backbone: str, seed: int) -> str:
+def _source(dataset: str, backbone: str, seed: int, checkpoint_dir=None, checkpoint_epochs: int = 15):
+    """``(model_source, checkpoint path or None)`` for one smoke cell."""
     from evaluation.run_models import paper_checkpoint_path
 
     if dataset == "imagenet":
-        return "imagenet"
-    return "paper" if paper_checkpoint_path(dataset, backbone, seed).is_file() else "smoke"
+        return "imagenet", None
+    if checkpoint_dir is not None:
+        path = paper_checkpoint_path(dataset, backbone, seed, ckpt_dir=Path(checkpoint_dir),
+                                     num_epochs=checkpoint_epochs)
+        return ("checkpoint", str(path)) if path.is_file() else ("smoke", None)
+    return ("paper" if paper_checkpoint_path(dataset, backbone, seed).is_file() else "smoke"), None
 
 
 def _data_present(dataset: str) -> bool:
@@ -101,11 +111,19 @@ def main() -> None:
     p.add_argument("--no-production-timing", action="store_true")
     p.add_argument("--resume", action="store_true",
                    help="reuse cells whose summary.json already exists; the report covers all cells")
+    p.add_argument("--checkpoint-dir", default=None,
+                   help="read smoke checkpoints from here instead of the paper checkpoint directory")
+    p.add_argument("--checkpoint-epochs", type=int, default=15,
+                   help="epoch count in the smoke checkpoint names")
+    p.add_argument("--jobs", type=int, default=1, help="datasets run at the same time")
     args = p.parse_args()
     from scripts.paper_run import run
 
     out = Path(args.out)
     keep = set(args.only.split(",")) if args.only else None
+    if args.jobs > 1:
+        _run_datasets_in_parallel(args, keep)
+        args.resume = True
     results = []
     for spec in cells(not args.no_production_timing):
         if keep and spec.dataset not in keep:
@@ -117,7 +135,8 @@ def main() -> None:
             results.append({"cell": tag, "status": "skipped", "reason": "data not on this machine"})
             print(f"skip  {tag}: data not on this machine", flush=True)
             continue
-        spec.model_source = _source(spec.dataset, spec.backbone, spec.seed)
+        spec.model_source, spec.checkpoint = _source(spec.dataset, spec.backbone, spec.seed,
+                                                     args.checkpoint_dir, args.checkpoint_epochs)
         done = Path(spec.out_dir) / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}" / "summary.json"
         if args.resume and done.is_file():
             summary = json.loads(done.read_text())
@@ -143,6 +162,28 @@ def main() -> None:
     (out / "smoke_results.json").write_text(json.dumps(results, indent=2, default=str))
     (out / "REPORT.md").write_text(report(results))
     print(f"report: {out / 'REPORT.md'}")
+
+
+def _run_datasets_in_parallel(args, keep) -> None:
+    """One process per dataset at the fast knobs. The caller then resumes over every cell."""
+    from scripts.parallel_cells import Job, python_command, run_parallel, thread_env
+
+    datasets = []
+    for spec in cells(production_timing=False):
+        if spec.dataset not in datasets and (keep is None or spec.dataset in keep):
+            datasets.append(spec.dataset)
+    passthrough = ["--out", str(args.out), "--device", args.device, "--no-production-timing",
+                   "--checkpoint-epochs", str(args.checkpoint_epochs)]
+    if args.checkpoint_dir:
+        passthrough += ["--checkpoint-dir", str(args.checkpoint_dir)]
+    if args.resume:
+        passthrough.append("--resume")
+    log_dir = Path(args.out) / "logs"
+    env = thread_env(args.jobs)
+    jobs = [Job(name=d, log=log_dir / f"{d}.log", env=env,
+                command=python_command(Path(__file__), "--only", d, *passthrough))
+            for d in datasets]
+    run_parallel(jobs, args.jobs)
 
 
 def report(results) -> str:

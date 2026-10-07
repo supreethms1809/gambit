@@ -59,8 +59,12 @@ def _bare(backbone: str, num_classes: int, pretrained: bool) -> nn.Module:
     return _build_model(backbone, num_classes, pretrained=pretrained)
 
 
-def paper_checkpoint_path(dataset: str, backbone: str, seed: int) -> Path:
-    """Where ``get_or_train`` writes this cell under the recorded input convention."""
+def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
+                          ckpt_dir: Optional[Path] = None, num_epochs: int = 15) -> Path:
+    """Where ``get_or_train`` writes this cell under the recorded input convention.
+
+    ``ckpt_dir`` and ``num_epochs`` locate smoke checkpoints; paper cells use the defaults.
+    """
     from models.wrapper import read_input_convention
     from scripts.train_backbone import paper_checkpoint_name
 
@@ -70,12 +74,12 @@ def paper_checkpoint_path(dataset: str, backbone: str, seed: int) -> Path:
         backbone,
         pretrained=True,
         freeze_backbone=not fine_tune,
-        num_epochs=15,
+        num_epochs=num_epochs,
         lr=1e-4 if fine_tune else 1e-3,
         seed=seed,
         convention=read_input_convention(),
     )
-    return PAPER_CKPT_DIR / name
+    return Path(ckpt_dir or PAPER_CKPT_DIR) / name
 
 
 def load_cell_model(

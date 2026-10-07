@@ -115,6 +115,31 @@ def spec_for(cell: dict, args):
                     knobs=FAST if args.fast else Knobs(), out_dir=args.out)
 
 
+def child_argv(argv: list[str], cell_id: str) -> list[str]:
+    """This launcher's arguments for one cell: ``--jobs`` dropped, ``--one`` added."""
+    out, skip = [], False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg == "--jobs":
+            skip = True
+            continue
+        if arg.startswith("--jobs="):
+            continue
+        out.append(arg)
+    return out + ["--one", cell_id]
+
+
+def _run_cells_in_parallel(cells: list[dict], log_dir: Path, jobs: int) -> None:
+    from scripts.parallel_cells import Job, python_command, run_parallel, thread_env
+
+    env = thread_env(jobs)
+    run_parallel([Job(name=c["id"], log=log_dir / f"{c['id']}.log", env=env,
+                      command=python_command(Path(__file__), *child_argv(sys.argv[1:], c["id"])))
+                  for c in cells], jobs)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--split", default="val", choices=["val", "test"])
@@ -136,14 +161,21 @@ def main() -> None:
     p.add_argument("--device", default="auto")
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "runs"))
     p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
+    p.add_argument("--jobs", type=int, default=1,
+                   help="cells run at the same time, one process each, logs beside the markers")
+    p.add_argument("--one", default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
 
-    from scripts.final_grid import run_grid
+    from scripts.final_grid import pending_cells, run_grid
     from scripts.paper_run import run
 
     if args.candidates and args.split == "test":
         raise SystemExit("selection candidates run on val only (EVAL_PLAN 6)")
     cells = grid(args)
+    if args.one is not None:
+        cells = [c for c in cells if c["id"] == args.one]
+        if not cells:
+            raise SystemExit(f"unknown cell {args.one!r}")
     log_dir = Path(args.out) / "_markers" / args.split
     if args.dry_run:
         for cell in cells:
@@ -151,6 +183,19 @@ def main() -> None:
             print(f"{cell['id']}  n={spec.n}  methods={len(spec.methods)}  ablations={len(spec.ablations)}"
                   f"  candidates={len(spec.candidates)}")
         print(f"{len(cells)} cells")
+        return
+
+    if args.jobs > 1 and args.one is None:
+        run_grid([], log_dir, lambda cell: None, final=args.final)   # the freeze and clean-tree checks
+        _run_cells_in_parallel(pending_cells(cells, log_dir), log_dir, args.jobs)
+        rows = [{"id": c["id"], "status": "done" if (log_dir / f"{c['id']}.done").is_file() else "failed"}
+                for c in cells]
+        failed = [r["id"] for r in rows if r["status"] == "failed"]
+        print(f"{len(rows)} cells: {len(rows) - len(failed)} done, {len(failed)} failed")
+        for name in failed:
+            print(f"  failed: {name} (see {log_dir / (name + '.log')})")
+        if failed:
+            raise SystemExit(1)
         return
 
     def execute(cell):
