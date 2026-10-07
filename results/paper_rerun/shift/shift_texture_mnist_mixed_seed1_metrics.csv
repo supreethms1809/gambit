@@ -1,2 +1,0 @@
-disjoint,game_mode,id_ood_gap,lambda_disjoint,lambda_gap,lambda_mean,lambda_shortcut,lambda_sparse,lambda_var,loss,rob_mean,rob_var,run_name,sho_gap,sho_mean,sparse
-1.8059316492080688,mixed,5.205266418457032,0.2,1.0,1.0,0.0,0.05,0.5,-5.980284595489502,4.780152616500854,0.23967622578144074,shift_texture_mnist_mixed_seed1,2.359442057609558,1.0066457378864289,13.565710868835449
