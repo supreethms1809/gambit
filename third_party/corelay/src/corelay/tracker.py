@@ -8,6 +8,34 @@ from abc import ABCMeta
 from warnings import warn
 
 
+def _slots_from_annotations(annotations: typing.Mapping[str, typing.Any]) -> collections.OrderedDict[str, typing.Any]:
+    """Return the slot stored in each ``Annotated`` metadata entry."""
+
+    found: collections.OrderedDict[str, typing.Any] = collections.OrderedDict()
+    for attribute_name, attribute_value in annotations.items():
+        if (attribute_name[:2] + attribute_name[-2:]) == '____':
+            continue
+        metadata = getattr(attribute_value, '__metadata__', None)
+        if not metadata:
+            continue
+        found[attribute_name] = metadata[0]
+    return found
+
+
+def _evaluated_annotations(cls: type) -> dict[str, typing.Any]:
+    """Evaluate annotations once the class exists.
+
+    Python 3.14 stores them in ``__annotate__`` and only fills ``__annotations__`` on access. ``annotationlib`` is the supported way to read them.
+    Older Pythons already put the dict in the class namespace, so this path is not used there.
+    """
+
+    try:
+        import annotationlib
+    except ImportError:
+        return dict(getattr(cls, '__annotations__', {}))
+    return annotationlib.get_annotations(cls, format=annotationlib.Format.VALUE)
+
+
 class MetaTracker(ABCMeta):
     """A meta class to track attributes of a type.
 
@@ -147,15 +175,11 @@ class MetaTracker(ABCMeta):
                 )
 
         # Retrieves the declared class attributes, which were declared using Annotated and are are not special "dunder" attributes, like __class__,
-        # i.e., any class attributes that are not enclosed in double underscores (this is the new way in which slots can be declared)
-        tracked_declared_class_attributes: collections.OrderedDict[str, typing.Any] = collections.OrderedDict()
-        if '__annotations__' in class_attributes:
-            for attribute_name, attribute_value in class_attributes['__annotations__'].items():
-                if (attribute_name[:2] + attribute_name[-2:]) == '____':
-                    continue
-                if not hasattr(attribute_value, '__metadata__'):
-                    continue
-                tracked_declared_class_attributes[attribute_name] = attribute_value.__metadata__[0]
+        # i.e., any class attributes that are not enclosed in double underscores (this is the new way in which slots can be declared).
+        # Python 3.14 does not put those annotations in the class namespace until the class exists, so they are read again below.
+        tracked_declared_class_attributes: collections.OrderedDict[str, typing.Any] = _slots_from_annotations(
+            class_attributes.get('__annotations__', {})
+        )
 
         # The way that slots work is, that they override the __get__, __set__, and __delete__ methods of the class, which are invoked when the class
         # or instance attribute that the slot is assigned to is accessed (i.e., when the class or instance attribute is read, written, or deleted);
@@ -165,6 +189,13 @@ class MetaTracker(ABCMeta):
 
         # Creates a new class with the given name, bases, and class attributes
         new_class: typing.Any = super().__new__(mcs, class_name, base_classes, dict(class_attributes))
+
+        if not tracked_declared_class_attributes:
+            tracked_declared_class_attributes = _slots_from_annotations(_evaluated_annotations(new_class))
+            for attribute_name, slot in tracked_declared_class_attributes.items():
+                # Assigning a descriptor after the class exists does not call __set_name__.
+                slot.__set_name__(new_class, attribute_name)
+                setattr(new_class, attribute_name, slot)
 
         # Checks if the class or one of its base classes already has a __tracked__ attribute, if not, a new __tracked__ attribute is created,
         # otherwise, the __tracked__ attribute is copied
