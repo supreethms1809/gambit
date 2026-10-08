@@ -168,7 +168,7 @@ def _run_cells_in_parallel(cells: list[dict], log_dir: Path, args) -> None:
     jobs = order_balanced(jobs, lambda job: key(by_id[job.name]))
     print("launch order: " + ", ".join(f"{j.name}({key(by_id[j.name])})" for j in jobs),
           flush=True)
-    run_parallel(jobs, args.jobs, env=env, min_free_gb=args.mem_gate_gb)
+    run_parallel(jobs, args.jobs, min_free_gb=args.mem_gate_gb)
 
 
 def main() -> None:

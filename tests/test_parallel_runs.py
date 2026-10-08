@@ -96,6 +96,26 @@ def test_order_balanced_interleaves_two_high_with_two_low():
     assert [j.name for j in order_balanced([], key)] == []
 
 
+def test_eval_parallel_path_matches_run_parallel_signature(tmp_path, monkeypatch):
+    """The jobs>1 path must call run_parallel with only its real parameters
+    (regression: a stray env= kwarg crashed both relaunch rounds instantly)."""
+    import types
+
+    import scripts.parallel_cells as pc
+    from scripts import launch_paper_eval as ev
+
+    def fake_run_parallel(jobs, max_jobs, *, poll_seconds=2.0, cwd=None,
+                          min_free_gb=0.0, mem_timeout_s=1800.0):
+        return {j.name: 0 for j in jobs}
+
+    monkeypatch.setattr(pc, "run_parallel", fake_run_parallel)
+    args = types.SimpleNamespace(jobs=3, out=str(tmp_path), split="val", mem_gate_gb=12.0)
+    cells = [{"id": f"val_contrastive_cifar10_{bb}_seed0", "game": "contrastive",
+              "dataset": "cifar10", "backbone": bb, "seed": 0}
+             for bb in ("resnet50", "vit_b_16")]
+    ev._run_cells_in_parallel(cells, tmp_path, args)  # must not raise TypeError
+
+
 def test_mem_key_prefers_a_recorded_peak_over_the_seed_table(tmp_path):
     import json
     import types
