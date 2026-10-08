@@ -237,5 +237,7 @@ results/paper/model_table/
 # after the first refuse to run. Commit finished records with `git add -f`.
 results/paper/runs/
 results/paper/smoke/
+# Unlicensed upstream snapshots (e.g. Reveal2Revise) are fetched, never vendored.
+third_party_fetched/
 paper_final/
 cdae_extendedAbs/*.docx
