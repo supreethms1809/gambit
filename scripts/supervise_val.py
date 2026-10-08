@@ -112,7 +112,7 @@ def relaunch(seed: int, jobs: int) -> tuple[int, int]:
     contrastive dev. Returns the two launcher exit codes."""
     env = dict(os.environ)
     env.setdefault("PYTHONPATH", str(REPO))
-    base = [sys.executable, "-u", "scripts/launch_paper_eval.py", "--split val",
+    base = [sys.executable, "-u", "scripts/launch_paper_eval.py", "--split", "val",
             "--seeds", str(seed), "--jobs", str(jobs)]
     shift = base + ["--game", "shift", "--n-shift", "resnet50:64,vit_b_16:32"]
     contrast = base + ["--datasets", "cifar10,ham10000",

@@ -72,6 +72,28 @@ def test_audit_rejects_a_missing_cell(tmp_path, monkeypatch):
     assert not clean and "no done marker" in detail
 
 
+def test_relaunch_passes_each_flag_as_its_own_argv_element(monkeypatch):
+    import scripts.supervise_val as sup
+
+    seen = []
+
+    class _Done:
+        returncode = 0
+
+    monkeypatch.setattr(sup.subprocess, "run",
+                        lambda cmd, **kw: seen.append(cmd) or _Done())
+    assert sup.relaunch(0, 3) == (0, 0)
+    assert len(seen) == 2
+    for cmd in seen:
+        for i, element in enumerate(cmd):
+            assert "\0" not in element
+            if element.startswith("--") and "=" not in element and i + 1 < len(cmd):
+                assert not cmd[i + 1].startswith("--"), cmd
+        assert "--split" in cmd and "val" in cmd
+        assert "--seeds" in cmd and "0" in cmd
+        assert "--jobs" in cmd and "3" in cmd
+
+
 def test_cell_inventory_is_14_seed0_cells():
     wanted = cells(0)
     assert len(wanted) == 14
