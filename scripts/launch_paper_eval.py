@@ -116,28 +116,59 @@ def spec_for(cell: dict, args):
 
 
 def child_argv(argv: list[str], cell_id: str) -> list[str]:
-    """This launcher's arguments for one cell: ``--jobs`` dropped, ``--one`` added."""
+    """This launcher's arguments for one cell: parallel flags dropped, ``--one`` added."""
     out, skip = [], False
     for arg in argv:
         if skip:
             skip = False
             continue
-        if arg == "--jobs":
+        if arg in ("--jobs", "--mem-gate-gb"):
             skip = True
             continue
-        if arg.startswith("--jobs="):
+        if arg.startswith(("--jobs=", "--mem-gate-gb=")):
             continue
         out.append(arg)
     return out + ["--one", cell_id]
 
 
-def _run_cells_in_parallel(cells: list[dict], log_dir: Path, jobs: int) -> None:
-    from scripts.parallel_cells import Job, python_command, run_parallel, thread_env
+# A recorded cell peak at or above this is high memory, whatever the seed says.
+PEAK_HIGH_MB = 20_000.0
 
-    env = thread_env(jobs)
-    run_parallel([Job(name=c["id"], log=log_dir / f"{c['id']}.log", env=env,
-                      command=python_command(Path(__file__), *child_argv(sys.argv[1:], c["id"])))
-                  for c in cells], jobs)
+
+def mem_key(args):
+    """High/low key for one grid cell. A recorded ``device_peak_mb`` in the
+    cell's summary wins over the seed table, so the balance learns from every
+    completed round."""
+    from scripts.parallel_cells import mem_class
+
+    def key(cell: dict) -> str:
+        summary = (Path(args.out) / args.split / cell["game"] / cell["dataset"]
+                   / cell["backbone"] / f"seed{cell['seed']}" / "summary.json")
+        try:
+            import json
+
+            peak = float(json.loads(summary.read_text()).get("device_peak_mb", "nan"))
+            if peak == peak and peak >= 0:  # a real recorded number
+                return "high" if peak >= PEAK_HIGH_MB else "low"
+        except (OSError, ValueError, TypeError):
+            pass
+        return mem_class(cell["game"], cell["dataset"], cell["backbone"])
+    return key
+
+
+def _run_cells_in_parallel(cells: list[dict], log_dir: Path, args) -> None:
+    from scripts.parallel_cells import Job, order_balanced, python_command, run_parallel, thread_env
+
+    env = thread_env(args.jobs)
+    jobs = [Job(name=c["id"], log=log_dir / f"{c['id']}.log", env=env,
+                command=python_command(Path(__file__), *child_argv(sys.argv[1:], c["id"])))
+            for c in cells]
+    by_id = {c["id"]: c for c in cells}
+    key = mem_key(args)
+    jobs = order_balanced(jobs, lambda job: key(by_id[job.name]))
+    print("launch order: " + ", ".join(f"{j.name}({key(by_id[j.name])})" for j in jobs),
+          flush=True)
+    run_parallel(jobs, args.jobs, env=env, min_free_gb=args.mem_gate_gb)
 
 
 def main() -> None:
@@ -162,7 +193,10 @@ def main() -> None:
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "runs"))
     p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
     p.add_argument("--jobs", type=int, default=1,
-                   help="cells run at the same time, one process each, logs beside the markers")
+                   help="cells run at the same time, one process each, logs beside the markers. "
+                   "Cells launch in high/low memory balance order (2 high + 2 low at --jobs 4).")
+    p.add_argument("--mem-gate-gb", type=float, default=12.0,
+                   help="start a high-memory cell only with this much GPU free (0 disables the gate).")
     p.add_argument("--one", default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
 
@@ -187,7 +221,7 @@ def main() -> None:
 
     if args.jobs > 1 and args.one is None:
         run_grid([], log_dir, lambda cell: None, final=args.final)   # the freeze and clean-tree checks
-        _run_cells_in_parallel(pending_cells(cells, log_dir), log_dir, args.jobs)
+        _run_cells_in_parallel(pending_cells(cells, log_dir), log_dir, args)
         rows = [{"id": c["id"], "status": "done" if (log_dir / f"{c['id']}.done").is_file() else "failed"}
                 for c in cells]
         failed = [r["id"] for r in rows if r["status"] == "failed"]

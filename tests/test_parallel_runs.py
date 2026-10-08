@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.parallel_cells import Job, run_parallel, thread_env
+from scripts.parallel_cells import Job, mem_class, order_balanced, run_parallel, thread_env
 
 
 def _job(tmp_path, name, code=0, seconds=0.4):
@@ -71,9 +71,48 @@ def test_training_one_refuses_an_unknown_cell(tmp_path):
 def test_eval_child_argv_drops_jobs_and_names_the_cell():
     from scripts.launch_paper_eval import child_argv
 
-    argv = ["--split", "val", "--jobs", "4", "--seeds", "0", "--jobs=2"]
+    argv = ["--split", "val", "--jobs", "4", "--seeds", "0", "--jobs=2",
+            "--mem-gate-gb", "12"]
     assert child_argv(argv, "val_shift_waterbirds_resnet50_seed0") == [
         "--split", "val", "--seeds", "0", "--one", "val_shift_waterbirds_resnet50_seed0"]
+
+
+def test_mem_class_marks_the_hog_cells_high():
+    assert mem_class("shift", "planted_patch", "resnet50") == "high"
+    assert mem_class("shift", "waterbirds", "vit_b_16") == "high"
+    assert mem_class("contrastive", "planted_patch", "vit_b_16") == "high"
+    assert mem_class("contrastive", "planted_patch", "resnet50") == "low"
+    assert mem_class("contrastive", "cifar10", "resnet50") == "low"
+    assert mem_class("contrastive", "ham10000", "vit_b_16") == "high"
+    assert mem_class("mystery", "future_dataset", "future_net") == "low"
+
+
+def test_order_balanced_interleaves_two_high_with_two_low():
+    jobs = [Job(name=n, command=["true"], log=Path(n)) for n in
+            ["h1", "h2", "h3", "l1", "l2", "l3"]]
+    key = lambda job: "high" if job.name.startswith("h") else "low"  # noqa: E731
+    first_four = [j.name for j in order_balanced(jobs, key)[:4]]
+    assert sorted(first_four) == ["h1", "h2", "l1", "l2"]
+    assert [j.name for j in order_balanced([], key)] == []
+
+
+def test_mem_key_prefers_a_recorded_peak_over_the_seed_table(tmp_path):
+    import json
+    import types
+
+    from scripts.launch_paper_eval import mem_key
+
+    args = types.SimpleNamespace(out=str(tmp_path), split="val")
+    seed_high = {"game": "shift", "dataset": "waterbirds", "backbone": "vit_b_16", "seed": 0}
+    assert mem_key(args)(seed_high) == "high"  # seed table, no summary yet
+    cell_dir = tmp_path / "val" / "contrastive" / "cifar10" / "resnet50" / "seed0"
+    cell_dir.mkdir(parents=True)
+    (cell_dir / "summary.json").write_text(json.dumps({"device_peak_mb": 45000.0}))
+    assert mem_key(args)({"game": "contrastive", "dataset": "cifar10",
+                          "backbone": "resnet50", "seed": 0}) == "high"  # peak wins
+    (cell_dir / "summary.json").write_text(json.dumps({"device_peak_mb": 3000.0}))
+    assert mem_key(args)({"game": "contrastive", "dataset": "cifar10",
+                          "backbone": "resnet50", "seed": 0}) == "low"
 
 
 def test_smoke_checkpoint_path_is_separate_from_the_paper_path(tmp_path):

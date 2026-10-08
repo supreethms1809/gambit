@@ -134,8 +134,22 @@ class CellSpec:
     out_dir: Optional[str] = None
 
 
+def _reset_peak(device) -> None:
+    """Peak allocator stats for this cell, so the summary carries its profile."""
+    if getattr(device, "type", str(device)) == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+
+def _peak_mb(device) -> float:
+    if getattr(device, "type", str(device)) == "cuda":
+        return torch.cuda.max_memory_allocated(device) / 2**20
+    return float("nan")
+
+
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
+
+    summary["device_peak_mb"] = _peak_mb(device)
 
     # The split is in the path: a test run must never overwrite the val records
     # that selection was made from.
@@ -184,6 +198,7 @@ def run_contrastive(spec: CellSpec, device) -> Path:
 
     loaded = load_cell_model(spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
                              checkpoint=spec.checkpoint, device=device)
+    _reset_peak(device)
     model = loaded.model
     sample = contrastive_sample(spec.dataset, spec.split, spec.n, spec.seed,
                                 final=spec.final, config_hash=spec.config_hash)
@@ -299,6 +314,7 @@ def run_shift(spec: CellSpec, device) -> Path:
 
     loaded = load_cell_model(spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
                              checkpoint=spec.checkpoint, device=device)
+    _reset_peak(device)
     model = loaded.model
     sample = shift_sample(spec.dataset, spec.split, spec.n, spec.seed,
                           final=spec.final, config_hash=spec.config_hash)

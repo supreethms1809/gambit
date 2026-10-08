@@ -25,9 +25,85 @@ class Job:
     env: Mapping[str, str] = field(default_factory=dict)
 
 
+# Seed memory classes from measured peaks (GB, GH200): shift cells hold whole
+# environment views and peak at 25-52; contrastive ViT is IG-backed and heavy;
+# contrastive ResNet probes are the light ones. Measured peaks in past
+# summaries override these seeds (see mem_class).
+MEM_SEED_HIGH = (
+    ("shift", None, None),          # every shift cell, either backbone
+    ("contrastive", None, "vit"),   # IG-backed CDEA and margin IG on ViT
+)
+
+
+def mem_class(game: str, dataset: str, backbone: str) -> str:
+    """``'high'`` or ``'low'``, from the seed table. Launchers refine this with
+    recorded peaks (see ``launch_paper_eval.mem_key``), so profiles improve
+    automatically as cells complete."""
+    for game_pat, _ds_pat, bb_pat in MEM_SEED_HIGH:
+        if (game_pat is None or game == game_pat) and (bb_pat is None or bb_pat in backbone):
+            return "high"
+    return "low"
+
+
+def order_balanced(jobs: Sequence[Job], key) -> list[Job]:
+    """Alternate low- and high-memory jobs, starting low, so the concurrent mix
+    stays balanced instead of running every hog at once. Stable within a class."""
+    lows = [j for j in jobs if key(j) == "low"]
+    highs = [j for j in jobs if key(j) != "low"]
+    out, turn = [], 0
+    while lows or highs:
+        if turn % 2 == 0 and lows:
+            out.append(lows.pop(0))
+        elif highs:
+            out.append(highs.pop(0))
+        elif lows:
+            out.append(lows.pop(0))
+        turn += 1
+    return out
+
+
+def gpu_free_gb() -> float:
+    """Free device memory in GiB. Infinity when there is no NVIDIA card to ask
+    (then any gate stands open)."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return float("inf")
+    if out.returncode != 0:
+        return float("inf")
+    try:
+        return min(float(line.strip()) for line in out.stdout.splitlines() if line.strip()) / 1024.0
+    except ValueError:
+        return float("inf")
+
+
+def _wait_for_memory(min_free_gb: float, poll_seconds: float, timeout_seconds: float,
+                     free_fn=gpu_free_gb) -> None:
+    """Hold a job start until ``min_free_gb`` is free. Warns and proceeds on
+    timeout: the gate staggers starts, it never deadlocks the queue."""
+    if min_free_gb <= 0:
+        return
+    waited = 0.0
+    while free_fn() < min_free_gb:
+        if waited >= timeout_seconds:
+            print(f"memory gate waited {timeout_seconds:.0f}s for {min_free_gb:.0f} GiB free;"
+                  " proceeding anyway", flush=True)
+            return
+        if waited % 60.0 < poll_seconds:
+            print(f"memory gate: waiting for {min_free_gb:.0f} GiB free", flush=True)
+        time.sleep(poll_seconds)
+        waited += poll_seconds
+
+
 def run_parallel(jobs: Sequence[Job], max_jobs: int, *, poll_seconds: float = 2.0,
-                 cwd: Optional[Path] = None) -> dict[str, int]:
-    """Start ``jobs`` in order, keeping at most ``max_jobs`` alive. Returns exit codes by name."""
+                 cwd: Optional[Path] = None, min_free_gb: float = 0.0,
+                 mem_timeout_s: float = 1800.0) -> dict[str, int]:
+    """Start ``jobs`` in order, keeping at most ``max_jobs`` alive. Returns exit codes by name.
+
+    With ``min_free_gb`` set, each start waits until that much device memory is
+    free, so a new hog never launches on top of a full card.
+    """
     if max_jobs < 1:
         raise ValueError("max_jobs must be at least 1")
     waiting = list(jobs)
@@ -36,6 +112,7 @@ def run_parallel(jobs: Sequence[Job], max_jobs: int, *, poll_seconds: float = 2.
     try:
         while waiting or running:
             while waiting and len(running) < max_jobs:
+                _wait_for_memory(min_free_gb, poll_seconds, mem_timeout_s)
                 job = waiting.pop(0)
                 Path(job.log).parent.mkdir(parents=True, exist_ok=True)
                 handle = open(job.log, "w", encoding="utf-8")

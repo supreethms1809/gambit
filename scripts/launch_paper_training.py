@@ -139,7 +139,8 @@ def parse(argv=None):
     p.add_argument("--epochs", type=int, default=EPOCHS)
     p.add_argument("--ckpt-dir", default=str(CKPT_DIR))
     p.add_argument("--log-dir", default=str(LOG_DIR))
-    p.add_argument("--jobs", type=int, default=1, help="cells trained at the same time")
+    p.add_argument("--jobs", type=int, default=1, help="cells trained at the same time "
+                   "(launched in high/low memory balance order: full-finetune first, interleaved)")
     p.add_argument("--one", default=None, help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -165,18 +166,21 @@ def main(argv=None) -> None:
             train_cell(cell, args.epochs, ckpt_dir, log_dir)
         return
 
-    from scripts.parallel_cells import Job, python_command, run_parallel, thread_env
+    from scripts.parallel_cells import Job, order_balanced, python_command, run_parallel, thread_env
 
     env = thread_env(args.jobs)
     if "GAMBIT_LOADER_WORKERS" not in os.environ:
         env["GAMBIT_LOADER_WORKERS"] = str(max(1, (os.cpu_count() or 8) // args.jobs - 1))
     passthrough = ["--epochs", str(args.epochs), "--ckpt-dir", str(ckpt_dir), "--log-dir", str(log_dir)]
     jobs = []
+    by_id = {}
     for cell in pending:
         name = cell_id(cell)
+        by_id[name] = cell
         jobs.append(Job(name=name, log=log_dir / f"{name}.log", env=env,
                         command=python_command(Path(__file__), "--seeds", str(cell["seed"]),
                                                "--one", name, *passthrough)))
+    jobs = order_balanced(jobs, lambda job: "high" if not by_id[job.name]["freeze_backbone"] else "low")
     codes = run_parallel(jobs, args.jobs)
     failed = sorted(name for name, code in codes.items() if code != 0)
     print(f"{len(codes)} cells run, {len(failed)} failed", flush=True)
