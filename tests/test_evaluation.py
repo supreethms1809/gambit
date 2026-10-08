@@ -85,6 +85,29 @@ def test_impute_pins_known_pixels():
     assert filled.min() >= 0 and filled.max() <= 1
 
 
+def test_impute_stays_finite_inside_a_solid_mask():
+    # Production ROAD runs 24 iters. Dividing the neighbour mean by the
+    # kept-neighbour mass used to amplify interior fill ~1e6x per iter,
+    # reaching inf/NaN by iter 7 inside any solid masked region.
+    image = torch.rand(2, 3, 32, 32)
+    keep = torch.ones(2, 1, 32, 32)
+    keep[:, :, 8:24, 8:24] = 0
+    filled = noisy_linear_impute(image, keep, iters=24, noise=0.01,
+                                 gen=torch.Generator().manual_seed(0))
+    assert torch.isfinite(filled).all()
+    assert filled.min() >= 0 and filled.max() <= 1
+    assert torch.allclose(filled[keep.expand(2, 3, 32, 32) == 1],
+                          image[keep.expand(2, 3, 32, 32) == 1])
+
+
+def test_impute_is_identity_when_nothing_is_masked():
+    image = torch.rand(2, 3, 16, 16)
+    keep = torch.ones(2, 1, 16, 16)
+    filled = noisy_linear_impute(image, keep, iters=24, noise=0.01,
+                                 gen=torch.Generator().manual_seed(0))
+    assert torch.allclose(filled, image)
+
+
 def test_spearman_and_paired():
     increasing = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
     assert torch.allclose(spearman(increasing, increasing * 2 + 1), torch.tensor([1.0]))

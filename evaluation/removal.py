@@ -17,6 +17,12 @@ def noisy_linear_impute(
 
     Jacobi iteration on the neighbour-average system. Known pixels stay pinned.
     ``keep`` is ``(B, 1, H, W)`` and ``x`` is ``(B, C, H, W)`` in ``[0, 1]``.
+
+    The filled value is the neighbour mean straight from the normalized
+    kernel. Dividing instead by the kept-neighbour mass (with a small floor)
+    amplifies interior fill geometrically — about 1e6x per iter — to inf/NaN
+    within a few iters wherever the mask has a solid interior. That division
+    is only valid for fixed images, never for iterated fill.
     """
     kernel = torch.tensor(
         [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
@@ -29,11 +35,7 @@ def noisy_linear_impute(
         neighbours = F.conv2d(
             F.pad(current, (1, 1, 1, 1), mode="replicate"), kernel_c, groups=channels
         )
-        weight = F.conv2d(
-            F.pad(keep, (1, 1, 1, 1), mode="replicate"), kernel
-        ).clamp_min(1e-6)
-        filled = neighbours / weight
-        current = x * keep + filled * (1.0 - keep)
+        current = x * keep + neighbours * (1.0 - keep)
     if noise > 0:
         draw = torch.randn(current.shape, generator=gen, device="cpu").to(current.device)
         current = current + draw * noise * (1.0 - keep)
