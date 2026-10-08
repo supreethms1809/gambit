@@ -128,11 +128,16 @@ def main(argv=None) -> int:
     p.add_argument("--jobs", type=int, default=3)
     p.add_argument("--rounds", type=int, default=2, help="relaunch rounds after the audit")
     p.add_argument("--poll", type=int, default=60)
+    p.add_argument("--timeout-h", type=float, default=24)
     args = p.parse_args(argv)
     seed = int(str(args.seeds).split(",")[0])
     wanted = cells(seed)
-    jobs, quiet_since = args.jobs, None
-    for round_no in range(args.rounds + 1):
+    jobs, quiet_since, rounds_used = args.jobs, None, 0
+    started = time.time()
+    while True:
+        if time.time() - started > args.timeout_h * 3600:
+            print(f"GAMES_TIMEOUT after {args.timeout_h}h")
+            return 2
         dirty = {}
         for c in wanted:
             clean, detail = audit_cell(c)
@@ -141,14 +146,9 @@ def main(argv=None) -> int:
         if not dirty:
             print(f"GAMES_CLEAN ({len(wanted)}/{len(wanted)} cells: done, no method errors, finite scores)")
             return 0
-        if round_no >= args.rounds:
-            print(f"GAMES_DIRTY after {args.rounds} relaunch rounds:")
-            for name, detail in sorted(dirty.items()):
-                print(f"  {name}: {detail}")
-            return 1
         if game_processes():
             quiet_since = None
-            print(f"round {round_no}: {len(dirty)} dirty cells, games running; waiting", flush=True)
+            print(f"{len(dirty)} dirty cells, games running; waiting", flush=True)
             time.sleep(args.poll)
             continue
         now = time.time()
@@ -156,17 +156,23 @@ def main(argv=None) -> int:
         if now - quiet_since < QUIET_SECONDS:
             time.sleep(args.poll)
             continue
-        print(f"round {round_no}: relaunching {len(dirty)} dirty cells at --jobs {jobs}", flush=True)
+        # Quiet with incomplete markers: a wave owned by another driver, or nothing running.
+        if rounds_used >= args.rounds:
+            print(f"GAMES_DIRTY after {rounds_used} relaunch rounds:")
+            for name, detail in sorted(dirty.items()):
+                print(f"  {name}: {detail}")
+            return 1
+        print(f"relaunching {len(dirty)} dirty cells at --jobs {jobs}", flush=True)
         for name in dirty:
             print(f"  {name}: {dirty[name]}", flush=True)
         for c in wanted:
             if cell_id(c) in dirty:
                 clear_markers(c)
         gs, gc = relaunch(seed, jobs)
-        print(f"round {round_no} done: shift exit {gs}, contrastive exit {gc}", flush=True)
+        print(f"relaunch done: shift exit {gs}, contrastive exit {gc}", flush=True)
         jobs = max(1, jobs - 2)
+        rounds_used += 1
         quiet_since = None
-    return 1
 
 
 if __name__ == "__main__":

@@ -76,3 +76,35 @@ def test_cell_inventory_is_14_seed0_cells():
     wanted = cells(0)
     assert len(wanted) == 14
     assert cell_id(wanted[0]) == "val_contrastive_cifar10_resnet50_seed0"
+
+
+def test_main_reports_clean_without_relaunching(tmp_path, monkeypatch):
+    import scripts.supervise_val as sup
+
+    _write_cell(tmp_path, monkeypatch, "contrastive", "cifar10", "resnet50",
+                {"cdea": {"status": "ok"}},
+                [{"method": "cdea", "cd": "0.5", "cd1": "0.2"}])
+    calls = []
+    monkeypatch.setattr(sup, "cells", lambda seed: [
+        {"game": "contrastive", "dataset": "cifar10", "backbone": "resnet50", "seed": 0}])
+    monkeypatch.setattr(sup, "relaunch", lambda seed, jobs: calls.append(jobs) or (0, 0))
+    assert sup.main(["--seeds", "0", "--rounds", "0"]) == 0
+    assert calls == []
+
+
+def test_main_relaunches_dirty_cells_then_reports_dirty(tmp_path, monkeypatch, capsys):
+    import scripts.supervise_val as sup
+
+    runs = tmp_path / "runs"
+    (runs / "_markers" / "val").mkdir(parents=True)
+    monkeypatch.setattr(sup, "RUNS", runs)
+    monkeypatch.setattr(sup, "MARKERS", runs / "_markers")
+    monkeypatch.setattr(sup, "cells", lambda seed: [
+        {"game": "shift", "dataset": "waterbirds", "backbone": "resnet50", "seed": 0}])
+    monkeypatch.setattr(sup, "game_processes", lambda: [])
+    monkeypatch.setattr(sup, "QUIET_SECONDS", 0)
+    calls = []
+    monkeypatch.setattr(sup, "relaunch", lambda seed, jobs: calls.append(jobs) or (0, 0))
+    assert sup.main(["--seeds", "0", "--rounds", "1", "--poll", "0"]) == 1
+    assert calls == [3]
+    assert "GAMES_DIRTY" in capsys.readouterr().out
