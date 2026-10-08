@@ -20,6 +20,7 @@ def compute_counterfactual(
     lambd,
     temperature,
     topk,
+    device=None,
 ):
     """
     args:
@@ -36,6 +37,12 @@ def compute_counterfactual(
     return:
         edits: list of edits that flip model's prediction
     """
+    # Patch (API/device only): run on the caller's device instead of CUDA.
+    # Upstream called `.cuda()` here; the scores are unchanged.
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
     # eval
     classification_head.eval()
 
@@ -44,9 +51,9 @@ def compute_counterfactual(
     n_pixels = n_pix * n_pix
 
     # flatten
-    query_fl = query.reshape(n_feat, -1).t().cuda()  # n_pixels x dim
+    query_fl = query.reshape(n_feat, -1).t().to(device)  # n_pixels x dim
     distractor_fl = (
-        torch.permute(distractor, (0, 2, 3, 1)).reshape(-1, n_feat).cuda()
+        torch.permute(distractor, (0, 2, 3, 1)).reshape(-1, n_feat).to(device)
     )  # N * n_pixels x dim
 
     # flatten aux features
@@ -103,6 +110,7 @@ def compute_counterfactual(
             lambd=lambd,
             dims=(n_feat, n_pix, n_pixels),
             temperature=temperature,
+            device=device,
         )
 
         # update variables
@@ -168,6 +176,7 @@ def _find_single_best_edit(
     lambd,
     dims,
     temperature,
+    device=None,
 ):
     """
     Find next single best edit.
@@ -190,6 +199,11 @@ def _find_single_best_edit(
 
         argmax class_objective(edit) + lambd * semantic_objective(edit)
     """
+    # Patch (API/device only): same device rule as compute_counterfactual.
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
     # compute classification loss via classifier head
     classification_head.eval()
     n_feat, n_pix, _ = dims
@@ -198,7 +212,7 @@ def _find_single_best_edit(
         torch.transpose(all_combinations, 1, 2)
         .contiguous()
         .view(-1, n_feat, n_pix, n_pix)
-        .cuda()
+        .to(device)
     )
     probs_class = F.softmax(logits_class, dim=1)[:, distractor_class]
     optim_class = probs_class.cpu().numpy()
