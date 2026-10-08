@@ -63,6 +63,16 @@ def check_finite_features(*feats: torch.Tensor) -> None:
             raise ValueError("a feature map has a non-finite value")
 
 
+class NoFlipError(ValueError):
+    """The vendored search ran out of edits without flipping the prediction.
+
+    Upstream has no exit for this case: ``_find_single_best_edit`` calls
+    ``argmax`` on an empty candidate set and the driver's ``except
+    BaseException`` skips the image. The wrapper catches this per image and
+    reports ``flipped=False``.
+    """
+
+
 def edits_to_rank(edits: list[tuple[int, int]], height: int, width: int, device) -> torch.Tensor:
     """Rank map from an edit list. Entry 1 is the first query cell replaced."""
     rank = torch.zeros(height, width, dtype=torch.long, device=device)
@@ -100,9 +110,8 @@ def run_sc_cve_edits(
     """
     check_finite_features(query, distractors)
     compute_counterfactual = _import_sc_cve()
-    return [
-        (int(q), int(s))
-        for q, s in compute_counterfactual(
+    try:
+        raw = compute_counterfactual(
             query=query,
             distractor=distractors,
             classification_head=decision,
@@ -114,7 +123,11 @@ def run_sc_cve_edits(
             topk=topk,
             device=device,
         )
-    ]
+    except ValueError as exc:
+        if "empty sequence" in str(exc):
+            raise NoFlipError("the search ran out of edits without flipping") from exc
+        raise
+    return [(int(q), int(s)) for q, s in raw]
 
 
 def load_swav_backbone(weights_path: str | Path, device) -> nn.Module:
