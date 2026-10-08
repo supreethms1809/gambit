@@ -24,4 +24,4 @@ Claims are tied to a table and a test. A method that beats CDEA on any metric or
 - Worst-group accuracy after masking the shortcut. DFR and GroupDRO are reference points for that use case, not like-for-like explanation comparisons.
 - Per-image paired tests. The confirmatory unit is the dataset.
 
-This draft does not contain results. Gate G0 is still closed, and `docs/paper/EVAL_PLAN.md` is not frozen.
+This draft does not contain results. The G1 pilot is not scored, and `docs/paper/EVAL_PLAN.md` is not frozen. G1 picks between the method framing above and the evaluation-paper framing in `docs/paper/G1.md`.

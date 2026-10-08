@@ -205,11 +205,12 @@ The strongest non-CDEA shift baseline is the one with the highest mean val logit
 - **Family C** (ResNet-50, 8 datasets). Two-sided exact Wilcoxon signed-rank, Holm over 3 comparisons:
   1. CDEA vs margin attribution, on CD@5%;
   2. CDEA vs contrastive Extremal Perturbations, on CD@5%;
-  3. CDEA vs CVE, on CD1@5%.
+  3. CDEA vs CVE, on CD1@5%. This comparison stays in the family only if the CVE reproduction on CUB is recorded before the freeze (`docs/paper/G0.md`). Otherwise the family is comparisons 1 and 2, Holm over 2, and CVE is an exploratory row.
 - **Family S** (ResNet-50, 6 datasets). A single comparison: CDEA-shift vs the section 6.4 comparator, on logit ΔD at the piloted area, two-sided exact Wilcoxon.
 - **Report:** wins out of N, the mean difference, a 95% percentile bootstrap interval over datasets (10,000 resamples, seed 0), and the Holm-adjusted p.
 - **Power, stated in advance.**
   - Family C with n = 8: the exact two-sided p is 0.0078 for 8/8 wins, 0.0156 when the one loss has the smallest |difference|, 0.0234 at T = 2, and 0.039 at T = 3. Against Holm's thresholds (0.0167, 0.025, 0.05), the first rejection needs T ≤ 1, the second T ≤ 2, and the third T ≤ 3.
+  - Family C reduced to 2 comparisons: Holm's thresholds are 0.025 and 0.05, so the first rejection needs T ≤ 2 and the second T ≤ 3.
   - Family S with n = 6: p = 0.031 needs 6/6 wins.
 
   A non-significant result means the experiment cannot separate the methods. It does not mean the methods are equivalent.
@@ -269,12 +270,12 @@ Confounds are stated per row: forward passes, number of masks, K.
   - Run instructions are in `docs/paper/SPARK_RUNBOOK.md`.
 
 ## 11. Gates this plan depends on
-- **G0:** every Core baseline has its reproduction (B3) or a recorded, justified omission. VOC is unpacked. ImageNet val is on Spark, so the RISE reproduction runs there.
-- **G1:** the family-C pilot on dev val. If CDEA does not beat margin attribution on val, stop and decide with the user between the critique-paper route and continuing.
+- **G0:** the entry rule in `docs/paper/G0.md`. Every Core baseline has pinned or named code, passing toy tests and cross-checks, a merged PR, and a dossier entry. Reproductions (B3) are reported in the appendix and do not gate, except CVE (section 7). VOC is unpacked. ImageNet val is on Spark, so the RISE reproduction runs there.
+- **G1:** the framing decision in `docs/paper/G1.md`. The family-C pilot on dev val, read by the rule fixed there. If CDEA is not ahead of margin attribution on both dev datasets, decide with the user between running the selection candidates and reading again, or the evaluation-paper route.
 
 ## 12. Freeze procedure
 The plan is frozen only after all of the following are recorded in this file and in `PROGRESS.md`:
-1. G0 passed (tag `g0-baselines`) and G1 passed (tag `g1-pilot`).
+1. G0 passed (tag `g0-baselines`). The G1 decision logged (tag `g1-pilot`). The CVE reproduction recorded, or family C reduced to two comparisons as in section 7.
 2. Degenerate rerun under the hard budget (6.1). D2 and D4 eligible for the selected config.
 3. Selected configs and their hashes for every method (6.2), and the shift area (6.3) and comparator (6.4).
 4. The sixth shift dataset chosen and prepared (2.2).
