@@ -81,7 +81,8 @@ def cells(production_timing: bool = True):
     for dataset in CONTRASTIVE_UNITS:
         for backbone in BACKBONES:
             methods = [m for m in CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED
-                       if not (m in ("cve", "sc_cve") and backbone != "resnet50")]
+                       if not (m in ("cve", "sc_cve") and backbone != "resnet50")
+                       and not (m == "chefer" and not backbone.startswith("vit"))]
             ablations = list(ABLATIONS) if dataset == ABLATION_UNIT else []
             candidates = ([c for c in CONTRASTIVE_CANDIDATES if candidate_applies(c, backbone)]
                           if dataset == ABLATION_UNIT else [])

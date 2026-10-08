@@ -93,6 +93,8 @@ def spec_from_args(args):
         for resnet_only in ("cve", "sc_cve"):
             if resnet_only in methods:
                 methods.remove(resnet_only)   # CVE and SC-CVE are ResNet-50 only (EVAL_PLAN 4.2)
+    if args.game == "contrastive" and not args.backbone.startswith("vit") and "chefer" in methods:
+        methods.remove("chefer")   # Chefer is ViT only (EVAL_PLAN 4.2)
     return CellSpec(
         game=args.game, dataset=args.dataset, backbone=args.backbone, seed=args.seed,
         split=args.split, n=args.n, methods=methods, ablations=ablations, candidates=candidates,

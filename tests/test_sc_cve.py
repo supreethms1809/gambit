@@ -121,6 +121,31 @@ def test_aux_path_encodes_consistently() -> None:
     assert int((scores > 0).sum().item()) == len(edits)
 
 
+def test_batched_query_aux_matches_the_unbatched_map() -> None:
+    """A (1, C, H, W) query aux map is the same search as (C, H, W).
+
+    ``swav_features`` returns a batch. The vendored flatten treats axis 0 as
+    the feature dimension, so leaving the leading 1 in place scrambles the
+    kNN prefilter.
+    """
+    torch.manual_seed(0)
+    channels, height, width, classes, aux = 4, 4, 4, 3, 8
+    head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(1), nn.Linear(channels, classes))
+    query = torch.rand(channels, height, width)
+    distractors = torch.rand(2, channels, height, width)
+    query_aux = torch.rand(aux, height, width)
+    distractor_aux = torch.rand(2, aux, height, width)
+    kwargs = dict(lambd=0.4, temperature=0.1, topk=0.5, distractor_aux=distractor_aux, device="cpu")
+
+    def edits_or_none(aux_map):
+        try:
+            return run_sc_cve_edits(query, distractors, head, 2, query_aux=aux_map, **kwargs)
+        except NoFlipError:
+            return None
+
+    assert edits_or_none(query_aux) == edits_or_none(query_aux.unsqueeze(0))
+
+
 def test_a_non_finite_feature_map_raises() -> None:
     bad = torch.zeros(4, 4, 4)
     bad[0, 0, 0] = float("nan")

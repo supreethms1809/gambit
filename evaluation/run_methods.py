@@ -326,6 +326,33 @@ def contrastive_gradcam_pair(model, x, h, backbone, knobs, device) -> PairMaps:
     return PairMaps(k=contrastive_gradcam(model, x, h), l=contrastive_gradcam(model, x, swapped(h)), grid=None)
 
 
+def chefer_class_pair(model, x, h, backbone, knobs, device) -> PairMaps:
+    """Author-default class maps for k and l: two relprops (EVAL_PLAN 4.2).
+
+    ViT only; the dossier records non-applicability to ResNet. Output is
+    14x14 like extremal_class_pair. Normalisation follows the
+    ``NormalizedModel`` convention: the converted model has no wrapper, so
+    raw input is normalised here when the caller passes one.
+    """
+    from baselines.chefer import class_relprop, from_torchvision
+    from models.wrapper import NormalizedModel, unwrap
+
+    converted = from_torchvision(unwrap(model))
+    dev = next(converted.parameters()).device
+    if isinstance(model, NormalizedModel):
+        x = (x - model.mean.to(x.device)) / model.std.to(x.device)
+    kept, foil = h.ids[:, 0], h.ids[:, 1]
+    k_maps, l_maps = [], []
+    with torch.enable_grad():
+        for i in range(x.shape[0]):
+            img = x[i:i + 1].to(dev)
+            k_maps.append(class_relprop(converted, img, int(kept[i])).to(x.device))
+            l_maps.append(class_relprop(converted, img, int(foil[i])).to(x.device))
+    gh, gw = 14, 14
+    return PairMaps(k=torch.stack(k_maps).reshape(x.shape[0], -1),
+                    l=torch.stack(l_maps).reshape(x.shape[0], -1), grid=(gh, gw))
+
+
 def random_pair(model, x, h, backbone, knobs, device, seed: int = 0) -> PairMaps:
     g = torch.Generator(device="cpu").manual_seed(int(seed))
     gh, gw = grid_of(backbone)
@@ -567,7 +594,7 @@ def _targets(ds) -> list[int]:
 
 
 CONTRASTIVE_CORE = ("cdea", "base_evidence", "margin_gradcam", "margin_ig", "extremal", "cve", "random_floor")
-CONTRASTIVE_EXTENDED = ("extremal_class", "rise_margin", "contrastive_gradcam", "naive_contrastive", "sc_cve")
+CONTRASTIVE_EXTENDED = ("extremal_class", "rise_margin", "contrastive_gradcam", "naive_contrastive", "sc_cve", "chefer")
 
 
 def contrastive_method(name: str):
@@ -584,6 +611,7 @@ def contrastive_method(name: str):
         "contrastive_gradcam": contrastive_gradcam_pair,
         "naive_contrastive": naive_contrastive_pair,
         "sc_cve": sc_cve_pair,
+        "chefer": chefer_class_pair,
     }[name]
 
 

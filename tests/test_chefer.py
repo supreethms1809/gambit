@@ -65,3 +65,14 @@ def test_non_vit_state_dict_raises() -> None:
     model = torchvision.models.resnet18()
     with pytest.raises(ValueError, match="vit_b_16"):
         from_torchvision(model)
+
+
+def test_chefer_runs_on_vit_and_skips_resnet() -> None:
+    from scripts.paper_run import parse, spec_from_args
+
+    vit = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10",
+                                "--backbone", "vit_b_16", "--methods", "all"]))
+    assert "chefer" in vit.methods
+    resnet = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10",
+                                   "--backbone", "resnet50", "--methods", "all"]))
+    assert "chefer" not in resnet.methods

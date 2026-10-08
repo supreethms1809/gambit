@@ -125,6 +125,12 @@ def run_sc_cve_edits(
     the distractor cell indexes the flattened ``N * H * W`` stack.
     """
     check_finite_features(query, distractors)
+    # swav_features returns a batch. The vendored flatten treats axis 0 of the
+    # query aux map as the feature dim, so a leading 1 becomes 2048*49 fake pixels.
+    if query_aux is not None and query_aux.ndim == 4:
+        if query_aux.shape[0] != 1:
+            raise ValueError("query auxiliary features are (dim, H, W) or a batch of 1")
+        query_aux = query_aux[0]
     compute_counterfactual = _import_sc_cve()
     head = decision if isinstance(decision, nn.Module) else _CallableHead(decision)
     try:
