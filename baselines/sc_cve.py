@@ -88,6 +88,22 @@ def edits_to_scores(rank: torch.Tensor) -> torch.Tensor:
     return torch.where(rank > 0, top - rank.float() + 1.0, torch.zeros_like(top))
 
 
+class _CallableHead(nn.Module):
+    """``nn.Module`` around a ``(N, C, H, W) -> (N, K)`` callable.
+
+    The vendored search calls ``classification_head.eval()``; our split heads
+    (``evaluation/run_methods.py::_resnet_split``) are closures. The forward
+    computation is unchanged.
+    """
+
+    def __init__(self, fn):
+        super().__init__()
+        self._fn = fn
+
+    def forward(self, x):
+        return self._fn(x)
+
+
 def run_sc_cve_edits(
     query: torch.Tensor,
     distractors: torch.Tensor,
@@ -110,11 +126,12 @@ def run_sc_cve_edits(
     """
     check_finite_features(query, distractors)
     compute_counterfactual = _import_sc_cve()
+    head = decision if isinstance(decision, nn.Module) else _CallableHead(decision)
     try:
         raw = compute_counterfactual(
             query=query,
             distractor=distractors,
-            classification_head=decision,
+            classification_head=head,
             distractor_class=int(distractor_class),
             query_aux_features=query_aux,
             distractor_aux_features=distractor_aux,
