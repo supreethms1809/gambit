@@ -111,6 +111,7 @@ Every claim names its metric, what the metric compares against, and its test. Cl
 | Extremal Perturbations, per class | Mask for z_k | Mask for z_l | Extended (K×K) |
 | RISE, margin weights | Masks weighted by z_k − z_l | Weighted by z_l − z_k | Extended |
 | Contrastive Grad-CAM | Cross-entropy toward l | Cross-entropy toward k | Extended |
+| SC-CVE (Vandenhende et al. 2022) | Query cells of x replaced in joint-search edit order | Not defined | Extended, ResNet-50 only |
 | `naive_contrastive` | E_k − mean(E_foils) | E_l − mean(others) | Sanity row |
 
 Notes on these definitions:
@@ -121,6 +122,10 @@ Notes on these definitions:
   - **Distractor:** a seeded train-split image whose label and prediction are both l. If no such image exists, the row fails.
   - **Feature map and decision network:** the `layer4` output (7×7), with avgpool and fc as the decision network.
   - **Not run on ViT:** the CLS head does not read patch tokens after the last block, so there is no spatial decision network.
+- **SC-CVE:** its map is one-sided like CVE, so it is scored with CD1 (section 5).
+  - **Distractor:** up to 20 seeded train-split images (authors' default) whose label and prediction are both l, searched jointly. Fast/smoke knobs take 1 distractor with the semantic term off.
+  - **Semantic prior:** SwAV ResNet-50 trunk features, pinned (`facebookresearch/swav` @ `06b1b7c`, weights hash-recorded at download). Weak on HAM10000 and brain MRI by construction.
+  - **Not run on ViT:** same reason as CVE.
 - **Random floor:** each side gets its own independent seeded mask.
 - **ViT backends:** CDEA and base evidence use IG on ViT, because Grad-CAM's field degenerates on LayerNorm'd tokens. The margin-attribution variant is selected on val per backbone.
 

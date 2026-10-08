@@ -63,6 +63,19 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** A non-finite feature map raises. If the query map is already predicted as the distractor class, the edit list is empty. If the class never flips, `flipped` is false and the caller counts a failure rather than dropping the image.
 - **Cost.** One decision-network evaluation per candidate pair per step. On the paper's 7×7 map that is 2,401 evaluations per edit.
 
+## SC-CVE (semantically consistent counterfactuals)
+
+- **Reviewer question.** Fine-grained "why k rather than l", with a semantic-consistency prior (the recent ResNet-50 row).
+- **Citation.** Sam Vandenhende, Stamatios Georgoulis, and Luc Van Gool, Making Heads or Tails: Towards Semantically Consistent Visual Counterfactuals, ECCV 2022.
+- **Source.** `facebookresearch/visual-counterfactuals` at `cd879d6d41e2a24a6d74f398811b8226b57c39b4` (archived), vendored at `third_party/sc_cve`. Licence CC BY-NC 4.0, the same terms as the TorchRay we already vendor.
+- **Patches.** A `device` argument on `compute_counterfactual` and `_find_single_best_edit` (upstream called `.cuda()`; the driver still asserts CUDA for the published repro). `_CallableHead` in `baselines/sc_cve.py` wraps our closure split-heads in an `nn.Module` because the vendored search calls `.eval()`. Neither changes the edit scores.
+- **Defaults.** `counterfactuals_ours_cub_res50.yaml`: λ=0.4, temperature 0.1, `topk=0.2` kNN prefilter, up to 20 distractors. The Goyal configs in the same repo (`counterfactuals_goyal_cub_*.yaml`) set λ=0, no prefilter, 1 distractor. SwAV ResNet-50 at `facebookresearch/swav` @ `06b1b7c`, weights `swav_800ep_pretrain.pth.tar` hash-recorded at download and loaded offline.
+- **Reproduction target.** Their README, ResNet-50 CUB, all edits: 2.9 edits, Near KP 64.6, Same KP 31.1. Their Goyal port in the same repo: 3.5 edits, Near KP 54.0, Same KP 7.4. Not run: needs a CUDA node plus the CUB ResNet checkpoint (191.7 MB) and SwAV weights (113.7 MB) downloads, each with approval at run time.
+- **Audit (2026-10-08).** The objective in `_find_single_best_edit` is argmax of `log p(distractor | edit) + λ · log semantic_prob(edit)` (Eq. 4). The exclusion drops every pair sharing the used query cell *or* the used distractor cell, while our CVE reimplementation lets a distractor cell be copied again. The distractor class comes from the confusion matrix (most-confused class); ours is the foil. Their ResNet head keeps `layer4[1:]` on `layer4[0]` features; ours is avgpool+fc on the full `layer4` output. The `while` loop has no exit when edits run out (`argmax` on empty); the wrapper maps that to `flipped=False`.
+- **Conversion.** Edit-order rank encoding shared with `cve_pair`: earliest edit scores highest, untouched cells 0. One-sided, `l=None`, scored with CD1.
+- **Failure modes.** No correctly-classified foil image in the tries writes a NaN row (floored downstream), as in CVE. A non-finite feature map raises. No flip after exhaustion records `flipped=False`, never hangs. Missing SwAV weights raise an informative error. SwAV is ImageNet self-supervised, so its semantic prior is weak on HAM10000 and brain MRI.
+- **Cost.** One head evaluation per candidate pair per step over the joint `49 × (N × 49)` set after the prefilter, per edit. Per-image wall time and memory at 200 images on CIFAR-10 and HAM10000 feed `scripts/launch_paper_eval.py` scheduling before the grid runs.
+
 ## Attribution difference
 
 - **Reviewer question.** Why not subtract two heatmaps?
