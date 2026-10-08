@@ -130,3 +130,13 @@ def test_main_relaunches_dirty_cells_then_reports_dirty(tmp_path, monkeypatch, c
     assert sup.main(["--seeds", "0", "--rounds", "1", "--poll", "0"]) == 1
     assert calls == [3]
     assert "GAMES_DIRTY" in capsys.readouterr().out
+
+
+def test_relaunch_cmds_runs_contrastive_before_shift():
+    import scripts.supervise_val as sup
+
+    cmds = sup.relaunch_cmds(0, 3)
+    assert len(cmds) == 2
+    assert "--game" in cmds[0] and cmds[0][cmds[0].index("--game") + 1] == "contrastive"
+    assert "--game" in cmds[1] and cmds[1][cmds[1].index("--game") + 1] == "shift"
+    assert cmds[0] != cmds[1]

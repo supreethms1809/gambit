@@ -107,19 +107,26 @@ def clear_markers(cell: dict) -> None:
             pass
 
 
-def relaunch(seed: int, jobs: int) -> tuple[int, int]:
-    """Rerun pending val cells (done markers skip the clean ones), shift then
-    contrastive dev. Returns the two launcher exit codes."""
+def relaunch_cmds(seed: int, jobs: int) -> list[list[str]]:
+    """Launcher argv lists, contrastive dev first and shift second: the G1
+    read-out must not wait behind the long shift cells."""
     env = dict(os.environ)
     env.setdefault("PYTHONPATH", str(REPO))
     base = [sys.executable, "-u", "scripts/launch_paper_eval.py", "--split", "val",
             "--seeds", str(seed), "--jobs", str(jobs)]
-    shift = base + ["--game", "shift", "--n-shift", "resnet50:64,vit_b_16:32"]
-    contrast = base + ["--datasets", "cifar10,ham10000",
+    contrast = base + ["--game", "contrastive", "--datasets", "cifar10,ham10000",
                        "--n-contrastive", "resnet50:64,vit_b_16:64"]
-    gs = subprocess.run(shift, cwd=REPO, env=env).returncode
-    gc = subprocess.run(contrast, cwd=REPO, env=env).returncode
-    return gs, gc
+    shift = base + ["--game", "shift", "--n-shift", "resnet50:64,vit_b_16:32"]
+    return [contrast, shift]
+
+
+def relaunch(seed: int, jobs: int) -> tuple[int, int]:
+    """Rerun pending val cells (done markers skip the clean ones), contrastive
+    dev first, then shift. Returns the two launcher exit codes."""
+    env = dict(os.environ)
+    env.setdefault("PYTHONPATH", str(REPO))
+    codes = [subprocess.run(cmd, cwd=REPO, env=env).returncode for cmd in relaunch_cmds(seed, jobs)]
+    return codes[0], codes[1]
 
 
 def main(argv=None) -> int:
@@ -168,8 +175,8 @@ def main(argv=None) -> int:
         for c in wanted:
             if cell_id(c) in dirty:
                 clear_markers(c)
-        gs, gc = relaunch(seed, jobs)
-        print(f"relaunch done: shift exit {gs}, contrastive exit {gc}", flush=True)
+        gc, gs = relaunch(seed, jobs)
+        print(f"relaunch done: contrastive exit {gc}, shift exit {gs}", flush=True)
         jobs = max(1, jobs - 2)
         rounds_used += 1
         quiet_since = None
