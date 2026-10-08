@@ -3,7 +3,30 @@ Hacked together by / Copyright 2020 Ross Wightman
 """
 import torch
 import torch.nn as nn
-from einops import rearrange
+# Patch (API only): einops is not a project dependency. The four fixed
+# patterns below are the only rearrange uses in this file; each is an exact
+# reshape/permute with identical values and gradient flow.
+def _split_qkv(qkv, h):
+    b, n, _ = qkv.shape
+    d = qkv.shape[-1] // (3 * h)
+    return qkv.reshape(b, n, 3, h, d).permute(2, 0, 3, 1, 4)
+
+
+def _merge_heads(out):
+    b, h, n, d = out.shape
+    return out.permute(0, 2, 1, 3).reshape(b, n, h * d)
+
+
+def _split_heads(cam, h):
+    b, n, _ = cam.shape
+    d = cam.shape[-1] // h
+    return cam.reshape(b, n, h, d).permute(0, 2, 1, 3)
+
+
+def _merge_qkv(cams):
+    stacked = torch.stack(list(cams), dim=0)
+    qkv, b, hh, n, d = stacked.shape
+    return stacked.permute(1, 3, 0, 2, 4).reshape(b, n, qkv * hh * d)
 from modules.layers_ours import *
 
 from baselines.ViT.helpers import load_pretrained
@@ -132,7 +155,7 @@ class Attention(nn.Module):
     def forward(self, x):
         b, n, _, h = *x.shape, self.num_heads
         qkv = self.qkv(x)
-        q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b h n d', qkv=3, h=h)
+        q, k, v = _split_qkv(qkv, h)
 
         self.save_v(v)
 
@@ -145,7 +168,7 @@ class Attention(nn.Module):
         attn.register_hook(self.save_attn_gradients)
 
         out = self.matmul2([attn, v])
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = _merge_heads(out)
 
         out = self.proj(out)
         out = self.proj_drop(out)
@@ -154,7 +177,7 @@ class Attention(nn.Module):
     def relprop(self, cam, **kwargs):
         cam = self.proj_drop.relprop(cam, **kwargs)
         cam = self.proj.relprop(cam, **kwargs)
-        cam = rearrange(cam, 'b n (h d) -> b h n d', h=self.num_heads)
+        cam = _split_heads(cam, self.num_heads)
 
         # attn = A*V
         (cam1, cam_v)= self.matmul2.relprop(cam, **kwargs)
@@ -172,7 +195,7 @@ class Attention(nn.Module):
         cam_q /= 2
         cam_k /= 2
 
-        cam_qkv = rearrange([cam_q, cam_k, cam_v], 'qkv b h n d -> b n (qkv h d)', qkv=3, h=self.num_heads)
+        cam_qkv = _merge_qkv([cam_q, cam_k, cam_v])
 
         return self.qkv.relprop(cam_qkv, **kwargs)
 
