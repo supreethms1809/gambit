@@ -94,7 +94,7 @@ def spec_for(cell: dict, args):
     n = n or N_MIN[(game, backbone)]
     if game == "contrastive":
         methods = [m for m in CONTRASTIVE_CORE + (CONTRASTIVE_EXTENDED if args.extended else ())
-                   if not (m == "cve" and backbone != "resnet50")]
+                   if not (m in ("cve", "sc_cve") and backbone != "resnet50")]
         ablations = (list(ABLATIONS) if args.ablations and dataset in ABLATION_UNITS
                      and seed in ABLATION_SEEDS and backbone == "resnet50" else [])
         areas = tuple(float(a) for a in args.areas.split(","))

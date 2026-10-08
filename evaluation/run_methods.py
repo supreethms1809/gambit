@@ -57,12 +57,15 @@ class Knobs:
     cdea_steps: int = 50
     shift_steps: int = 50
     cve_distractor_tries: int = 32
+    sc_cve_distractors: int = 20       # authors' max_num_distractors (ours config)
+    sc_cve_swav_weights: Optional[str] = None  # local SwAV file; required off the fast path
     extremal_smooth: float = 0.0
     fast: bool = False
 
 
 FAST = Knobs(ig_steps=4, extremal_max_iter=40, rise_masks=200, rise_cell=7,
-             cdea_steps=8, shift_steps=8, cve_distractor_tries=8, fast=True)
+             cdea_steps=8, shift_steps=8, cve_distractor_tries=8, fast=True,
+             sc_cve_distractors=1)
 
 
 @dataclass
@@ -387,14 +390,131 @@ def cve_pair(model, x, h, backbone, knobs, device, dataset: str, seed: int = 0) 
                     extra={"cve_flipped": flipped, "cve_distractor_found": found})
 
 
+# ---- SC-CVE -----------------------------------------------------------------
+
+_AUX_CACHE: dict = {}
+_SWAV: dict = {}
+
+
+def _swav_model(device, weights_path: Optional[str] = None):
+    """Pinned SwAV trunk, loaded once per device from a local weights file."""
+    from baselines.sc_cve import load_swav_backbone
+
+    key = str(torch.device(device))
+    if key not in _SWAV:
+        if not weights_path:
+            raise ValueError(
+                "SC-CVE needs the SwAV weights file (downloaded with approval and "
+                "hash-recorded at repro time); pass knobs.sc_cve_swav_weights"
+            )
+        _SWAV[key] = load_swav_backbone(weights_path, device)
+    return _SWAV[key]
+
+
+def _aux_features(images: torch.Tensor, model, device, dataset: str, split: str,
+                  indices: Optional[list[int]], weights_path: Optional[str] = None) -> torch.Tensor:
+    """SwAV trunk features for raw ``[0, 1]`` images, cached per pool index.
+
+    ``indices=None`` means batch images outside the pool (the query): computed
+    without caching.
+    """
+    from baselines.sc_cve import swav_features
+
+    swav = _swav_model(device, weights_path)
+    if indices is None:
+        return swav_features(images, swav, device)
+    out = []
+    for idx, image in zip(indices, images):
+        key = (dataset, split, int(idx))
+        if key not in _AUX_CACHE:
+            _AUX_CACHE[key] = swav_features(image.unsqueeze(0), swav, device)[0]
+        out.append(_AUX_CACHE[key])
+    return torch.stack(out, dim=0)
+
+
+def sc_cve_pair(model, x, h, backbone, knobs, device, dataset: str, seed: int = 0) -> PairMaps:
+    """One-sided SC-CVE map: query cells in joint-search edit order (CD1 only).
+
+    The distractor class is the foil (rank 1), not the confusion-matrix class
+    upstream uses; the dossier names this shared rule. Fast knobs take the
+    Goyal path (``lambd=0``, no prefilter, 1 distractor) so smoke runs never
+    touch the SwAV weights; paper runs use the authors' defaults.
+    """
+    from baselines.sc_cve import (
+        OURS_LAMBD,
+        OURS_TEMPERATURE,
+        OURS_TOPK,
+        NoFlipError,
+        edits_to_rank,
+        edits_to_scores,
+        run_sc_cve_edits,
+    )
+
+    features, decision, _fc = _resnet_split(model)
+    foil = h.ids[:, 1]
+    if knobs.fast:
+        lambd, temperature, topk, n_dist = 0.0, None, None, 1
+    else:
+        lambd, temperature, topk = OURS_LAMBD, OURS_TEMPERATURE, OURS_TOPK
+        n_dist = knobs.sc_cve_distractors
+    pool_split = "val" if dataset == "imagenet" else "train"
+    with torch.no_grad():
+        query_feats = features(x)
+    maps, flipped, found, n_edits = [], [], [], []
+    for i in range(x.shape[0]):
+        cands = find_distractors(model, dataset, int(foil[i]), seed + i,
+                                 knobs.cve_distractor_tries, device, n=n_dist)
+        if not cands:
+            maps.append(torch.full(query_feats.shape[-2:], float("nan"), device=x.device))
+            flipped.append(False)
+            found.append(False)
+            n_edits.append(0)
+            continue
+        pool_idx, d_imgs = zip(*cands)
+        d_batch = torch.stack(list(d_imgs), dim=0).to(x.device)
+        with torch.no_grad():
+            d_feat = features(d_batch)
+        if topk is None and lambd == 0.0:
+            query_aux = distractor_aux = None
+        else:
+            query_aux = _aux_features(x[i:i + 1], model, device, dataset, pool_split,
+                                      None, knobs.sc_cve_swav_weights)
+            distractor_aux = _aux_features(d_batch, model, device, dataset, pool_split,
+                                           list(pool_idx), knobs.sc_cve_swav_weights)
+        try:
+            edits = run_sc_cve_edits(query_feats[i].detach(), d_feat.detach(),
+                                     decision, int(foil[i]), lambd=lambd,
+                                     temperature=temperature, topk=topk,
+                                     query_aux=query_aux, distractor_aux=distractor_aux,
+                                     device=x.device)
+        except NoFlipError:
+            maps.append(torch.full(query_feats.shape[-2:], float("nan"), device=x.device))
+            flipped.append(False)
+            found.append(True)
+            n_edits.append(0)
+            continue
+        rank = edits_to_rank(edits, *query_feats.shape[-2:], x.device)
+        maps.append(edits_to_scores(rank))
+        flipped.append(True)
+        found.append(True)
+        n_edits.append(len(edits))
+    k_map = torch.stack(maps).reshape(x.shape[0], -1)
+    gh, gw = query_feats.shape[-2:]
+    return PairMaps(k=k_map, l=None, grid=(int(gh), int(gw)),
+                    extra={"sc_cve_flipped": flipped, "sc_cve_distractor_found": found,
+                           "sc_cve_n_edits": n_edits})
+
+
 _POOLS: dict = {}
 
 
-def find_distractor(model, dataset: str, class_idx: int, seed: int, tries: int, device) -> Optional[torch.Tensor]:
-    """A seeded image of ``class_idx`` that the model also predicts as ``class_idx``.
+def find_distractors(model, dataset: str, class_idx: int, seed: int, tries: int, device,
+                     n: int = 1) -> list[tuple[int, torch.Tensor]]:
+    """Up to ``n`` seeded ``(pool_index, image)`` pairs of ``class_idx``.
 
-    Drawn from the train split (ImageNet: our val carve, since it has no train
-    split here). Returns ``None`` when no such image is found within ``tries``.
+    Each image is also predicted as ``class_idx`` by the model. Drawn from the
+    train split (ImageNet: our val carve, since it has no train split here).
+    CVE keeps ``n=1``; SC-CVE takes up to ``n`` for the joint search.
     """
     pool_split = "val" if dataset == "imagenet" else "train"
     key = (dataset, pool_split)
@@ -409,16 +529,29 @@ def find_distractor(model, dataset: str, class_idx: int, seed: int, tries: int, 
     ds, targets = _POOLS[key]
     members = [i for i, t in enumerate(targets) if t == class_idx]
     if not members:
-        return None
+        return []
     g = torch.Generator(device="cpu").manual_seed(int(seed))
     order = torch.randperm(len(members), generator=g)[:tries].tolist()
+    found = []
     for j in order:
         image, _ = ds[members[j]]
         with torch.no_grad():
             pred = int(model(image.unsqueeze(0).to(device)).argmax(-1))
         if pred == class_idx:
-            return image
-    return None
+            found.append((members[j], image))
+            if len(found) >= max(1, int(n)):
+                break
+    return found
+
+
+def find_distractor(model, dataset: str, class_idx: int, seed: int, tries: int, device) -> Optional[torch.Tensor]:
+    """A seeded image of ``class_idx`` that the model also predicts as ``class_idx``.
+
+    Drawn from the train split (ImageNet: our val carve, since it has no train
+    split here). Returns ``None`` when no such image is found within ``tries``.
+    """
+    found = find_distractors(model, dataset, class_idx, seed, tries, device, n=1)
+    return found[0][1] if found else None
 
 
 def _targets(ds) -> list[int]:
@@ -434,7 +567,7 @@ def _targets(ds) -> list[int]:
 
 
 CONTRASTIVE_CORE = ("cdea", "base_evidence", "margin_gradcam", "margin_ig", "extremal", "cve", "random_floor")
-CONTRASTIVE_EXTENDED = ("extremal_class", "rise_margin", "contrastive_gradcam", "naive_contrastive")
+CONTRASTIVE_EXTENDED = ("extremal_class", "rise_margin", "contrastive_gradcam", "naive_contrastive", "sc_cve")
 
 
 def contrastive_method(name: str):
@@ -450,6 +583,7 @@ def contrastive_method(name: str):
         "rise_margin": rise_margin_pair,
         "contrastive_gradcam": contrastive_gradcam_pair,
         "naive_contrastive": naive_contrastive_pair,
+        "sc_cve": sc_cve_pair,
     }[name]
 
 

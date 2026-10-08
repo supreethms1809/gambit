@@ -89,8 +89,10 @@ def spec_from_args(args):
         candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
         operators = ("road",)
     candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
-    if args.game == "contrastive" and args.backbone != "resnet50" and "cve" in methods:
-        methods.remove("cve")   # CVE is ResNet-50 only (EVAL_PLAN 4.2)
+    if args.game == "contrastive" and args.backbone != "resnet50":
+        for resnet_only in ("cve", "sc_cve"):
+            if resnet_only in methods:
+                methods.remove(resnet_only)   # CVE and SC-CVE are ResNet-50 only (EVAL_PLAN 4.2)
     return CellSpec(
         game=args.game, dataset=args.dataset, backbone=args.backbone, seed=args.seed,
         split=args.split, n=args.n, methods=methods, ablations=ablations, candidates=candidates,

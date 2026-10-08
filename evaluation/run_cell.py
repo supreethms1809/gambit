@@ -230,9 +230,9 @@ def run_contrastive(spec: CellSpec, device) -> Path:
                     kwargs = {}
                     if method in AREA_DEPENDENT:
                         kwargs["area"] = area_for_map
-                    if method in {"cve"}:
+                    if method in {"cve", "sc_cve"}:
                         kwargs["dataset"] = spec.dataset
-                    if method in {"cve", "random_floor", "rise_margin"}:
+                    if method in {"cve", "sc_cve", "random_floor", "rise_margin"}:
                         kwargs["seed"] = spec.seed
                     maps = fn(model, x, h, spec.backbone, knobs, device, **kwargs)
             except Exception as exc:  # recorded, not raised: one method must not sink the cell
