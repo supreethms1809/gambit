@@ -21,8 +21,12 @@ def _restore(model: nn.Module, was_training: bool) -> None:
     model.train(was_training)
 
 
-def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed: int) -> torch.Tensor:
-    """Impute pixels where ``mask`` is 1. ``mask`` is ``(B, H, W)`` or ``(B, 1, H, W)``."""
+def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed: int, offset: int = 0) -> torch.Tensor:
+    """Impute pixels where ``mask`` is 1. ``mask`` is ``(B, H, W)`` or ``(B, 1, H, W)``.
+
+    ``offset`` is the index of this chunk in the full sample. The noise stream
+    is the same one a single call on the whole sample would have drawn.
+    """
     if mask.ndim == 3:
         mask = mask.unsqueeze(1)
     if mask.shape[0] != x.shape[0] or mask.shape[-2:] != x.shape[-2:]:
@@ -30,6 +34,10 @@ def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed:
     keep = (1.0 - mask).clamp(0.0, 1.0)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
+    if offset:
+        from evaluation.masks import advance_generator
+
+        advance_generator(generator, int(offset), tuple(x.shape[1:]), normal=True)
     return noisy_linear_impute(x, keep, iters, noise, generator)
 
 
@@ -172,6 +180,7 @@ def disagreement_reduction(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """ΔD. The shortcut term minus the same term for a random mask of equal area.
 
@@ -193,8 +202,8 @@ def disagreement_reduction(
 
             def apply(mask: torch.Tensor) -> torch.Tensor:
                 return gap(
-                    _remove(x_id, mask, iters, noise, seed),
-                    [_remove(xo, mask, iters, noise, seed) for xo in x_ood],
+                    _remove(x_id, mask, iters, noise, seed, offset),
+                    [_remove(xo, mask, iters, noise, seed, offset) for xo in x_ood],
                 )
 
             full = gap(x_id, x_ood)
@@ -213,6 +222,7 @@ def logit_disagreement_reduction(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """ΔD in logit space. Same construction as ``disagreement_reduction`` with
     D = mean |z_y(id) − z_y(ood)| across the other environments.
@@ -236,8 +246,8 @@ def logit_disagreement_reduction(
 
             def apply(mask: torch.Tensor) -> torch.Tensor:
                 return gap(
-                    _remove(x_id, mask, iters, noise, seed),
-                    [_remove(xo, mask, iters, noise, seed) for xo in x_ood],
+                    _remove(x_id, mask, iters, noise, seed, offset),
+                    [_remove(xo, mask, iters, noise, seed, offset) for xo in x_ood],
                 )
 
             full = gap(x_id, x_ood)

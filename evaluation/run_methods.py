@@ -184,7 +184,8 @@ class _OnlyRank:
         return HypothesisSet(ids=h.ids, mask=keep)
 
 
-def build_cdea(model: nn.Module, backbone: str, cfg: CdeaConfig, knobs: Knobs, device, selector=None):
+def build_cdea(model: nn.Module, backbone: str, cfg: CdeaConfig, knobs: Knobs, device, selector=None,
+               loss_scale: float = 1.0):
     from core.game_modes import resolve_contrastive_game
     from core.hypotheses import TopMSelector
     from core.interaction import AttentionOnlyInteraction, Transformer1LayerInteraction
@@ -212,6 +213,7 @@ def build_cdea(model: nn.Module, backbone: str, cfg: CdeaConfig, knobs: Knobs, d
         lambda_partition=game.lambda_partition,
         init_from_evidence=cfg.init_from_evidence,
         attn_mix=cfg.attn_mix,
+        loss_scale=loss_scale,
     )
     interaction = None
     embed_dim = None
@@ -232,7 +234,8 @@ def build_cdea(model: nn.Module, backbone: str, cfg: CdeaConfig, knobs: Knobs, d
     )
 
 
-def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = None) -> PairMaps:
+def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = None,
+              loss_scale: float = 1.0) -> PairMaps:
     """Unique masks of rank 0 and rank 1 (EVAL_PLAN 4.2). Shared is kept for the sensitivity check."""
     from core.hypotheses import TopMSelector
 
@@ -242,12 +245,13 @@ def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = 
         base = TopMSelector(m=cfg.top_k)
         columns = []
         for rank in range(min(cfg.top_k, h.ids.shape[1])):
-            explainer = build_cdea(model, backbone, cfg, knobs, device, selector=_OnlyRank(base, rank))
+            explainer = build_cdea(model, backbone, cfg, knobs, device, selector=_OnlyRank(base, rank),
+                                   loss_scale=loss_scale)
             columns.append(explainer.explain(x).masks["unique"][:, rank])
         unique = torch.stack(columns, dim=1)
         shared = None
     else:
-        out = build_cdea(model, backbone, cfg, knobs, device).explain(x)
+        out = build_cdea(model, backbone, cfg, knobs, device, loss_scale=loss_scale).explain(x)
         unique = out.masks["unique"]
         shared = out.masks.get("shared")
     unique = unique.reshape(unique.shape[0], unique.shape[1], -1)
@@ -482,7 +486,8 @@ def _predicted(model, x) -> torch.Tensor:
         return model(x).argmax(-1)
 
 
-def cdea_shift_maps(model, sample, backbone, knobs, device, cfg: Optional[ShiftConfig] = None, seed: int = 0) -> ShiftMaps:
+def cdea_shift_maps(model, sample, backbone, knobs, device, cfg: Optional[ShiftConfig] = None, seed: int = 0,
+                    loss_scale: float = 1.0, init_offset: int = 0) -> ShiftMaps:
     from core.game_modes import resolve_shift_game
     from core.hypotheses import TopMSelector
     from core.runner import CDEAExplainer
@@ -508,7 +513,8 @@ def cdea_shift_maps(model, sample, backbone, knobs, device, cfg: Optional[ShiftC
         view = torch.cat([torch.zeros_like(sample.labels), torch.ones_like(sample.labels)])
         group = (labels * 2 + view).to(device)
         allocator = RobustShortcutOptimizationAllocator(objective, num_steps=steps, lr=cfg.lr,
-                                                        lambda_disjoint=disjoint, init_seed=seed)
+                                                        lambda_disjoint=disjoint, init_seed=seed,
+                                                        loss_scale=loss_scale, init_offset=init_offset)
         explainer = CDEAExplainer(model=model, unit_space=VisionGridUnitSpace(gh, gw),
                                   selector=TopMSelector(m=1),
                                   base_evidence=evidence_provider(cfg.backend, backbone, knobs),
@@ -522,7 +528,8 @@ def cdea_shift_maps(model, sample, backbone, knobs, device, cfg: Optional[ShiftC
         return ShiftMaps(robust=robust, shortcut=shortcut, grid=(gh, gw))
     objective = RobustShortcutObjective(**common, lambda_shortcut=game.lambda_shortcut)
     allocator = RobustShortcutOptimizationAllocator(objective, num_steps=steps, lr=cfg.lr,
-                                                    lambda_disjoint=disjoint, init_seed=seed)
+                                                    lambda_disjoint=disjoint, init_seed=seed,
+                                                    loss_scale=loss_scale, init_offset=init_offset)
     explainer = CDEAExplainer(model=model, unit_space=VisionGridUnitSpace(gh, gw),
                               selector=TopMSelector(m=1),
                               base_evidence=evidence_provider(cfg.backend, backbone, knobs),
@@ -577,7 +584,7 @@ def spray_maps(model, sample, backbone, knobs, device, seed: int = 0) -> ShiftMa
     from baselines.spray import cluster_mean_relevance, lrp_maps
 
     pred = _predicted(model, sample.x_id)
-    relevance = lrp_maps(model, sample.x_id, pred).detach()
+    relevance = lrp_maps(model, sample.x_id, pred, batch_size=4).detach()
     n = relevance.shape[0]
     if n < 3:
         raise ValueError("SpRAy clusters relevance maps and needs at least 3 images in the cell")

@@ -48,6 +48,7 @@ class OptimizationAllocator:
         attn_mix: float = 0.0,
         logit_clip: float = 12.0,
         logit_eps: float = 1e-6,
+        loss_scale: float = 1.0,
     ):
         """Args: objective, num_steps, lr, use_shared, lambda_partition,
         init_from_evidence, logit_clip, logit_eps are the mask optimisation
@@ -79,6 +80,12 @@ class OptimizationAllocator:
             raise ValueError("logit_eps must be in (0, 0.5)")
         self.logit_clip = logit_clip
         self.logit_eps = logit_eps
+        if loss_scale <= 0:
+            raise ValueError("loss_scale must be > 0")
+        # A chunk of C images out of N has a mean that is N/C times the full-sample
+        # mean. Adam is not scale-free once epsilon matters, so the chunk multiplies
+        # the loss by C/N and the mask step matches the full sample.
+        self.loss_scale = float(loss_scale)
 
     def _attention_mixed_evidence(
         self,
@@ -180,6 +187,8 @@ class OptimizationAllocator:
                     loss = out["loss"]
                     if self.lambda_partition > 0:
                         loss = loss + self.lambda_partition * _partition_penalty(m_unique, m_shared)
+                    if self.loss_scale != 1.0:
+                        loss = loss * self.loss_scale
                     loss.backward()
                     optimizer.step()
                     with torch.no_grad():

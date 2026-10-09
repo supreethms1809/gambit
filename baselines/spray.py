@@ -88,13 +88,15 @@ def _import_corelay():
     return SpectralClustering, EigenDecomposition, SparseKNN, KMeans
 
 
-def lrp_maps(model: nn.Module, x: torch.Tensor, class_idx: torch.Tensor) -> torch.Tensor:
+def lrp_maps(model: nn.Module, x: torch.Tensor, class_idx: torch.Tensor, batch_size: int | None = None) -> torch.Tensor:
     """``(N, H, W)`` channel-sum of Zennit ``EpsilonPlus`` relevance for ``class_idx``."""
     if x.ndim != 4:
         raise ValueError("lrp_maps expects an image batch (N, C, H, W)")
     ids = class_idx.detach().to(dtype=torch.long, device=x.device).reshape(-1)
     if ids.shape[0] != x.shape[0]:
         raise ValueError("class_idx must have one entry per image")
+    if batch_size is not None and batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
     Gradient, EpsilonPlus = _import_zennit()
     was_training = model.training
     model.eval()
@@ -102,11 +104,16 @@ def lrp_maps(model: nn.Module, x: torch.Tensor, class_idx: torch.Tensor) -> torc
         with torch.no_grad():
             classes = int(model(x[:1]).shape[-1])
         eye = torch.eye(classes, device=x.device, dtype=x.dtype)
-        with Gradient(model=model, composite=EpsilonPlus()) as attributor:
-            _output, relevance = attributor(x, eye[ids])
+        step = x.shape[0] if not batch_size else min(int(batch_size), x.shape[0])
+        parts = []
+        for start in range(0, x.shape[0], step):
+            sl = slice(start, start + step)
+            with Gradient(model=model, composite=EpsilonPlus()) as attributor:
+                _output, relevance = attributor(x[sl], eye[ids[sl]])
+            parts.append(relevance.sum(dim=1))
     finally:
         model.train(was_training)
-    return relevance.sum(dim=1)
+    return torch.cat(parts, dim=0)
 
 
 def _import_zennit():

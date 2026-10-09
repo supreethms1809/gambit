@@ -38,7 +38,24 @@ def mass_in(mask_px: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.where(total > 0, inside / total.clamp_min(1e-8), torch.zeros_like(total))
 
 
-def top_fraction_mask(scores: torch.Tensor, fraction: float, seed: int) -> torch.Tensor:
+def advance_generator(generator: torch.Generator, batch: int, tail: tuple[int, ...], *, normal: bool) -> None:
+    """Draw ``batch`` rows of shape ``tail`` and drop them.
+
+    A later draw of the same rank then matches the corresponding rows of one
+    draw over the whole sample. ROAD noise and tie-breaks use that order, so a
+    chunked score stays the full-sample score.
+    """
+    if batch < 0:
+        raise ValueError("batch must be >= 0")
+    draw = torch.randn if normal else torch.rand
+    left = int(batch)
+    while left:
+        take = min(left, 8)
+        draw((take, *tail), generator=generator)
+        left -= take
+
+
+def top_fraction_mask(scores: torch.Tensor, fraction: float, seed: int, offset: int = 0) -> torch.Tensor:
     """Binary mask covering ``fraction`` of the entries in each row.
 
     ``scores`` is ``(B, ...)``. Ties are broken by a seeded jitter that does not
@@ -60,6 +77,8 @@ def top_fraction_mask(scores: torch.Tensor, fraction: float, seed: int) -> torch
         return torch.ones_like(scores)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
+    if offset:
+        advance_generator(generator, int(offset), (n,), normal=False)
     jitter = torch.rand(flat.shape, generator=generator)
     tie_order = jitter.argsort(dim=-1, stable=True)
     ordered_scores = flat.gather(-1, tie_order)
@@ -78,6 +97,7 @@ def to_budget_mask(
     grid_w: int | None = None,
     height: int | None = None,
     width: int | None = None,
+    offset: int = 0,
 ) -> torch.Tensor:
     """The single baseline-adapter conversion.
 
@@ -90,4 +110,4 @@ def to_budget_mask(
         if grid_w is None or height is None or width is None:
             raise ValueError("grid and pixel sizes are required together")
         scores = regions_to_pixels(scores, grid_h, grid_w, height, width)
-    return top_fraction_mask(scores, fraction, seed)
+    return top_fraction_mask(scores, fraction, seed, offset=offset)

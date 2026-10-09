@@ -27,6 +27,8 @@ class RobustShortcutOptimizationAllocator:
         lambda_disjoint: float = 0.2,
         init_from_evidence: bool = True,
         init_seed: int = 0,
+        loss_scale: float = 1.0,
+        init_offset: int = 0,
     ):
         self.objective = objective
         self.num_steps = num_steps
@@ -37,6 +39,16 @@ class RobustShortcutOptimizationAllocator:
         self.lambda_disjoint = lambda_disjoint
         self.init_from_evidence = init_from_evidence
         self.init_seed = int(init_seed)
+        if loss_scale <= 0:
+            raise ValueError("loss_scale must be > 0")
+        if init_offset < 0:
+            raise ValueError("init_offset must be >= 0")
+        # Same reason as OptimizationAllocator.loss_scale: a chunk's mean is
+        # larger than the full-sample mean by N/C, and Adam's epsilon makes
+        # that visible. init_offset skips the seeded shortcut jitter so image i
+        # gets the same start it would have had in the full sample.
+        self.loss_scale = float(loss_scale)
+        self.init_offset = int(init_offset)
 
     def allocate(
         self,
@@ -78,6 +90,11 @@ class RobustShortcutOptimizationAllocator:
             # without biasing either toward any region.
             jitter_gen = torch.Generator(device="cpu")
             jitter_gen.manual_seed(self.init_seed)
+            left = self.init_offset
+            while left:
+                take = min(left, 8)
+                torch.rand((take, R), generator=jitter_gen)
+                left -= take
             noise = torch.rand(m_sho_logits.shape, generator=jitter_gen) - 0.5
             m_sho_logits = (m_sho_logits + 0.5 * noise.to(m_sho_logits.device)).clamp(-3.0, 3.0)
         else:
@@ -115,6 +132,8 @@ class RobustShortcutOptimizationAllocator:
                     )
                     loss = out["loss"]
                     # Objective already includes disjointness term; do not add it again here.
+                    if self.loss_scale != 1.0:
+                        loss = loss * self.loss_scale
                     loss.backward()
                     optimizer.step()
                     with torch.no_grad():

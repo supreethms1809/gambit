@@ -67,6 +67,8 @@ def parse(argv=None):
     p.add_argument("--operators", default="road,blur")
     p.add_argument("--model-source", default="auto", choices=["auto", "paper", "checkpoint", "imagenet", "smoke"])
     p.add_argument("--checkpoint", default=None)
+    p.add_argument("--image-batch", type=int, default=4,
+                   help="images on the device at once. 0 keeps the whole sample.")
     p.add_argument("--fast", action="store_true", help="smoke knobs; never a paper number")
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "runs"))
     p.add_argument("--device", default="auto")
@@ -97,6 +99,7 @@ def spec_from_args(args):
         areas=tuple(float(a) for a in args.areas.split(",")), operators=operators,
         model_source=args.model_source, checkpoint=args.checkpoint, final=args.final,
         config_hash=args.config_hash, knobs=FAST if args.fast else Knobs(), out_dir=args.out,
+        image_batch=args.image_batch,
     )
 
 

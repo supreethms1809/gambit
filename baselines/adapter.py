@@ -21,6 +21,7 @@ def adapt_scores(
     grid_w: int | None = None,
     height: int | None = None,
     width: int | None = None,
+    offset: int = 0,
 ) -> torch.Tensor:
     """Budgeted mask. Region maps are bilinearly upsampled, then top-a with a seeded tie-break."""
     return to_budget_mask(
@@ -31,6 +32,7 @@ def adapt_scores(
         grid_w=grid_w,
         height=height,
         width=width,
+        offset=offset,
     )
 
 
@@ -58,6 +60,7 @@ def random_floor(
     grid_w: int | None = None,
     height: int | None = None,
     width: int | None = None,
+    offset: int = 0,
 ) -> torch.Tensor:
     """Seeded area-a mask, the score used for a failed image.
 
@@ -72,6 +75,7 @@ def random_floor(
         grid_w=grid_w,
         height=height,
         width=width,
+        offset=offset,
     )
 
 
@@ -84,6 +88,7 @@ def budget_or_floor(
     grid_w: int | None = None,
     height: int | None = None,
     width: int | None = None,
+    offset: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """``(masks, failed)``. Failed rows become the random floor. No row is dropped.
 
@@ -92,7 +97,7 @@ def budget_or_floor(
     """
     failed = row_failed(scores)
     safe = torch.where(torch.isfinite(scores), scores, torch.zeros_like(scores))
-    kwargs = dict(grid_h=grid_h, grid_w=grid_w, height=height, width=width)
+    kwargs = dict(grid_h=grid_h, grid_w=grid_w, height=height, width=width, offset=offset)
     masks = adapt_scores(safe, fraction, seed, **kwargs)
     if bool(failed.any()):
         floor = random_floor(safe, fraction, seed, **kwargs)

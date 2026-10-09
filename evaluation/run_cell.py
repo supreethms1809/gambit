@@ -89,11 +89,11 @@ def _blur(x: torch.Tensor, kernel: int = 15) -> torch.Tensor:
     return out
 
 
-def remove(x: torch.Tensor, mask: torch.Tensor, operator: str, seed: int) -> torch.Tensor:
+def remove(x: torch.Tensor, mask: torch.Tensor, operator: str, seed: int, offset: int = 0) -> torch.Tensor:
     from evaluation.scores import _remove
 
     if operator == "road":
-        return _remove(x, mask, ROAD["iters"], ROAD["noise"], seed)
+        return _remove(x, mask, ROAD["iters"], ROAD["noise"], seed, offset=offset)
     if operator == "blur":
         m = mask.unsqueeze(1) if mask.ndim == 3 else mask
         return x * (1 - m) + _blur(x) * m
@@ -132,6 +132,7 @@ class CellSpec:
     config_hash: Optional[str] = None
     knobs: Knobs = field(default_factory=Knobs)
     out_dir: Optional[str] = None
+    image_batch: int = 4          # images on the device at once; 0 keeps the whole sample
 
 
 def _reset_peak(device) -> None:
@@ -165,6 +166,33 @@ def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     return out
 
 
+def _ranges(n: int, image_batch: int) -> list[tuple[int, int]]:
+    """``(start, end)`` slices. ``image_batch <= 0`` is the whole sample."""
+    if n < 1:
+        return []
+    step = n if image_batch is None or image_batch <= 0 else min(int(image_batch), n)
+    if step < 1:
+        raise ValueError("image_batch must be >= 1, or 0 for the whole sample")
+    return [(start, min(start + step, n)) for start in range(0, n, step)]
+
+
+def _whole_sample(method: str, ablation: Optional[str]) -> bool:
+    """True when splitting the sample would change the result.
+
+    The random floor and CVE draw from a seed that walks the sample in order.
+    SpRAy clusters every image together. The unpaired shift objective's reward
+    is the variance of the group means, so a group has to stay intact.
+    """
+    if method in {"random_floor", "cve", "spray"}:
+        return True
+    return bool(ablation and "unpaired" in ablation)
+
+
+def _release(device) -> None:
+    if getattr(device, "type", None) == "cuda":
+        torch.cuda.empty_cache()
+
+
 def _method_runs(spec: CellSpec) -> list[tuple[str, Optional[str], Optional[str]]]:
     """``(method, ablation, candidate)``: the methods, CDEA per ablation, then each candidate."""
     runs = [(m, None, None) for m in spec.methods]
@@ -191,9 +219,27 @@ def _candidate_knobs(spec: CellSpec, override: dict) -> "Knobs":
 # Contrastive
 # ---------------------------------------------------------------------------
 
+def _contrastive_maps(spec, model, x, h, method, ablation, candidate, area_for_map, knobs, device, loss_scale):
+    override = CONTRASTIVE_CANDIDATES[candidate] if candidate else None
+    if ablation is not None:
+        cfg = ABLATIONS[ablation](CdeaConfig(backend=default_backend(spec.backbone)))
+        return cdea_pair(model, x, h, spec.backbone, spec.knobs, device, cfg, loss_scale=loss_scale)
+    if isinstance(override, CdeaConfig):
+        return cdea_pair(model, x, h, spec.backbone, spec.knobs, device, override, loss_scale=loss_scale)
+    fn = contrastive_method(method)
+    kwargs = {}
+    if method in AREA_DEPENDENT:
+        kwargs["area"] = area_for_map
+    if method in {"cve"}:
+        kwargs["dataset"] = spec.dataset
+    if method in {"cve", "random_floor", "rise_margin"}:
+        kwargs["seed"] = spec.seed
+    return fn(model, x, h, spec.backbone, knobs, device, **kwargs)
+
+
 def run_contrastive(spec: CellSpec, device) -> Path:
     from baselines.adapter import budget_or_floor
-    from evaluation.run_data import contrastive_sample
+    from evaluation.run_data import ContrastiveSample, contrastive_sample
     from evaluation.run_models import load_cell_model
 
     loaded = load_cell_model(spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
@@ -202,11 +248,7 @@ def run_contrastive(spec: CellSpec, device) -> Path:
     model = loaded.model
     sample = contrastive_sample(spec.dataset, spec.split, spec.n, spec.seed,
                                 final=spec.final, config_hash=spec.config_hash)
-    x = sample.x.to(device)
-    h = hypotheses_for(model, x, 5)
-    h = type(h)(ids=h.ids.to(device), mask=h.mask.to(device))
-    k, l = h.ids[:, 0], h.ids[:, 1]
-    full = _logits(model, x)
+    n = int(sample.x.shape[0])
     counter = PassCounter(model)
     rows: list[dict] = []
     status: dict[str, dict] = {}
@@ -214,68 +256,92 @@ def run_contrastive(spec: CellSpec, device) -> Path:
     for method, ablation, candidate in _method_runs(spec):
         label = candidate or (method if ablation is None else f"{method}:{ablation}")
         areas = spec.areas if method in AREA_DEPENDENT else (None,)
+        ranges = _ranges(n, 0 if _whole_sample(method, ablation) else spec.image_batch)
         for area_for_map in areas:
             counter.reset()
-            start = time.perf_counter()
-            try:
-                override = CONTRASTIVE_CANDIDATES[candidate] if candidate else None
-                knobs = _candidate_knobs(spec, override) if isinstance(override, dict) else spec.knobs
-                if ablation is not None:
-                    cfg = ABLATIONS[ablation](CdeaConfig(backend=default_backend(spec.backbone)))
-                    maps = cdea_pair(model, x, h, spec.backbone, spec.knobs, device, cfg)
-                elif isinstance(override, CdeaConfig):
-                    maps = cdea_pair(model, x, h, spec.backbone, spec.knobs, device, override)
-                else:
-                    fn = contrastive_method(method)
-                    kwargs = {}
-                    if method in AREA_DEPENDENT:
-                        kwargs["area"] = area_for_map
-                    if method in {"cve"}:
-                        kwargs["dataset"] = spec.dataset
-                    if method in {"cve", "random_floor", "rise_margin"}:
-                        kwargs["seed"] = spec.seed
-                    maps = fn(model, x, h, spec.backbone, knobs, device, **kwargs)
-            except Exception as exc:  # recorded, not raised: one method must not sink the cell
-                status[label] = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
-                                 "trace": traceback.format_exc(limit=4)}
+            pending: list[dict] = []
+            extra: dict = {}
+            failed = None
+            trace = ""
+            map_seconds = 0.0
+            map_forward = 0
+            map_backward = 0
+            override = CONTRASTIVE_CANDIDATES[candidate] if candidate else None
+            knobs = _candidate_knobs(spec, override) if isinstance(override, dict) else spec.knobs
+            for start_i, end_i in ranges:
+                if len(ranges) > 1:
+                    print(f"{spec.dataset}/{spec.backbone} {label} images {start_i}:{end_i}/{n}", flush=True)
+                x = sample.x[start_i:end_i].to(device)
+                try:
+                    h = hypotheses_for(model, x, 5)
+                    h = type(h)(ids=h.ids.to(device), mask=h.mask.to(device))
+                    k, l = h.ids[:, 0], h.ids[:, 1]
+                    full = _logits(model, x)
+                    scale = (end_i - start_i) / n
+                    before_f, before_b = counter.forward, counter.backward
+                    tick = time.perf_counter()
+                    maps = _contrastive_maps(spec, model, x, h, method, ablation, candidate,
+                                             area_for_map, knobs, device, scale)
+                    map_seconds += time.perf_counter() - tick
+                    map_forward += counter.forward - before_f
+                    map_backward += counter.backward - before_b
+                    extra = _jsonable(maps.extra)
+                    chunk = ContrastiveSample(x=x, labels=sample.labels[start_i:end_i],
+                                               index=list(sample.index[start_i:end_i]))
+                    for area in (spec.areas if area_for_map is None else (area_for_map,)):
+                        pending += _score_pair(model, x, maps, k, l, full, area, spec, label, chunk,
+                                               budget_or_floor, map_seconds, counter, offset=start_i, n_images=n)
+                        if label == "cdea" and "shared" in maps.extra:
+                            with_shared = PairMaps(k=maps.k + maps.extra["shared"],
+                                                   l=maps.l + maps.extra["shared"], grid=maps.grid)
+                            pending += _score_pair(model, x, with_shared, k, l, full, area, spec, "cdea+shared",
+                                                   chunk, budget_or_floor, map_seconds, counter, offset=start_i,
+                                                   n_images=n)
+                except Exception as exc:  # recorded, not raised: one method must not sink the cell
+                    failed = exc
+                    trace = traceback.format_exc(limit=4)
+                    break
+                finally:
+                    del x
+                    _release(device)
+            if failed is not None:
+                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}",
+                                 "trace": trace}
                 continue
-            seconds = time.perf_counter() - start
-            status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
-                             "backward_images": counter.backward, "extra": _jsonable(maps.extra),
+            for row in pending:
+                row["seconds_per_image"] = map_seconds / n
+                row["forward_images"] = map_forward
+                row["backward_images"] = map_backward
+            rows += pending
+            status[label] = {"status": "ok", "seconds": map_seconds, "forward_images": map_forward,
+                             "backward_images": map_backward, "extra": extra,
                              "device_mb_after": device_memory_mb(device)}
             if os.environ.get("GAMBIT_TRACE_MEMORY"):
                 print(f"[mem] {label}: {status[label]['device_mb_after']:.0f} MB", flush=True)
-            for area in (spec.areas if area_for_map is None else (area_for_map,)):
-                rows += _score_pair(model, x, maps, k, l, full, area, spec, label, sample, budget_or_floor,
-                                    seconds, counter)
-                if label == "cdea" and "shared" in maps.extra:
-                    with_shared = PairMaps(k=maps.k + maps.extra["shared"], l=maps.l + maps.extra["shared"],
-                                           grid=maps.grid)
-                    rows += _score_pair(model, x, with_shared, k, l, full, area, spec, "cdea+shared",
-                                        sample, budget_or_floor, seconds, counter)
     counter.close()
     summary = _summary(spec, loaded, status, rows)
     return _write(spec, rows, summary, device)
 
 
 def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample, budget_or_floor,
-                seconds, counter) -> list[dict]:
+                seconds, counter, offset: int = 0, n_images: Optional[int] = None) -> list[dict]:
     grid_kw = {}
     if maps.grid is not None:
         grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=IMAGE_SIZE, width=IMAGE_SIZE)
     mask_seed = spec.seed * 1000 + int(round(area * 1000))
-    mk, fk = budget_or_floor(maps.k.detach().float(), area, mask_seed, **grid_kw)
+    budget_kw = dict(grid_kw, offset=offset)
+    mk, fk = budget_or_floor(maps.k.detach().float(), area, mask_seed, **budget_kw)
     ml = fl = None
     if maps.l is not None:
-        ml, fl = budget_or_floor(maps.l.detach().float(), area, mask_seed + 1, **grid_kw)
+        ml, fl = budget_or_floor(maps.l.detach().float(), area, mask_seed + 1, **budget_kw)
     m_full = _pick(full, k) - _pick(full, l)
     rows = []
     for operator in spec.operators:
-        out_k = _logits(model, remove(x, mk, operator, mask_seed))
+        out_k = _logits(model, remove(x, mk, operator, mask_seed, offset=offset))
         zk_wo_k, zl_wo_k = _pick(out_k, k), _pick(out_k, l)
         cd1 = m_full - (zk_wo_k - zl_wo_k)
         if ml is not None:
-            out_l = _logits(model, remove(x, ml, operator, mask_seed))
+            out_l = _logits(model, remove(x, ml, operator, mask_seed, offset=offset))
             zk_wo_l, zl_wo_l = _pick(out_l, k), _pick(out_l, l)
             cd = (zk_wo_l - zl_wo_l) - (zk_wo_k - zl_wo_k)
         else:
@@ -294,7 +360,7 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
                 "area_k": float(mk[i].float().mean()),
                 "area_l": float(ml[i].float().mean()) if ml is not None else float("nan"),
                 "failed_row": int(bool(fk[i]) or (fl is not None and bool(fl[i]))),
-                "seconds_per_image": seconds / x.shape[0],
+                "seconds_per_image": seconds / (x.shape[0] if n_images is None else n_images),
                 "forward_images": counter.forward, "backward_images": counter.backward,
                 "fast": int(spec.knobs.fast), "model_source": spec.model_source,
             })
@@ -304,6 +370,42 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
 # ---------------------------------------------------------------------------
 # Shift
 # ---------------------------------------------------------------------------
+
+def _shift_chunk(sample, start: int, end: int, device):
+    from evaluation.run_data import ShiftSample
+
+    sl = slice(start, end)
+    env = type(sample.env)(xs=[v[sl].to(device) for v in sample.env.xs], env_ids=list(sample.env.env_ids))
+    fg = None if sample.foreground is None else sample.foreground[sl].to(device)
+    return ShiftSample(x_id=sample.x_id[sl].to(device), env=env, labels=sample.labels[sl],
+                       index=list(sample.index[sl]), foreground=fg, notes=sample.notes)
+
+
+def _shift_maps(spec, model, sample, method, ablation, candidate, area_for_map, device, loss_scale, init_offset):
+    override = SHIFT_CANDIDATES[candidate] if candidate else None
+    if isinstance(override, ShiftConfig):
+        return cdea_shift_maps(model, sample, spec.backbone, spec.knobs, device, override, seed=spec.seed,
+                               loss_scale=loss_scale, init_offset=init_offset)
+    if isinstance(override, dict):
+        knobs = _candidate_knobs(spec, override)
+        extra = {"backend": override["backend"]} if "backend" in override else {}
+        return shift_method(method)(model, sample, spec.backbone, knobs, device, **extra)
+    if ablation is not None:
+        cfg = SHIFT_ABLATIONS[ablation](ShiftConfig(backend=default_backend(spec.backbone)))
+        if cfg.objective == "unpaired" and spec.dataset != "waterbirds":
+            raise ValueError("the unpaired objective (AS1) is defined on Waterbirds only")
+        return cdea_shift_maps(model, sample, spec.backbone, spec.knobs, device, cfg, seed=spec.seed,
+                               loss_scale=loss_scale, init_offset=init_offset)
+    kwargs = {}
+    if method in AREA_DEPENDENT:
+        kwargs["area"] = area_for_map
+    if method in {"spray", "random_floor", "cdea_shift"}:
+        kwargs["seed"] = spec.seed
+    if method == "cdea_shift":
+        kwargs["loss_scale"] = loss_scale
+        kwargs["init_offset"] = init_offset
+    return shift_method(method)(model, sample, spec.backbone, spec.knobs, device, **kwargs)
+
 
 def run_shift(spec: CellSpec, device) -> Path:
     from baselines.adapter import budget_or_floor, random_floor
@@ -318,9 +420,7 @@ def run_shift(spec: CellSpec, device) -> Path:
     model = loaded.model
     sample = shift_sample(spec.dataset, spec.split, spec.n, spec.seed,
                           final=spec.final, config_hash=spec.config_hash)
-    sample.x_id = sample.x_id.to(device)
-    sample.env = type(sample.env)(xs=[v.to(device) for v in sample.env.xs], env_ids=sample.env.env_ids)
-    y = _logits(model, sample.x_id).argmax(-1)   # the model's prediction, not the label (EVAL_PLAN 5.1)
+    n = int(sample.x_id.shape[0])
     counter = PassCounter(model)
     rows: list[dict] = []
     status: dict[str, dict] = {}
@@ -328,66 +428,84 @@ def run_shift(spec: CellSpec, device) -> Path:
     for method, ablation, candidate in _method_runs(spec):
         label = candidate or (method if ablation is None else f"{method}:{ablation}")
         areas = spec.areas if method in AREA_DEPENDENT else (None,)
+        ranges = _ranges(n, 0 if _whole_sample(method, ablation) else spec.image_batch)
         for area_for_map in areas:
             counter.reset()
-            start = time.perf_counter()
-            try:
-                override = SHIFT_CANDIDATES[candidate] if candidate else None
-                if isinstance(override, ShiftConfig):
-                    maps = cdea_shift_maps(model, sample, spec.backbone, spec.knobs, device, override, seed=spec.seed)
-                elif isinstance(override, dict):
-                    knobs = _candidate_knobs(spec, override)
-                    maps = shift_method(method)(model, sample, spec.backbone, knobs, device,
-                                                **({"backend": override["backend"]} if "backend" in override else {}))
-                elif ablation is not None:
-                    cfg = SHIFT_ABLATIONS[ablation](ShiftConfig(backend=default_backend(spec.backbone)))
-                    if cfg.objective == "unpaired" and spec.dataset != "waterbirds":
-                        raise ValueError("the unpaired objective (AS1) is defined on Waterbirds only")
-                    maps = cdea_shift_maps(model, sample, spec.backbone, spec.knobs, device, cfg, seed=spec.seed)
-                else:
-                    kwargs = {}
-                    if method in AREA_DEPENDENT:
-                        kwargs["area"] = area_for_map
-                    if method in {"spray", "random_floor", "cdea_shift"}:
-                        kwargs["seed"] = spec.seed
-                    maps = shift_method(method)(model, sample, spec.backbone, spec.knobs, device, **kwargs)
-            except Exception as exc:
-                status[label] = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
-                                 "trace": traceback.format_exc(limit=4)}
+            pending: list[dict] = []
+            extra: dict = {}
+            failed = None
+            trace = ""
+            map_seconds = 0.0
+            map_forward = 0
+            map_backward = 0
+            for start_i, end_i in ranges:
+                if len(ranges) > 1:
+                    print(f"{spec.dataset}/{spec.backbone} {label} images {start_i}:{end_i}/{n}", flush=True)
+                chunk = None
+                try:
+                    chunk = _shift_chunk(sample, start_i, end_i, device)
+                    # The predicted class on the full image, not the label (EVAL_PLAN 5.1).
+                    y = _logits(model, chunk.x_id).argmax(-1)
+                    before_f, before_b = counter.forward, counter.backward
+                    tick = time.perf_counter()
+                    scale = (end_i - start_i) / n
+                    maps = _shift_maps(spec, model, chunk, method, ablation, candidate, area_for_map,
+                                       device, scale, start_i)
+                    map_seconds += time.perf_counter() - tick
+                    map_forward += counter.forward - before_f
+                    map_backward += counter.backward - before_b
+                    extra = _jsonable(maps.extra)
+                    grid_kw = {}
+                    if maps.grid is not None:
+                        grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=IMAGE_SIZE, width=IMAGE_SIZE)
+                    budget_kw = dict(grid_kw, offset=start_i)
+                    for area in (spec.areas if area_for_map is None else (area_for_map,)):
+                        mask_seed = spec.seed * 1000 + int(round(area * 1000))
+                        sho, failed_row = budget_or_floor(maps.shortcut.detach().float(), area, mask_seed, **budget_kw)
+                        rob, _ = budget_or_floor(maps.robust.detach().float(), area, mask_seed + 2, **budget_kw)
+                        rand = random_floor(maps.shortcut.detach().float(), area, mask_seed + 1, **budget_kw)
+                        oods = list(chunk.env.xs[1:])
+                        ld = logit_disagreement_reduction(model, chunk.x_id, oods, y, sho, rand,
+                                                          seed=mask_seed, offset=start_i, **ROAD)
+                        pd = disagreement_reduction(model, chunk.x_id, oods, y, sho, rand,
+                                                    seed=mask_seed, offset=start_i, **ROAD)
+                        fg = chunk.foreground
+                        for i in range(chunk.x_id.shape[0]):
+                            pending.append({
+                                "game": "shift", "dataset": spec.dataset, "backbone": spec.backbone,
+                                "seed": spec.seed, "split": spec.split, "image_index": chunk.index[i],
+                                "method": label, "area": area, "operator": "road",
+                                "pred": int(y[i]), "label": int(chunk.labels[i]),
+                                "logit_delta_d": float(ld[i]), "prob_delta_d": float(pd[i]),
+                                "shortcut_on_background": float(mass_in(sho[i:i + 1], 1 - fg[i:i + 1])) if fg is not None else float("nan"),
+                                "robust_on_foreground": float(mass_in(rob[i:i + 1], fg[i:i + 1])) if fg is not None else float("nan"),
+                                "area_shortcut": float(sho[i].float().mean()),
+                                "failed_row": int(bool(failed_row[i])),
+                                "seconds_per_image": 0.0,
+                                "forward_images": 0, "backward_images": 0,
+                                "fast": int(spec.knobs.fast), "model_source": spec.model_source,
+                            })
+                except Exception as exc:
+                    failed = exc
+                    trace = traceback.format_exc(limit=4)
+                    break
+                finally:
+                    del chunk
+                    _release(device)
+            if failed is not None:
+                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}",
+                                 "trace": trace}
                 continue
-            seconds = time.perf_counter() - start
-            status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
-                             "backward_images": counter.backward, "extra": _jsonable(maps.extra),
+            for row in pending:
+                row["seconds_per_image"] = map_seconds / n
+                row["forward_images"] = map_forward
+                row["backward_images"] = map_backward
+            rows += pending
+            status[label] = {"status": "ok", "seconds": map_seconds, "forward_images": map_forward,
+                             "backward_images": map_backward, "extra": extra,
                              "device_mb_after": device_memory_mb(device)}
             if os.environ.get("GAMBIT_TRACE_MEMORY"):
                 print(f"[mem] {label}: {status[label]['device_mb_after']:.0f} MB", flush=True)
-            grid_kw = {}
-            if maps.grid is not None:
-                grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=IMAGE_SIZE, width=IMAGE_SIZE)
-            for area in (spec.areas if area_for_map is None else (area_for_map,)):
-                mask_seed = spec.seed * 1000 + int(round(area * 1000))
-                sho, failed = budget_or_floor(maps.shortcut.detach().float(), area, mask_seed, **grid_kw)
-                rob, _ = budget_or_floor(maps.robust.detach().float(), area, mask_seed + 2, **grid_kw)
-                rand = random_floor(maps.shortcut.detach().float(), area, mask_seed + 1, **grid_kw)
-                oods = list(sample.env.xs[1:])
-                ld = logit_disagreement_reduction(model, sample.x_id, oods, y, sho, rand, seed=mask_seed, **ROAD)
-                pd = disagreement_reduction(model, sample.x_id, oods, y, sho, rand, seed=mask_seed, **ROAD)
-                fg = sample.foreground.to(device) if sample.foreground is not None else None
-                for i in range(sample.x_id.shape[0]):
-                    rows.append({
-                        "game": "shift", "dataset": spec.dataset, "backbone": spec.backbone,
-                        "seed": spec.seed, "split": spec.split, "image_index": sample.index[i],
-                        "method": label, "area": area, "operator": "road",
-                        "pred": int(y[i]), "label": int(sample.labels[i]),
-                        "logit_delta_d": float(ld[i]), "prob_delta_d": float(pd[i]),
-                        "shortcut_on_background": float(mass_in(sho[i:i + 1], 1 - fg[i:i + 1])) if fg is not None else float("nan"),
-                        "robust_on_foreground": float(mass_in(rob[i:i + 1], fg[i:i + 1])) if fg is not None else float("nan"),
-                        "area_shortcut": float(sho[i].float().mean()),
-                        "failed_row": int(bool(failed[i])),
-                        "seconds_per_image": seconds / sample.x_id.shape[0],
-                        "forward_images": counter.forward, "backward_images": counter.backward,
-                        "fast": int(spec.knobs.fast), "model_source": spec.model_source,
-                    })
     counter.close()
     summary = _summary(spec, loaded, status, rows)
     summary["sample_notes"] = sample.notes

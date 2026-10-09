@@ -52,6 +52,7 @@ def test_epsilon_plus_relevance_matches_the_image() -> None:
     relevance = lrp_maps(model, image, labels)
     assert relevance.shape == (2, 32, 32)
     assert torch.isfinite(relevance).all()
+    assert torch.allclose(relevance, lrp_maps(model, image, labels, batch_size=1))
     assert model(image).shape == (2, 2)
 
 
