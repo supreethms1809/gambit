@@ -133,3 +133,56 @@ def test_margin_ig_internal_batch_matches_one_batch():
     chunked = IntegratedGradients(forward).attribute(
         x, baselines=torch.zeros_like(x), n_steps=4, method="riemann_right", internal_batch_size=2)
     assert torch.allclose(whole, chunked, atol=1e-5)
+
+
+class Tiny224(nn.Module):
+    """A small CNN on 224 px input, so the cell runs on CPU in a test."""
+
+    def __init__(self, num_classes=6):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 8, 5, stride=4, padding=2)
+        self.conv2 = nn.Conv2d(8, 8, 3, stride=2, padding=1)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(8, num_classes)
+
+    def forward(self, x):
+        return self.fc(self.pool(torch.relu(self.conv2(torch.relu(self.conv1(x))))).flatten(1))
+
+
+def _cell_records(tmp_path, monkeypatch, image_batch):
+    import csv
+    import gzip
+    from types import SimpleNamespace
+
+    import evaluation.run_data as run_data
+    import evaluation.run_models as run_models
+    from evaluation.run_cell import CellSpec, run_contrastive
+    from evaluation.run_data import ContrastiveSample
+    from evaluation.run_methods import Knobs
+
+    torch.manual_seed(5)
+    model = Tiny224().eval()
+    x = torch.rand(6, 3, 224, 224)
+    monkeypatch.setattr(run_models, "load_cell_model", lambda *a, **k: SimpleNamespace(
+        model=model, num_classes=6, path="tiny", source="smoke"))
+    monkeypatch.setattr(run_data, "contrastive_sample", lambda *a, **k: ContrastiveSample(
+        x=x.clone(), labels=torch.zeros(6, dtype=torch.long), index=list(range(6))))
+    spec = CellSpec(game="contrastive", dataset="cifar10", backbone="resnet50", seed=0, split="val", n=6,
+                    methods=("cdea",), areas=(0.05,), operators=("road",),
+                    knobs=Knobs(cdea_steps=20, ig_steps=2), out_dir=str(tmp_path / f"ib{image_batch}"),
+                    image_batch=image_batch)
+    out = run_contrastive(spec, torch.device("cpu"))
+    with gzip.open(out / "records.csv.gz", "rt") as f:
+        rows = list(csv.DictReader(f))
+    return sorted(rows, key=lambda r: (r["method"], int(r["image_index"])))
+
+
+def test_cdea_cell_chunks_match_the_full_sample(tmp_path, monkeypatch):
+    """The primary CDEA row must get the chunk's loss scale, like ablations and candidates."""
+    whole = _cell_records(tmp_path, monkeypatch, 0)
+    chunked = _cell_records(tmp_path, monkeypatch, 4)  # 4 + 2: uneven chunks
+    assert [r["method"] for r in whole] == [r["method"] for r in chunked]
+    assert {r["method"] for r in whole} == {"cdea", "cdea+shared"}
+    for a, b in zip(whole, chunked):
+        for key in ("cd", "cd1", "z_k_without_k", "z_l_without_k", "z_k_without_l", "z_l_without_l"):
+            assert abs(float(a[key]) - float(b[key])) <= 1e-5, (a["method"], a["image_index"], key, a[key], b[key])

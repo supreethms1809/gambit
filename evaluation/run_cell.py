@@ -234,6 +234,9 @@ def _contrastive_maps(spec, model, x, h, method, ablation, candidate, area_for_m
         kwargs["dataset"] = spec.dataset
     if method in {"cve", "random_floor", "rise_margin"}:
         kwargs["seed"] = spec.seed
+    if method == "cdea":
+        # Same chunk scale as the ablation and candidate paths above.
+        kwargs["loss_scale"] = loss_scale
     return fn(model, x, h, spec.backbone, knobs, device, **kwargs)
 
 
