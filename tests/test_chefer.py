@@ -76,3 +76,16 @@ def test_chefer_runs_on_vit_and_skips_resnet() -> None:
     resnet = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10",
                                    "--backbone", "resnet50", "--methods", "all"]))
     assert "chefer" not in resnet.methods
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS is not available")
+def test_class_relprop_runs_on_mps() -> None:
+    torch.manual_seed(0)
+    src = torchvision.models.vit_b_16(weights=None).to("mps")
+    src.eval()
+    converted = from_torchvision(src)
+    x = torch.rand(1, 3, 224, 224, device="mps")
+    cam = class_relprop(converted, x, 3)
+    assert cam.shape == (14, 14)
+    assert cam.device.type == "mps"
+    assert bool(torch.isfinite(cam).all())
