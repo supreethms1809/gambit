@@ -30,9 +30,6 @@ from base_evidence.integrated_gradients_regions import IntegratedGradientsRegion
 from base_evidence.library_adapters import CaptumRegionsProvider
 from core.types import HypothesisSet
 from evaluation.masks import mass_in, to_budget_mask
-from instantiations.contrastive.allocator import OptimizationAllocator
-from instantiations.contrastive.objective import ContrastiveObjective
-from modality.grid_regions import VisionGridUnitSpace
 
 
 def _recall(attr: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
@@ -62,9 +59,8 @@ def test_shared_hypotheses_use_rank_order_and_mask_the_extra_slots() -> None:
     assert kept.tolist() == [1, 0]
     assert foil.tolist() == [3, 2]
     short = shared_hypotheses(torch.randn(2, 3), k=5)
-    assert short.ids.shape == (2, 5)
-    assert bool(short.mask[:, :3].all())
-    assert not bool(short.mask[:, 3:].any())
+    assert short.ids.shape == (2, 3)
+    assert bool(short.mask.all())
     with pytest.raises(ValueError):
         foil_pair(shared_hypotheses(torch.randn(2, 4), k=1))
     with pytest.raises(ValueError):
@@ -106,34 +102,8 @@ def test_nan_and_empty_rows_become_the_floor_and_stay_in_the_batch() -> None:
     assert bool(row_failed(torch.tensor([[1.0, float("inf")]])).all())
 
 
-def test_cdea_masks_score_the_same_through_the_adapter() -> None:
-    torch.manual_seed(0)
-    model = nn.Sequential(
-        nn.Conv2d(3, 4, 3, padding=1),
-        nn.ReLU(),
-        nn.AdaptiveAvgPool2d(1),
-        nn.Flatten(),
-        nn.Linear(4, 4),
-    )
-    model.eval()
-    unit_space = VisionGridUnitSpace(4, 4)
-    allocator = OptimizationAllocator(
-        ContrastiveObjective(
-            lambda_suff=1.0, lambda_margin=1.0, lambda_sparse=0.05, lambda_overlap=0.2
-        ),
-        num_steps=8,
-        lr=0.4,
-    )
-    x = torch.rand(2, 3, 16, 16)
-    hypotheses = HypothesisSet(
-        ids=torch.tensor([[0, 1], [2, 0]]),
-        mask=torch.ones(2, 2, dtype=torch.bool),
-    )
-    evidence = torch.rand(2, 2, 16).abs()
-    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
-    region = allocator.allocate(
-        x=x, model=model, unit_space=unit_space, hypotheses=hypotheses, evidence=evidence
-    )["unique"][:, 0].detach()
+def test_adapter_scores_match_the_budget_mask() -> None:
+    region = torch.tensor([[0.0, 1.0, 0.2, 0.4] * 4, [0.5, 0.1, 0.9, 0.0] * 4])
     kwargs = dict(grid_h=4, grid_w=4, height=16, width=16)
     direct = to_budget_mask(region, 0.25, seed=0, **kwargs)
     via = adapt_scores(region, 0.25, seed=0, **kwargs)

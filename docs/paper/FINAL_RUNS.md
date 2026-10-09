@@ -1,6 +1,6 @@
 # Final runs
 
-Final runs are not complete. The tag `final-runs-v1` was not created. No grid was launched, and no failed cell was rerun, because there are no run files.
+Final runs are not complete. The final-runs tag was not created. No grid was launched, and no failed cell was rerun, because there are no run files.
 
 ## Why the check does not pass
 

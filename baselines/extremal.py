@@ -83,11 +83,14 @@ def _one_image(
     target: int,
     area: float,
     reward_func,
+    *,
+    deletion: bool = False,
     **kwargs,
 ) -> torch.Tensor:
     if image.ndim != 4 or image.shape[0] != 1:
         raise ValueError("extremal_perturbation is called on one image")
-    extremal_perturbation, _, _, _, _, _ = _import_torchray()
+    extremal_perturbation, _, preserve, delete, _, _ = _import_torchray()
+    variant = delete if deletion else preserve
     params = list(model.parameters())
     flags = [p.requires_grad for p in params]
     was_training = model.training
@@ -99,6 +102,7 @@ def _one_image(
             int(target),
             areas=[float(area)],
             reward_func=reward_func,
+            variant=variant,
             **kwargs,
         )
     finally:
@@ -130,6 +134,7 @@ def margin_masks(
     x: torch.Tensor,
     hypotheses: HypothesisSet,
     area: float = 0.1,
+    deletion: bool = False,
     **kwargs,
 ) -> torch.Tensor:
     """Native mask of ``z_k - z_l`` for the shared rank-0 / rank-1 pair. Returns ``(B, H, W)``."""
@@ -141,6 +146,7 @@ def margin_masks(
             int(kept[i]),
             area,
             margin_reward(int(foil[i])),
+            deletion=deletion,
             **kwargs,
         )
         for i in range(x.shape[0])

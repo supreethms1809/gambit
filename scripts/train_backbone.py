@@ -41,26 +41,8 @@ REPO = Path(__file__).resolve().parent.parent
 TV_INPUT_SIZE = 224
 
 
-def paper_checkpoint_name(
-    dataset: str,
-    model_name: str,
-    pretrained: bool,
-    freeze_backbone: bool,
-    num_epochs: int,
-    lr: float,
-    seed: int,
-    convention: str = "raw",
-) -> str:
-    """Filename for one paper cell. ImageNet normalisation gets its own cache key."""
-    mode_tag = "lp" if freeze_backbone else "ft"
-    pre_tag = "pt" if pretrained else "rand"
-    lr_tag = f"lr{lr:g}"
-    conv_tag = "" if convention == "raw" else f"_{convention}"
-    return (
-        f"{dataset}_{model_name}_{pre_tag}_{mode_tag}_ep{num_epochs}"
-        f"_{lr_tag}{conv_tag}_seed{seed}.pt"
-    )
-COLORED_MNIST_CORRELATION = 0.9
+from models.build import build_backbone as _build_model
+from models.build import model_grid_size, paper_checkpoint_name
 
 # Medical datasets ship pre-split; train on the train split only (relative to data_root).
 # Keep in sync with MEDICAL_SPLIT_ROOTS in examples/contrastive_explanation.py.
@@ -79,21 +61,8 @@ LEGACY_TEST_ROOTS = {
 PAPER_SPLIT_DATASETS = {
     "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
     "cifar100", "oxford_pets", "cub200",
-    "colored_mnist", "planted_patch", "imagenet9", "waterbirds",
+    "planted_patch",
 }
-# Fixed color noise and patch positions. Model seeds do not redraw the data.
-SHIFT_DATA_SEED = 43
-
-
-def model_grid_size(model_name: str) -> tuple:
-    """Return (grid_h, grid_w) for model at TV_INPUT_SIZE=224.
-
-    vit_b_16 → 14×14 (224/16=14 patches per side)
-    all others → 7×7
-    """
-    if model_name == "vit_b_16":
-        return 14, 14
-    return 7, 7
 
 # ---------------------------------------------------------------------------
 # Data loaders  (train splits)
@@ -280,96 +249,14 @@ def get_train_loader(
         ds = _paper_subset(ds, dataset, "train")
         return _dataloader(ds, batch_size, True, seed), num_classes
 
-    if dataset == "colored_cifar10":
-        from instantiations.shift.biased_data import ColoredCIFAR10
-        base_ds = ColoredCIFAR10(root=str(data_root), train=True, download=True,
-                                 correlation=COLORED_MNIST_CORRELATION)
-        ds = _ResizeTo(base_ds, image_size)
-        return _dataloader(ds, batch_size, True, seed), 10
-
-    if dataset == "texture_mnist":
-        from instantiations.shift.biased_data import TextureBiasedMNIST
-        base_ds = TextureBiasedMNIST(root=str(data_root), train=True, download=True,
-                                     correlation=COLORED_MNIST_CORRELATION)
-        ds = _ResizeTo(base_ds, image_size)
-        return _dataloader(ds, batch_size, True, seed), 10
-
-    if dataset == "colored_mnist":
-        from instantiations.shift.biased_data import ColoredMNIST
-        # Colors are fixed by SHIFT_DATA_SEED. Train indices are the MNIST paper
-        # train split, so the val images are held out for checkpoint selection.
-        base_ds = ColoredMNIST(root=str(data_root), train=True, download=False,
-                               correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED)
-        ds = _paper_subset(_ResizeTo(base_ds, image_size), "mnist", "train")
-        return _dataloader(ds, batch_size, True, seed), 10
-
     if dataset == "planted_patch":
-        from instantiations.shift.planted_patch import PlantedPatchClassifier
+        from evaluation.planted_cues import PlantedPatchClassifier
         ds = PlantedPatchClassifier(
             split="train", root=data_root, image_size=image_size, patch_seed=0,
         )
         return _dataloader(ds, batch_size, True, seed), 10
 
-    if dataset == "imagenet9":
-        from instantiations.shift.imagenet9 import ImageNet9Classifier
-        ds = ImageNet9Classifier(split="train", root=data_root / "imagenet9", image_size=image_size)
-        # Folder prefixes are the class ids. Do not open the images to count them.
-        class_ids = []
-        for pair in ds.inner.pairs:
-            prefix = pair["original"].parent.name.split("_", 1)[0]
-            class_ids.append(int(prefix) if prefix.isdigit() else 0)
-        num_classes = max(class_ids) + 1
-        return _dataloader(ds, batch_size, True, seed), num_classes
-
-    if dataset == "waterbirds":
-        from instantiations.shift.waterbirds import WaterbirdsClassifier
-        ds = WaterbirdsClassifier(split="train", image_size=image_size)
-        return _dataloader(ds, batch_size, True, seed), 2
-
-    raise ValueError(f"Unknown dataset: {dataset}. "
-                     f"Choices: mnist, cifar10, pets, stanford_dogs, ham10000, brain_tumor, "
-                     f"colored_mnist, colored_cifar10, texture_mnist, "
-                     f"planted_patch, imagenet9, waterbirds")
-
-
-# ---------------------------------------------------------------------------
-# Model building  (mirrors ablation_contrastive._build_model)
-# ---------------------------------------------------------------------------
-
-def _build_model(model_name: str, num_classes: int, pretrained: bool = True) -> nn.Module:
-    from torchvision import models
-    weights = "IMAGENET1K_V1" if pretrained else None
-    if model_name == "resnet18":
-        m = models.resnet18(weights=weights)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-    elif model_name == "resnet34":
-        m = models.resnet34(weights=weights)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-    elif model_name == "resnet50":
-        m = models.resnet50(weights=weights)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-    elif model_name == "mobilenet_v2":
-        m = models.mobilenet_v2(weights=weights)
-        m.classifier[1] = nn.Linear(m.last_channel, num_classes)
-    elif model_name == "efficientnet_b0":
-        m = models.efficientnet_b0(weights=weights)
-        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
-    elif model_name == "efficientnet_v2_s":
-        # Its last Conv2d is the final 1x1 projection with a 7x7 spatial output, so
-        # GradCAM's automatic target-layer pick is the canonical one and the grid stays
-        # 7x7 — comparable to the resnet baselines. Mirrors the builder in
-        # examples/contrastive_explanation.py, which already offered this backbone.
-        m = models.efficientnet_v2_s(weights=weights)
-        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
-    elif model_name == "vit_b_16":
-        m = models.vit_b_16(weights=weights)
-        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
-    elif model_name == "vit_b_32":
-        m = models.vit_b_32(weights=weights)
-        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
-    return m
+    raise ValueError(f"Unknown dataset: {dataset}.")
 
 
 def _freeze_backbone(model: nn.Module) -> None:
@@ -436,28 +323,11 @@ def get_val_loader(
 
     if dataset not in PAPER_SPLIT_DATASETS:
         return None
-    if dataset == "colored_mnist":
-        from instantiations.shift.biased_data import ColoredMNIST
-        base = ColoredMNIST(
-            root=str(data_root), train=True, download=False,
-            correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED,
-        )
-
-        ds = _paper_subset(_ResizeTo(base, image_size), "mnist", "val")
-        return _dataloader(ds, batch_size, False, 0)
     if dataset == "planted_patch":
-        from instantiations.shift.planted_patch import PlantedPatchClassifier
+        from evaluation.planted_cues import PlantedPatchClassifier
         ds = PlantedPatchClassifier(
             split="val", root=data_root, image_size=image_size, patch_seed=0,
         )
-        return _dataloader(ds, batch_size, False, 0)
-    if dataset == "imagenet9":
-        from instantiations.shift.imagenet9 import ImageNet9Classifier
-        ds = ImageNet9Classifier(split="val", root=data_root / "imagenet9", image_size=image_size)
-        return _dataloader(ds, batch_size, False, 0)
-    if dataset == "waterbirds":
-        from instantiations.shift.waterbirds import WaterbirdsClassifier
-        ds = WaterbirdsClassifier(split="val", image_size=image_size)
         return _dataloader(ds, batch_size, False, 0)
     spec = load_spec(dataset)
     root_rel = spec["roots"]["val"]

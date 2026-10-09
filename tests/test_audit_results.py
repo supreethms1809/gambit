@@ -63,7 +63,7 @@ def test_masks_need_every_dataset_and_the_paper_file_is_absent() -> None:
     assert masks_checked([]) is False
     assert masks_checked(required_datasets()) is True
     assert "imagenet" in required_datasets()
-    assert "sixth_shift_tbd" in required_datasets()
+    assert "cub200" in required_datasets()
     report = paper_audit()
     assert report["passed"] is False
     assert report["results_present"] is False

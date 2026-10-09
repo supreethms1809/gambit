@@ -299,7 +299,7 @@ def main() -> None:
     if not report["complete"]:
         raise SystemExit(
             "refusing to write RESULTS.md: final runs are not complete; "
-            "the tag final-runs-v1 was not created"
+            "the final-runs tag was not created"
         )
     raise SystemExit("refusing to write RESULTS.md: no run directory was passed")
 

@@ -2,12 +2,14 @@
 
 Claims are tied to a table and a test. A method that beats CDEA on any metric or dataset stays in the table, and the text says where it is better. No number in the paper is typed by hand. Every number comes from `evaluation/` and `analysis/` on the shared inputs.
 
-## Make only if the confirmatory test passes
+## Contrastive claims
 
-- CDEA's unique evidence is more contrastive than margin attribution and Extremal Perturbations at matched area. Family C, CD@5% under ROAD.
-- Allocation makes explanations more model-dependent. The model-randomisation check.
-- The shortcut mask captures cross-environment disagreement. Family S, ΔD.
-- Lesion overlap cannot validate contrastive explanations. The centre-prior comparison, reported as a negative finding.
+- **C1.** CDEA's unique evidence is more necessary for the preference of k over l than margin attribution and deletion Extremal Perturbations at matched area. Family C, CD@5% under ROAD.
+- **C2.** That evidence aligns with annotated discriminative parts.
+- **C3.** That evidence aligns with planted cues.
+- **C4.** Shared and unique evidence are the parts the payoffs define.
+- **C5.** The allocation is model-dependent. The model-randomisation check.
+- **N1.** Lesion overlap cannot validate contrastive explanations. The centre-prior comparison, reported as a negative finding.
 
 ## Do not make
 

@@ -19,15 +19,14 @@ if str(REPO) not in sys.path:
 
 from analysis.build_results import render_results
 from scripts.completion_check import CONTRASTIVE_DATASETS
-from scripts.shift_grid import SHIFT_DATASETS
 
 PAPER_RESULTS = REPO / "results" / "paper" / "RESULTS.md"
 _NUMBER = re.compile(r"-?\d+\.\d+")
 
 
 def required_datasets() -> tuple[str, ...]:
-    """Contrastive and shift datasets whose masks still need an eye check."""
-    return tuple(dict.fromkeys((*CONTRASTIVE_DATASETS, *SHIFT_DATASETS)))
+    """Contrastive datasets whose masks still need an eye check."""
+    return tuple(CONTRASTIVE_DATASETS)
 
 
 def masks_checked(seen: Sequence[str]) -> bool:

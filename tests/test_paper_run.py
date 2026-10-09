@@ -10,9 +10,7 @@ from evaluation.run_cell import PassCounter, _method_runs
 from evaluation.run_methods import (
     ABLATIONS,
     CONTRASTIVE_CORE,
-    SHIFT_ABLATIONS,
     CdeaConfig,
-    ShiftConfig,
     default_backend,
     swapped,
 )
@@ -30,15 +28,13 @@ def test_swapped_exchanges_rank_0_and_rank_1_only():
 def test_every_ablation_changes_the_config_it_names():
     base = CdeaConfig()
     assert ABLATIONS["A1_independent"](base).independent is True
-    assert ABLATIONS["A2_no_margin"](base).lambda_margin == 0.0
-    assert ABLATIONS["A3_no_overlap"](base).lambda_overlap == 0.0
-    assert ABLATIONS["A4_no_shared"](base).use_shared is False
-    assert ABLATIONS["A5_init_zero"](base).init_from_evidence is False
-    assert ABLATIONS["A6_interaction_attention"](base).attn_mix > 0
+    assert ABLATIONS["A2_no_shared"](base).shared is False
+    assert ABLATIONS["A3_preserve"](base).preserve is True
+    assert ABLATIONS["A4_pair"](base).pair_only is True
+    assert ABLATIONS["A5_uniform"](base).init == "uniform"
+    assert ABLATIONS["A6_hard_top_mass"](base).projection == "hard_top_mass"
     assert ABLATIONS["A7_steps_100"](base).steps == 100
-    assert ABLATIONS["A8_preset_competitive"](base).preset == "competitive"
-    assert SHIFT_ABLATIONS["AS1_unpaired_nomass"](ShiftConfig()).objective == "unpaired"
-    assert SHIFT_ABLATIONS["AS1_unpaired_nomass"](ShiftConfig()).lambda_mass == 0.0
+    assert ABLATIONS["A9_first_order"](base).kind == "first_order"
 
 
 def test_vit_uses_ig_and_skips_cve():
@@ -53,11 +49,8 @@ def test_vit_uses_ig_and_skips_cve():
 
 def test_ablations_run_as_cdea_variants():
     spec = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10", "--methods", "none",
-                                 "--ablations", "A2_no_margin,A3_no_overlap"]))
-    assert _method_runs(spec) == [("cdea", "A2_no_margin", None), ("cdea", "A3_no_overlap", None)]
-    spec = spec_from_args(parse(["--game", "shift", "--dataset", "waterbirds", "--methods", "none",
-                                 "--ablations", "all"]))
-    assert {m for m, _a, _c in _method_runs(spec)} == {"cdea_shift"}
+                                 "--ablations", "A2_no_shared,A3_preserve"]))
+    assert _method_runs(spec) == [("cdea", "A2_no_shared", None), ("cdea", "A3_preserve", None)]
 
 
 def test_pass_counter_counts_forward_and_backward_images():
@@ -73,14 +66,14 @@ def test_pass_counter_counts_forward_and_backward_images():
 
 
 def test_selection_candidates_cover_the_plan_grid():
-    from evaluation.run_methods import CONTRASTIVE_CANDIDATES, SHIFT_CANDIDATES, candidate_applies
+    from evaluation.run_methods import CONTRASTIVE_CANDIDATES, candidate_applies
 
     cdea = [c for c in CONTRASTIVE_CANDIDATES if c.startswith("cdea@")]
-    assert len(cdea) == 18
-    assert len([c for c in cdea if candidate_applies(c, "vit_b_16")]) == 9
+    assert len(cdea) == 6
+    assert len([c for c in cdea if candidate_applies(c, "vit_b_16")]) == 4
+    assert len([c for c in cdea if candidate_applies(c, "resnet50")]) == 4
     assert len([c for c in CONTRASTIVE_CANDIDATES if c.startswith("extremal@")]) == 4
     assert len([c for c in CONTRASTIVE_CANDIDATES if c.startswith("rise_margin@")]) == 4
-    assert len([c for c in SHIFT_CANDIDATES if c.startswith("cdea_shift@")]) == 12
     spec = spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10", "--methods", "none",
                                  "--candidates", "all", "--backbone", "vit_b_16"]))
     assert "margin_gradcam@default" not in spec.candidates
@@ -96,6 +89,7 @@ def test_runner_outputs_do_not_dirty_the_tree():
     # Paths a run creates between cells. (The committed smoke REPORT.md is tracked,
     # so check-ignore does not apply to it.)
     for path in ("results/paper/runs/val/contrastive/x/records.csv.gz",
+                 "results/paper/cells/val/contrastive/x/records.csv.gz",
                  "results/paper/smoke/fast_knobs/val/contrastive/x/summary.json"):
         out = subprocess.run(["git", "check-ignore", "-q", path], cwd=root)
         assert out.returncode == 0, f"{path} is not ignored"

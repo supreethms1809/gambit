@@ -1,4 +1,4 @@
-"""Completion check for the final grids. It does not tag ``final-runs-v1``.
+"""Completion check for the final grids. It does not create the final-runs tag.
 
 A cell is complete only when its done marker exists. A failed marker is a
 rerun, and a missing marker is still pending. Run-record assertions check
@@ -22,7 +22,6 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from scripts.final_grid import cell_id
-from scripts.shift_grid import ablation_cells, shift_cells
 
 CONTRASTIVE_DATASETS = (
     "cifar10",
@@ -139,22 +138,24 @@ def assert_run_record(record: Mapping, *, area: float, tolerance: float, n: int)
         raise AssertionError("n does not match the plan")
 
 
-def runs_complete(
-    contrastive_log: Path = CONTRASTIVE_LOG,
-    shift_log: Path = SHIFT_LOG,
-    ablation_log: Path = ABLATION_LOG,
-) -> dict:
-    """All three manifests have a done marker for every cell."""
-    parts = {
-        "contrastive": completion_report(contrastive_cells(), contrastive_log),
-        "shift": completion_report(shift_cells(), shift_log),
-        "ablation": completion_report(ablation_cells(), ablation_log),
-    }
-    pending = sum(part["pending"] + part["failed"] for part in parts.values())
+def record_matches(summary: dict, *, code_hash: str, knob_hash: str, gate: bool = False) -> bool:
+    """Old records and fast knobs do not count. A gate cell also rejects ``fast``."""
+    if summary.get("method_code_hash") != code_hash:
+        return False
+    if summary.get("knobs_hash") != knob_hash:
+        return False
+    if gate and summary.get("fast"):
+        return False
+    return True
+
+
+def runs_complete(contrastive_log: Path = CONTRASTIVE_LOG) -> dict:
+    """The contrastive manifest has a done marker for every cell."""
+    part = completion_report(contrastive_cells(), contrastive_log)
     return {
-        "complete": all(part["complete"] for part in parts.values()),
-        "pending": pending,
-        "parts": parts,
+        "complete": part["complete"],
+        "pending": part["pending"] + part["failed"],
+        "parts": {"contrastive": part},
     }
 
 
@@ -163,7 +164,7 @@ def main() -> None:
     report = runs_complete()
     raise SystemExit(
         "final runs are not complete; "
-        "the tag final-runs-v1 was not created; "
+        "the final-runs tag was not created; "
         f"pending={report['pending']}"
     )
 

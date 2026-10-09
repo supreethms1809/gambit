@@ -76,38 +76,19 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** No correctly-classified foil image in the tries writes a NaN row (floored downstream), as in CVE. A non-finite feature map raises. No flip after exhaustion records `flipped=False`, never hangs. Missing SwAV weights raise an informative error. SwAV is ImageNet self-supervised, so its semantic prior is weak on HAM10000 and brain MRI.
 - **Cost.** One head evaluation per candidate pair per step over the joint `49 × (N × 49)` set after the prefilter, per edit. Per-image wall time and memory at 200 images on CIFAR-10 and HAM10000 feed `scripts/launch_paper_eval.py` scheduling before the grid runs.
 
-## Attribution difference
+## Extremal Perturbations, deletion variant
 
-- **Reviewer question.** Why not subtract two heatmaps?
-- **Source.** `baselines.shift_maps.environment_maps`. The maps are the shared Grad-CAM or integrated-gradients attributions, one per environment. There is no separate reference implementation: the reduction is the baseline.
-- **Patches.** None.
-- **Defaults.** Index 0 is the in-distribution map. The robust map is the elementwise minimum across environments. The shortcut map is the largest absolute gap between the in-distribution map and any other environment.
-- **Reproduction.** The constructed-map test in `tests/test_shift_baselines.py`. A patch that exists only in the in-distribution map is the shortcut, and the square shared by every environment is the robust map. There is no single published number for this reduction.
-- **Conversion.** The shared budget conversion, applied to each of the two maps.
-- **Failure modes.** Fewer than two environments raises. A non-finite map raises.
-- **Cost.** One attribution per environment, then an elementwise reduction.
+- **Reviewer question.** The preservation mask answers sufficiency. Necessity needs a deletion mask.
+- **Source.** TorchRay `extremal_perturbation` with `variant=DELETE_VARIANT` and the margin reward `z_k - z_l`. The preservation call stays as the sufficiency comparator.
+- **Status.** Not re-audited. The deletion flag is new, and `scripts/crosscheck_evidence.py` has not been re-run for this variant.
+- **Conversion.** The shared budget conversion, same area as the preservation mask.
 
-## Per-environment Extremal Perturbations
+## Analytic decomposition
 
-- **Reviewer question.** Same mask method, differenced across environments.
-- **Source.** `per_environment_extremal` calls `class_masks` on each environment, then `environment_maps`. The TorchRay pin, patches, and defaults are the Extremal Perturbations entry.
-- **Reproduction target.** The same VOC pointing game as Extremal Perturbations. It has not been run. The CI check is that two identical environments keep that mask as the robust map and a zero shortcut.
-- **Conversion.** Each environment uses the native area mask. The difference is taken after that conversion.
-- **Failure modes.** The same as Extremal Perturbations, once per environment.
-- **Cost.** One Extremal Perturbations run per environment per image.
-
-## Spectral Relevance Analysis
-
-- **Reviewer question.** Explanation-based shortcut discovery already exists.
-- **Citation.** Sebastian Lapuschkin, Stephan Wäldchen, Alexander Binder, Grégoire Montavon, Wojciech Samek, and Klaus-Robert Müller, Unmasking Clever Hans predictors and assessing what machines really learn, Nature Communications 2019.
-- **Source.** CoRelAy `SpectralClustering`, commit `bc80524b6ff4f7a2ccd60219465d8badc5f437e1`, vendored at `third_party/corelay`. Relevance for a module is Zennit `EpsilonPlus`, commit `3e98348aa95e908f550ab2a13fca2245c30f7de3`, vendored at `third_party/zennit`. Both are LGPL-3.0-or-later. CoRelAy imports `metrohash`, installed as `metrohash-python` 1.1.3.3.
-- **Patches.** None. The vendor directories are added to `sys.path` only for the import.
-- **Defaults.** Euclidean distance, symmetric sparse 10-nearest neighbors, symmetric normalized Laplacian, 32 eigenvalues, k-means with 2 clusters. k-means uses `random_state` and `n_init=10`. The 32-eigenvalue default needs more maps than 32. A smaller stack passes a smaller `n_eigval`.
-- **Reproduction target.** Their Fisher-vector classifier on PASCAL VOC 2007 horse images separates four strategies: horse and rider, a portrait source tag, riding context, and a landscape source tag. The source tag is present in about one-fifth of the horse images. That run has not been started. The CI check is two synthetic relevance prototypes.
-- **Conversion.** Each image receives the mean relevance map of its cluster. That map then uses the shared budget conversion.
-- **Pseudoreplication.** Images in one cluster share one identical map, so per-image statistics overstate the effective sample size. Treat the number of clusters as the effective N, or state the caveat beside any per-image number.
-- **Failure modes.** Fewer than three maps raises. `n_eigval` greater than or equal to the number of maps raises. A non-finite map raises.
-- **Cost.** One LRP backward per image, then one spectral clustering of the stack.
+- **Reviewer question.** Why not subtract the weakest hypothesis map from each class map?
+- **Source.** `baselines` analytic pair: unique map `E_k - min_j E_j`, shared map `min_j E_j`, with `E` the same base evidence used to initialise CDEA.
+- **Status.** Not re-audited. This entry replaces the earlier pairwise subtraction.
+- **Conversion.** The shared budget conversion.
 
 ## Contrastive Grad-CAM
 
@@ -159,7 +140,6 @@ records the pin, the conversion, and the check each method has to pass first.
 |---|---|---|
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
-| SpRAy on the VOC horse analysis | The four strategies above. | Still needs their Fisher-vector classifier and VOC 2007. |
 | RISE deletion and insertion | The published ImageNet table above. | Still needs ImageNet-1k. |
 | Grad-CAM pointing game | TorchRay's published Grad-CAM number on VOC 2007. | Still needs VOC 2007 and the fine-tuned classifiers. |
 

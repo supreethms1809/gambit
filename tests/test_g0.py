@@ -9,22 +9,22 @@ G0 = ROOT / "docs" / "paper" / "G0.md"
 DOSSIER = ROOT / "docs" / "paper" / "BASELINES.md"
 EVAL_PLAN = ROOT / "docs" / "paper" / "EVAL_PLAN.md"
 
+# Shift dossier headings moved with the shift paper. Two contrastive headings
+# replace them, so the dossier check still names every core method on this branch.
 CORE_SECTIONS = (
     "## Margin attribution",
     "## Base evidence (Grad-CAM, integrated gradients)",
     "## Extremal Perturbations",
     "## Counterfactual visual explanations",
     "## Random area-a mask",
-    "## Attribution difference",
-    "## Spectral Relevance Analysis",
-    "## Per-environment Extremal Perturbations",
+    "## Extremal Perturbations, deletion variant",
+    "## Analytic decomposition",
 )
 
 OPEN_REPRODUCTIONS = (
     "Grad-CAM pointing game on VOC 2007",
     "Extremal Perturbations pointing game on VOC 2007",
     "CVE edit counts on CUB",
-    "SpRAy horse analysis on VOC 2007",
 )
 
 

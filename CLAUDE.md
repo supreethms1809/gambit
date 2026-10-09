@@ -1,97 +1,35 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository.
 
-## Project Overview
+## Project
 
 **GAMBIT** — Game theoretic Allocation for Model Based Interpretability and Trust.
 
-A PyTorch-based research framework implementing the CDEA (Contrastive Decomposition via Evidence Allocation) pipeline: a unified, game-theoretic approach to producing interpretable, contrastive model explanations.
+CDEA allocates evidence across competing hypotheses. The method lives in `cdea/` and is specified by `docs/paper/FORMULATION.md`. Write that package from the formulation. Do not copy the earlier method. It lives only on tag `framing-v1`.
 
-## Environment Setup
-
-Uses the `marl` conda environment:
+## Environment
 
 ```bash
 source /opt/anaconda3/etc/profile.d/conda.sh
 conda activate gambit
 ```
 
-Create that env from `requirements.txt` (`conda create -n gambit python=3.12`, then `pip install -r requirements.txt`). The older `marl` env is broader than this repo.
-
-All scripts must be run from the repository root with `PYTHONPATH=.` so that `core`, `modality`, `base_evidence`, and `instantiations` are importable.
-
-## Running Examples
-
-```bash
-# Contrastive explanation (Grad-CAM evidence)
-PYTHONPATH=. python examples/contrastive_explanation.py --dataset cifar10 --train --epochs 10
-
-# Contrastive explanation (Integrated Gradients evidence)
-PYTHONPATH=. python examples/contrastive_explanation_ig.py --dataset cifar10
-
-# Shift-aware robust vs shortcut game
-PYTHONPATH=. python scripts/eval_robust_shortcut.py --game_mode mixed
-```
-
-Datasets live in `data/` (git-ignored). Available: `mnist`, `cifar10`, `pets`, `stanford_dogs`, `ham10000`, `brain_tumor`. If the dataset is not found, a random batch is used as fallback.
-
-Results and analysis for the medical experiments — including known measurement problems — are in `docs/MEDICAL_RESULTS.md`.
-
-The two medical datasets (`ham10000` skin lesions, 7 classes; `brain_tumor` brain MRI, 3 classes) use a pre-split `<root>/<split>/<class>/` layout with **grouped splits** — by lesion for HAM10000, by patient for brain tumor — so near-duplicate images never span train and val. Build them with `scripts/prepare_ham10000.py` and `scripts/prepare_brain_tumor.py`. Both write segmentation/tumor masks that `scripts/eval_localization.py` uses to score whether allocated masks land on the actual pathology. See `docs/MEDICAL_DATASETS.md`.
-
-## Running Tests
+Create that env from `requirements.txt`. Run everything from the repository root with `PYTHONPATH=.`.
 
 ```bash
 PYTHONPATH=. python -m pytest tests/
-# Run a single test file
-PYTHONPATH=. python -m pytest tests/test_game_modes.py
+PYTHONPATH=. python scripts/paper_run.py --game contrastive --dataset cifar10 --backbone resnet50 --seed 0 --split val --n 1 --methods core --fast
 ```
 
-## Architecture
+Records go to `results/paper/cells/`. A record counts only when its `method_code_hash` and `knobs_hash` match the current tree. Fast knobs never satisfy a gate cell.
 
-### Core Pipeline (`core/`)
+## Layout
 
-The `CDEAExplainer` (`core/runner.py`) orchestrates the full pipeline:
+`cdea/` is the method (`payoffs`, `sinkhorn`, `allocation`, `first_order`). It imports `torch`, `core`, and `base_evidence` only.
 
-1. **HypothesisSelector** (`core/hypotheses.py`) — selects competing hypotheses (e.g., top-K classes)
-2. **BaseEvidenceProvider** (`core/base_evidence.py`) — computes raw attribution evidence per unit
-3. **Interaction** (`core/interaction.py`) — optional hypothesis interaction (attention or transformer layers)
-4. **Allocator** (`core/allocator.py`) — optimizes evidence allocation masks across hypotheses
-5. **Objective** (`core/objective.py`) — defines the loss landscape driving allocation
+`core/` holds types, hypotheses, eval mode, device, reporting, and `grid.py` (the hard unit indicator and the one deletion baseline).
 
-All components are defined as Python Protocols, enabling pluggable implementations.
+`evaluation/` scores explanations. `baselines/` are the comparators. `models/build.py` builds ResNet-50 and ViT-B/16. `analysis/` reads records.
 
-Key types: `HypothesisSet`, `Explanation`, `EnvBatch` (`core/types.py`).
-Game mode presets (cooperative / competitive / mixed): `core/game_modes.py`.
-Unit space abstraction (e.g., 7×7 spatial grid for vision): `core/unit_space.py`.
-
-### Two Main Game Instantiations
-
-**Contrastive Game** (`instantiations/contrastive/`) — "Why class K rather than L?"
-- `OptimizationAllocator` performs gradient-based mask optimization
-- `ContrastiveObjective` applies margin, overlap, sparsity, and partition penalties
-- Outputs: shared evidence mask + unique evidence masks per class
-
-**Shift-Aware Robust/Shortcut Game** (`instantiations/shift/`) — separates robust from shortcut evidence under distribution shift
-- `RobustShortcutObjective` measures robustness across environments and shortcut gap
-- Outputs: robust mask, shortcut mask, stability/gap diagnostics
-
-### Modality Layer (`modality/`)
-
-`VisionGridUnitSpace` (`modality/grid_regions.py`) divides images into spatial grid regions. Stubs exist for text tokens and graph nodes.
-
-### Evidence Providers (`base_evidence/`)
-
-- `gradcam_regions.py` — Grad-CAM pooled to grid
-- `integrated_gradients_regions.py` — Integrated Gradients pooled to grid
-
-### Adding a New Game Instantiation
-
-See `docs/NEW_INSTANTIATION_GAME_GUIDE.md` for the step-by-step guide on implementing a new allocator + objective pair.
-
-## Output Locations
-
-- Example figures/metrics: `examples/out/`
-- Script figures/metrics: `scripts/out/`
-- Model checkpoints: `examples/out/checkpoints/<dataset>_<model>.pt`
+Archive work that needs the earlier method checks out tag `framing-v1` in its own worktree. The GH200 seed-1 training chain stays pinned at `cf07ac2`.

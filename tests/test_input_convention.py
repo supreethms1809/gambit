@@ -14,7 +14,7 @@ from models.wrapper import (
     read_input_convention,
     write_input_convention,
 )
-from scripts.train_backbone import paper_checkpoint_name
+from models.build import paper_checkpoint_name
 
 
 def test_tie_keeps_raw_and_a_higher_imagenet_score_wins():
@@ -101,12 +101,15 @@ def test_unknown_convention_is_refused():
 
 
 def test_eval_model_builder_restores_the_checkpoint_convention(tmp_path):
-    from scripts.ablation_contrastive import _build_model
+    from evaluation.run_models import load_cell_model
+    from models.build import build_backbone
 
-    trained = maybe_wrap(_build_model("resnet18", 3), CONVENTION_IMAGENET).eval()
+    trained = maybe_wrap(build_backbone("resnet50", 10, pretrained=False), CONVENTION_IMAGENET).eval()
     path = tmp_path / "ck.pt"
     torch.save(_saved_like_get_or_train(trained, CONVENTION_IMAGENET), path)
-    loaded = _build_model("resnet18", 3, checkpoint=str(path)).eval()
+    loaded = load_cell_model(
+        "cifar10", "resnet50", 0, source="checkpoint", checkpoint=str(path),
+    ).model.eval()
     assert isinstance(loaded, NormalizedModel)
     x = torch.rand(1, 3, 32, 32)
     with torch.no_grad():

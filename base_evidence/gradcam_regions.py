@@ -35,6 +35,10 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
             return model.encoder.layers[-1]
     except (ImportError, AttributeError):
         pass
+    # ResNet: the layer4 block output, after the residual add and the ReLU.
+    layer4 = getattr(model, "layer4", None)
+    if layer4 is not None:
+        return layer4
     last_conv = None
     for m in model.modules():
         if isinstance(m, nn.Conv2d):

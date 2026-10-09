@@ -101,6 +101,62 @@ def deletion_matrix(
         _restore(model, was_training)
 
 
+def sufficiency_contrast(
+    model: nn.Module,
+    x: torch.Tensor,
+    mask_k: torch.Tensor,
+    mask_l: torch.Tensor,
+    class_k: torch.Tensor,
+    class_l: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+) -> torch.Tensor:
+    """SC = m(x keep M_k) - m(x keep M_l). Kept pixels stay; the rest are ROAD-imputed."""
+    class_k = class_k.long()
+    class_l = class_l.long()
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            keep_k = model(_remove(x, 1.0 - mask_k, iters, noise, seed))
+            keep_l = model(_remove(x, 1.0 - mask_l, iters, noise, seed + 1))
+            return _margin(keep_k, class_k, class_l) - _margin(keep_l, class_k, class_l)
+    finally:
+        _restore(model, was_training)
+
+
+def shared_validity(
+    model: nn.Module,
+    x: torch.Tensor,
+    mask_s: torch.Tensor,
+    class_ids: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+) -> torch.Tensor:
+    """Drop in ``s_H`` minus the mean absolute change in ``c_j``, under ROAD removal.
+
+    Undefined when H covers every class. ``class_ids`` is ``(B, K)``.
+    """
+    from cdea.payoffs import shared_defined, shared_log_odds, unique_log_odds
+
+    class_ids = class_ids.long()
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            full = model(x)
+            if not shared_defined(full, class_ids):
+                return torch.full((x.shape[0],), float("nan"), device=x.device)
+            deleted = model(_remove(x, mask_s, iters, noise, seed))
+            shared_drop = shared_log_odds(full, class_ids) - shared_log_odds(deleted, class_ids)
+            reorder = (unique_log_odds(full, class_ids) - unique_log_odds(deleted, class_ids)).abs().mean(dim=-1)
+            return shared_drop - reorder
+    finally:
+        _restore(model, was_training)
+
+
 def deletion_specificity(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Mean diagonal minus mean off-diagonal, and |diagonal| / |off-diagonal|.
 
