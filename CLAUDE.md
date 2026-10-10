@@ -26,7 +26,7 @@ Records go to `results/paper/cells/`. A record counts only when its `method_code
 
 ## Layout
 
-`cdea/` is the method (`payoffs`, `sinkhorn`, `allocation`, `first_order`). It imports `torch`, `core`, and `base_evidence` only.
+`cdea/` is the method (`payoffs`, `sinkhorn`, `allocation`, `first_order`, `shift`). It imports `torch`, `core`, and `base_evidence` only. Shift payoffs are specified by `docs/paper/SHIFT_FORMULATION.md`.
 
 `core/` holds types, hypotheses, eval mode, device, reporting, and `grid.py` (the hard unit indicator and the one deletion baseline).
 

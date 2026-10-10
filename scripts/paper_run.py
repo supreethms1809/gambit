@@ -25,6 +25,10 @@ from evaluation.run_methods import (  # noqa: E402
     CONTRASTIVE_CORE,
     CONTRASTIVE_EXTENDED,
     FAST,
+    SHIFT_ABLATIONS,
+    SHIFT_CANDIDATES,
+    SHIFT_CORE,
+    SHIFT_EXTENDED,
     Knobs,
     candidate_applies,
 )
@@ -46,7 +50,7 @@ def _list(value: str, every: tuple, core: tuple = ()) -> list[str]:
 
 def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--game", choices=["contrastive"], required=True)
+    p.add_argument("--game", choices=["contrastive", "shift"], required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--seed", type=int, default=0)
@@ -71,9 +75,14 @@ def parse(argv=None):
 def spec_from_args(args):
     from evaluation.run_cell import CellSpec
 
-    methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
-    ablations = _list(args.ablations, tuple(ABLATIONS))
-    candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
+    if args.game == "shift":
+        methods = _list(args.methods, SHIFT_CORE + SHIFT_EXTENDED, SHIFT_CORE)
+        ablations = _list(args.ablations, tuple(SHIFT_ABLATIONS))
+        candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
+    else:
+        methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
+        ablations = _list(args.ablations, tuple(ABLATIONS))
+        candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
     operators = tuple(o.strip() for o in args.operators.split(","))
     candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.backbone != "resnet50":
@@ -94,12 +103,14 @@ def spec_from_args(args):
 def run(spec, device_name: str = "auto"):
     from core.device import get_device
     from core.reporting import refuse_final_if_dirty
-    from evaluation.run_cell import run_contrastive
+    from evaluation.run_cell import run_contrastive, run_shift
 
     refuse_final_if_dirty(spec.final)
     import torch
 
     device = get_device(None if device_name == "auto" else torch.device(device_name))
+    if spec.game == "shift":
+        return run_shift(spec, device)
     return run_contrastive(spec, device)
 
 

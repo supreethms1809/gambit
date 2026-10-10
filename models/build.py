@@ -22,12 +22,15 @@ NUM_CLASSES = {
     "brain_tumor": 3,
     "imagenet": 1000,
     "planted_patch": 10,
+    "waterbirds": 2,
+    "imagenet9": 9,
+    "colored_mnist": 10,
 }
 
 PAPER_BACKBONES = ("resnet50", "vit_b_16")
 
-# planted_patch is a full fine-tune. Contrastive datasets are linear probes.
-FINE_TUNED = {"planted_patch"}
+# Shift datasets are full fine-tunes. Contrastive datasets are linear probes.
+FINE_TUNED = {"planted_patch", "waterbirds", "imagenet9", "colored_mnist"}
 
 
 def paper_checkpoint_name(

@@ -195,6 +195,20 @@ class PlantedPatchCIFAR(Dataset):
         }
 
 
+def env_batch_planted(
+    present: torch.Tensor,
+    moved: torch.Tensor,
+    removed: torch.Tensor,
+) -> EnvBatch:
+    """Present, moved, and removed views of the same image. Present is in-distribution."""
+    from core.types import EnvBatch
+
+    return EnvBatch(
+        xs=[present, moved, removed],
+        env_ids=["present", "moved", "removed"],
+    )
+
+
 class PlantedPatchClassifier(Dataset):
     """The image with both patches present. Patch positions use ``patch_seed``."""
 

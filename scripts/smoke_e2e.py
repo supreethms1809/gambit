@@ -69,6 +69,23 @@ def _data_present(dataset: str) -> bool:
     return True
 
 
+SHIFT_SMOKE_UNITS = ("waterbirds", "planted_patch")
+
+
+def shift_cells():
+    from evaluation.run_cell import CellSpec
+    from evaluation.run_methods import SHIFT_CORE
+
+    return [
+        CellSpec(
+            game="shift", dataset=dataset, backbone=backbone, seed=0, n=4,
+            methods=list(SHIFT_CORE), knobs=FAST,
+        )
+        for dataset in SHIFT_SMOKE_UNITS
+        for backbone in BACKBONES
+    ]
+
+
 def cells(production_timing: bool = True):
     from evaluation.run_cell import CellSpec
 
@@ -93,6 +110,7 @@ def cells(production_timing: bool = True):
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--game", default="contrastive", choices=["contrastive", "shift"])
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "smoke"))
     p.add_argument("--device", default="auto")
     p.add_argument("--only", default=None, help="comma list of datasets to keep")
@@ -113,7 +131,8 @@ def main() -> None:
         _run_datasets_in_parallel(args, keep)
         args.resume = True
     results = []
-    for spec in cells(not args.no_production_timing):
+    planned = shift_cells() if args.game == "shift" else cells(not args.no_production_timing)
+    for spec in planned:
         if keep and spec.dataset not in keep:
             continue
         timing = not spec.knobs.fast

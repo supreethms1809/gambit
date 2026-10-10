@@ -35,6 +35,21 @@ def d5_marginals(plan: torch.Tensor, row_target: torch.Tensor, tol: float = TOL)
     return row_err <= tol and col_err <= tol
 
 
+def d2_soft_hard_gap(soft: torch.Tensor, hard: torch.Tensor, tol: float = 0.5) -> bool:
+    """Shift gate: the soft plan and the hard mask agree within 0.5 nats."""
+    return bool((soft - hard).abs().max() <= tol)
+
+
+def d3_overshoot_share(share: torch.Tensor) -> float:
+    """Reported: mean share of the shortcut payoff that comes from overshooting."""
+    return float(share.detach().mean())
+
+
+def d4_beats_translation(score: torch.Tensor, translated: torch.Tensor) -> bool:
+    """Shift gate: the shortcut mask beats a translated copy of itself on val ΔD."""
+    return bool(score.detach().mean() > translated.detach().mean())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", default=None, help="a cell directory under results/paper/cells")

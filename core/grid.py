@@ -111,6 +111,20 @@ def delete(x: torch.Tensor, unit_mask: torch.Tensor, grid_h: int, grid_w: int) -
     return (1.0 - pixel) * x + pixel * base
 
 
+def transplant(
+    x_id: torch.Tensor,
+    x_env: torch.Tensor,
+    unit_mask: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+) -> torch.Tensor:
+    """Copy the masked cells from ``x_env`` into ``x_id``. Hard ``phi``."""
+    if x_id.shape != x_env.shape:
+        raise ValueError("transplant views must share a shape")
+    pixel = upsample_units(unit_mask, grid_h, grid_w, x_id.shape[-2], x_id.shape[-1])
+    return (1.0 - pixel) * x_id + pixel * x_env
+
+
 def keep(x: torch.Tensor, unit_mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
     """Keep ``M`` and replace the rest with ``b(x)``."""
     pixel = upsample_units(unit_mask, grid_h, grid_w, x.shape[-2], x.shape[-1])

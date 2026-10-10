@@ -23,7 +23,7 @@ PYTHONPATH=. python -m pytest tests/
 
 ## Layout
 
-`cdea/` imports `torch`, `core`, and `base_evidence` only. `core/grid.py` is the one deletion baseline. `evaluation/` scores. `baselines/` are the comparators. `models/build.py` builds ResNet-50 and ViT-B/16.
+`cdea/` imports `torch`, `core`, and `base_evidence` only. Shift payoffs are in `cdea/shift.py`. `core/grid.py` is the one deletion baseline and the transplant. `evaluation/` scores. `baselines/` are the comparators. `models/build.py` builds ResNet-50 and ViT-B/16.
 
 New records go to `results/paper/cells/`. Each record carries `method_code_hash` and `knobs_hash`. Fast knobs never satisfy a gate cell.
 

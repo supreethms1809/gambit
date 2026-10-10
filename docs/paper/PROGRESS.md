@@ -6,4 +6,6 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
 
 ## Next session
 
-Run `scripts/smoke_e2e.py` on CIFAR-10 val, then `scripts/gate_pilot.py` only after that smoke is green. Do not launch the full n = 64 pilot until the smoke cell finishes.
+Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
+
+Run `scripts/smoke_e2e.py --game shift` on Waterbirds and planted-patch val. Do not read a shift number. Do not train seeds 1–4. The sixth dataset is still unchosen.

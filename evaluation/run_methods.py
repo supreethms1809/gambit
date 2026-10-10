@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Callable, Optional
 
 import torch
@@ -25,6 +26,13 @@ from core.types import HypothesisSet
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
+
+@dataclass
+class ShiftMaps:
+    robust: torch.Tensor
+    shortcut: torch.Tensor
+    grid: Optional[tuple[int, int]]
+
 
 @dataclass
 class PairMaps:
@@ -618,6 +626,177 @@ CONTRASTIVE_CANDIDATES: dict = {
 }
 
 
+SHIFT_CORE = (
+    "cdea_shift",
+    "gap_attribution",
+    "attribution_difference",
+    "spray",
+    "extremal_shift",
+    "random_floor",
+)
+SHIFT_EXTENDED = ("r2r",)
+
+
+def _shift_config(cfg, knobs: Knobs):
+    from cdea.shift import ShiftConfig
+
+    cfg = cfg or ShiftConfig()
+    return ShiftConfig(
+        steps=knobs.cdea_steps if cfg.steps is None else int(cfg.steps),
+        lr=float(cfg.lr),
+        projection=cfg.projection,
+        independent=cfg.independent,
+        robust=cfg.robust,
+        shortcut=cfg.shortcut,
+        init=cfg.init,
+        backend=cfg.backend,
+        ig_steps=knobs.ig_steps,
+        kind=cfg.kind,
+    )
+
+
+def cdea_shift_maps(model, xs, backbone, knobs, device, cfg=None, area: float = 0.05) -> ShiftMaps:
+    from cdea.shift import allocate_shift
+
+    grid = grid_of(backbone)
+    resolved = _shift_config(cfg, knobs)
+    if backbone.startswith("vit") and resolved.backend == "gradcam":
+        resolved = replace(resolved, backend="ig")
+    out = allocate_shift(model, xs, grid[0], grid[1], area, resolved)
+    return ShiftMaps(robust=out.robust, shortcut=out.shortcut, grid=grid)
+
+
+def gap_attribution_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    from baselines.gap_attribution import gap_attribution
+
+    grid = grid_of(backbone)
+    robust, shortcut = gap_attribution(model, xs, grid[0], grid[1], steps=knobs.ig_steps)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=grid)
+
+
+def attribution_difference_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    from base_evidence.gradcam_regions import GradCAMRegionsProvider
+    from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
+    from baselines.shift_maps import environment_maps
+
+    grid = grid_of(backbone)
+    y = model(xs[0]).argmax(dim=-1)
+    hyp = HypothesisSet(
+        ids=y.view(-1, 1),
+        mask=torch.ones(y.shape[0], 1, dtype=torch.bool, device=y.device),
+    )
+    if default_backend(backbone) == "ig":
+        provider = IntegratedGradientsRegionsProvider(grid[0], grid[1], steps=knobs.ig_steps, baseline="blur")
+    else:
+        provider = GradCAMRegionsProvider(grid[0], grid[1])
+    maps = []
+    for view in xs:
+        evidence = provider.explain(view, model, hyp)[:, 0]
+        maps.append(evidence.reshape(evidence.shape[0], grid[0], grid[1]))
+    robust, shortcut = environment_maps(maps)
+    return ShiftMaps(
+        robust=robust.reshape(robust.shape[0], -1),
+        shortcut=shortcut.reshape(shortcut.shape[0], -1),
+        grid=grid,
+    )
+
+
+def spray_maps(model, xs, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
+    from baselines.shift_maps import environment_maps
+    from baselines.spray import cluster_mean_relevance, lrp_maps
+
+    y = model(xs[0]).argmax(dim=-1)
+    reduced = []
+    for view in xs:
+        relevance = lrp_maps(model, view, y)
+        count = int(relevance.shape[0])
+        if count >= 3:
+            eigenvalues = min(32, count - 1)
+            neighbors = min(10, count - 1)
+            means, _labels = cluster_mean_relevance(
+                relevance, n_clusters=2, n_eigval=eigenvalues, n_neighbors=neighbors, seed=seed,
+            )
+            reduced.append(means)
+        else:
+            reduced.append(relevance)
+    robust, shortcut = environment_maps(reduced)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
+
+
+def extremal_shift_maps(model, xs, backbone, knobs, device, area: float = 0.05) -> ShiftMaps:
+    from baselines.shift_maps import per_environment_extremal
+
+    y = model(xs[0]).argmax(dim=-1)
+    robust, shortcut = per_environment_extremal(
+        model, xs, y, area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth,
+    )
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
+
+
+def random_shift_maps(model, xs, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
+    grid = grid_of(backbone)
+    count = xs[0].shape[0]
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    scores = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
+    return ShiftMaps(robust=scores, shortcut=scores, grid=grid)
+
+
+def r2r_shift_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    root = Path(__file__).resolve().parents[1] / "third_party" / "r2r"
+    if not root.is_dir():
+        raise FileNotFoundError("R2R is fetched by scripts/fetch_r2r.sh and is not vendored")
+    raise FileNotFoundError("R2R was fetched but the adapter has no weights for this cell")
+
+
+def shift_method(name: str):
+    return {
+        "cdea_shift": cdea_shift_maps,
+        "gap_attribution": gap_attribution_maps,
+        "attribution_difference": attribution_difference_maps,
+        "spray": spray_maps,
+        "extremal_shift": extremal_shift_maps,
+        "random_floor": random_shift_maps,
+        "r2r": r2r_shift_maps,
+    }[name]
+
+
+def _shift_grid() -> dict:
+    from cdea.shift import ShiftConfig
+
+    out = {}
+    for backend in ("gradcam", "ig"):
+        for lr in (0.05, 0.2):
+            out[f"cdea_shift@{backend}_lr{lr:g}_t100"] = ShiftConfig(backend=backend, lr=lr, steps=100)
+    return out
+
+
+SHIFT_ABLATIONS = {
+    "S1_deletion": None,
+    "S2_independent": None,
+    "S3_mean": None,
+    "S4_uniform": None,
+    "S5_first_order": None,
+    "S6_precomputed": "precomputed",
+}
+
+
+def shift_ablation(name: str):
+    from cdea.shift import ShiftConfig
+
+    return {
+        "S1_deletion": ShiftConfig(shortcut="deletion"),
+        "S2_independent": ShiftConfig(independent=True),
+        "S3_mean": ShiftConfig(robust="mean"),
+        "S4_uniform": ShiftConfig(init="uniform"),
+        "S5_first_order": ShiftConfig(kind="first_order"),
+        "S6_precomputed": "precomputed",
+    }[name]
+
+
+SHIFT_CANDIDATES = _shift_grid()
+
+
 def candidate_applies(name: str, backbone: str) -> bool:
     """ViT uses IG. ResNet's CDEA grid is T = 100. ViT's CDEA grid is IG only."""
     vit = backbone.startswith("vit")
@@ -627,4 +806,6 @@ def candidate_applies(name: str, backbone: str) -> bool:
         if vit:
             return name.startswith("cdea@ig_")
         return "_t50" not in name
+    if name.startswith("chefer"):
+        return vit
     return True

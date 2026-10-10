@@ -310,3 +310,138 @@ def two_patch_recovery(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Share of M_k on patch A, and of M_l on patch B."""
     return mass_in(mask_k, patch_a), mass_in(mask_l, patch_b)
+
+
+def _log_odds_batch(model: nn.Module, xs: Sequence[torch.Tensor], y: torch.Tensor) -> list[torch.Tensor]:
+    from cdea.shift import log_odds
+
+    return [log_odds(model(view), y) for view in xs]
+
+
+def log_odds_disagreement(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+) -> torch.Tensor:
+    """``mean_{e != id} |m(x_id) - m(x_e)|``."""
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            margins = _log_odds_batch(model, xs, y)
+            return torch.stack([(margins[0] - other).abs() for other in margins[1:]], dim=0).mean(0)
+    finally:
+        _restore(model, was_training)
+
+
+def probability_disagreement(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+) -> torch.Tensor:
+    """Same disagreement in the probability of ``y``. Companion of the log-odds gap."""
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            probs = [_class_probability(model, view, y) for view in xs]
+            return torch.stack([(probs[0] - other).abs() for other in probs[1:]], dim=0).mean(0)
+    finally:
+        _restore(model, was_training)
+
+
+def _road(model, xs, y, mask, iters, noise, seed, measure):
+    edited = [_remove(view, mask, iters, noise, seed + index) for index, view in enumerate(xs)]
+    return measure(model, edited, y)
+
+
+def delta_d(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    shortcut: torch.Tensor,
+    random_mask: torch.Tensor,
+    iters: int,
+    noise: float,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Drop in log-odds disagreement minus the same drop for a random mask, and the probability companion."""
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            before = log_odds_disagreement(model, xs, y)
+            before_p = probability_disagreement(model, xs, y)
+
+            def odds(m, views, labels):
+                return log_odds_disagreement(m, views, labels)
+
+            def prob(m, views, labels):
+                return probability_disagreement(m, views, labels)
+
+            drop = before - _road(model, xs, y, shortcut, iters, noise, seed, odds)
+            drop_random = before - _road(model, xs, y, random_mask, iters, noise, seed + 1, odds)
+            drop_p = before_p - _road(model, xs, y, shortcut, iters, noise, seed, prob)
+            drop_p_random = before_p - _road(model, xs, y, random_mask, iters, noise, seed + 1, prob)
+            return drop - drop_random, drop_p - drop_p_random
+    finally:
+        _restore(model, was_training)
+
+
+def robust_necessity(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    robust: torch.Tensor,
+    random_mask: torch.Tensor,
+    iters: int,
+    noise: float,
+    seed: int,
+) -> torch.Tensor:
+    """Min over environments of the log-odds drop under ROAD deletion, minus the random mask."""
+    from cdea.shift import log_odds
+
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            def worst(mask: torch.Tensor) -> torch.Tensor:
+                drops = []
+                for index, view in enumerate(xs):
+                    full = log_odds(model(view), y)
+                    edited = log_odds(model(_remove(view, mask, iters, noise, seed + index)), y)
+                    drops.append(full - edited)
+                return torch.stack(drops, dim=0).min(dim=0).values
+
+            return worst(robust) - worst(random_mask)
+    finally:
+        _restore(model, was_training)
+
+
+def transplant_closure(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    unit_mask: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+) -> torch.Tensor:
+    """Shortcut payoff of the binary shortcut mask. Descriptive."""
+    from cdea.shift import transplant_payoff
+
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            return transplant_payoff(model, list(xs), y, unit_mask, grid_h, grid_w)
+    finally:
+        _restore(model, was_training)
+
+
+def shortcut_patch_contrast(
+    shortcut: torch.Tensor,
+    patch_a: torch.Tensor,
+    patch_b: torch.Tensor,
+) -> torch.Tensor:
+    """Mass of the shortcut mask on the class-tied patch minus its mass on the checker."""
+    return mass_in(shortcut, patch_a) - mass_in(shortcut, patch_b)

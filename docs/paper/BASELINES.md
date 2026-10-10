@@ -134,6 +134,50 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** The floor is the score for a failed row. It is not itself a failure.
 - **Cost.** One seeded ranking of the pixels. No model call.
 
+## Gap attribution
+
+- **Reviewer question.** Does the shortcut payoff's own first-order path integral already find the units that change the prediction?
+- **Source.** `baselines/gap_attribution.py`. Integrated gradients of the log-odds from `x_e` to `x_id`, pooled with `pool_sum` and signed by `g_e`. The robust companion is the min over environments of the same integral from the deletion baseline.
+- **Patches.** None. Captum is not used. The sum is the path integral in `cdea/shift.py`.
+- **Defaults.** 16 steps. Fast smoke uses 4.
+- **Reproduction.** On a model linear in the pixels the pooled map sums to `g_e`. `tests/test_shift.py` checks that identity.
+- **Conversion.** The shared top-a conversion.
+- **Failure modes.** Fewer than two environments raises. A one-class model raises inside the log-odds.
+- **Cost.** One backward per step per environment other than id, plus the same for the robust companion.
+
+## Attribution difference
+
+- **Reviewer question.** Does an elementwise difference of per-environment maps already separate the shortcut?
+- **Source.** `baselines/shift_maps.py`. The robust map is the elementwise minimum. The shortcut map is the largest absolute gap from the id map. The input maps are Grad-CAM on ResNet-50 and integrated gradients on ViT-B/16.
+- **Patches.** None. The reduction is the one in the file.
+- **Defaults.** The evidence step count is the shared knob.
+- **Reproduction.** There is no published number for this reduction.
+- **Conversion.** The shared top-a conversion.
+- **Failure modes.** Fewer than two maps raises. A non-finite map raises.
+- **Cost.** One evidence pass per environment.
+
+## SpRAy
+
+- **Reviewer question.** Does clustering relevance maps separate a shortcut from the object?
+- **Source.** `baselines/spray.py`, with Zennit and CoRelAy under `third_party/`. Each environment is attributed with Zennit's `EpsilonPlus`, clustered, and replaced by its cluster mean. The robust and shortcut maps are then the attribution-difference reduction.
+- **Patches.** None in the clustering steps. The eigenvalue count, the neighbor count, the cluster count, and the k-means seed are chosen here.
+- **Defaults.** Two clusters. Eigenvalues and neighbors shrink when the batch is smaller than the published setting.
+- **Reproduction.** The published Fisher-vector analysis used a different attribution implementation. That number is not claimed here.
+- **Conversion.** The shared top-a conversion, applied to the cluster-mean maps.
+- **Failure modes.** Fewer than three maps skips the clustering and keeps the raw relevance. A non-finite map raises.
+- **Cost.** One LRP backward per image per environment, then a clustering of that stack. The whole sample is one call.
+
+## Per-environment Extremal Perturbations
+
+- **Reviewer question.** Does differencing a mask that was optimised in each environment find the shortcut?
+- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. The class mask in each environment uses the deletion Extremal Perturbations entry above. The reduction is the same elementwise min and max-gap.
+- **Patches.** None beyond that entry.
+- **Defaults.** The shared extremal step count and smoothing.
+- **Reproduction.** The published pointing-game number is the contrastive entry's, not this reduction's.
+- **Conversion.** The native area mask, then the shared budget conversion of the reduced map.
+- **Failure modes.** The deletion entry's failures, plus fewer than two environments.
+- **Cost.** One extremal solve per environment per image.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |

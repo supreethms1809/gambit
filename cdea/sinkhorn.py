@@ -39,19 +39,22 @@ def sinkhorn(
 
     # A global shift does not change the plan and keeps the exp in range.
     # Inactive rows (a zero budget) stay out of the factorisation.
+    # Float64 everywhere it exists. MPS has no float64, and moving the
+    # factorisation to CPU deadlocks autograd, so MPS stays on-device in float32.
+    work_dtype = torch.float32 if theta.device.type == "mps" else torch.float64
     active = row_target > 1e-8
-    work = theta.to(dtype=torch.float64)
+    work = theta.to(dtype=work_dtype)
     work = work - work.amax(dim=(-1, -2), keepdim=True)
-    log_row = row_target.to(dtype=torch.float64).clamp_min(1e-12).log()
-    log_col = torch.zeros(batch, units, device=theta.device, dtype=torch.float64)
-    u = torch.zeros(batch, rows, device=theta.device, dtype=torch.float64)
-    v = torch.zeros(batch, units, device=theta.device, dtype=torch.float64)
+    log_row = row_target.to(dtype=work_dtype).clamp_min(1e-12).log()
+    log_col = torch.zeros(batch, units, device=theta.device, dtype=work_dtype)
+    u = torch.zeros(batch, rows, device=theta.device, dtype=work_dtype)
+    v = torch.zeros(batch, units, device=theta.device, dtype=work_dtype)
     if dual is not None and dual[0] is not None and dual[0][0].shape == u.shape:
         # Detached dual from the previous solve. Twenty iterations then only
         # have to track a small change in theta, which is what makes the
         # marginal error bound hold once the plan is sharp.
-        u = dual[0][0].to(dtype=torch.float64, device=theta.device)
-        v = dual[0][1].to(dtype=torch.float64, device=theta.device)
+        u = dual[0][0].to(dtype=work_dtype, device=theta.device)
+        v = dual[0][1].to(dtype=work_dtype, device=theta.device)
     masked = work.masked_fill(~active.unsqueeze(-1), -1e30)
     log_row = torch.where(active, log_row, torch.zeros_like(log_row))
     for _ in range(int(iters)):

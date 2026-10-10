@@ -61,8 +61,10 @@ LEGACY_TEST_ROOTS = {
 PAPER_SPLIT_DATASETS = {
     "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
     "cifar100", "oxford_pets", "cub200",
-    "planted_patch",
+    "planted_patch", "colored_mnist", "imagenet9", "waterbirds",
 }
+COLORED_MNIST_CORRELATION = 0.9
+SHIFT_DATA_SEED = 43
 
 # ---------------------------------------------------------------------------
 # Data loaders  (train splits)
@@ -249,12 +251,38 @@ def get_train_loader(
         ds = _paper_subset(ds, dataset, "train")
         return _dataloader(ds, batch_size, True, seed), num_classes
 
+    if dataset == "colored_mnist":
+        from evaluation.colored_mnist import ColoredMNIST
+        # Colors are fixed by SHIFT_DATA_SEED. Train indices are the MNIST paper
+        # train split, so the val images are held out for checkpoint selection.
+        base_ds = ColoredMNIST(
+            root=str(data_root), train=True, download=False,
+            correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED,
+        )
+        ds = _paper_subset(_ResizeTo(base_ds, image_size), "mnist", "train")
+        return _dataloader(ds, batch_size, True, seed), 10
+
     if dataset == "planted_patch":
         from evaluation.planted_cues import PlantedPatchClassifier
         ds = PlantedPatchClassifier(
             split="train", root=data_root, image_size=image_size, patch_seed=0,
         )
         return _dataloader(ds, batch_size, True, seed), 10
+
+    if dataset == "imagenet9":
+        from evaluation.imagenet9_pairs import ImageNet9Classifier
+        ds = ImageNet9Classifier(split="train", root=data_root / "imagenet9", image_size=image_size)
+        class_ids = []
+        for pair in ds.inner.pairs:
+            prefix = pair["original"].parent.name.split("_", 1)[0]
+            class_ids.append(int(prefix) if prefix.isdigit() else 0)
+        num_classes = max(class_ids) + 1 if class_ids else 9
+        return _dataloader(ds, batch_size, True, seed), num_classes
+
+    if dataset == "waterbirds":
+        from evaluation.waterbirds_pairs import WaterbirdsClassifier
+        ds = WaterbirdsClassifier(split="train", image_size=image_size)
+        return _dataloader(ds, batch_size, True, seed), 2
 
     raise ValueError(f"Unknown dataset: {dataset}.")
 
@@ -323,11 +351,27 @@ def get_val_loader(
 
     if dataset not in PAPER_SPLIT_DATASETS:
         return None
+    if dataset == "colored_mnist":
+        from evaluation.colored_mnist import ColoredMNIST
+        base = ColoredMNIST(
+            root=str(data_root), train=True, download=False,
+            correlation=COLORED_MNIST_CORRELATION, seed=SHIFT_DATA_SEED,
+        )
+        ds = _paper_subset(_ResizeTo(base, image_size), "mnist", "val")
+        return _dataloader(ds, batch_size, False, 0)
     if dataset == "planted_patch":
         from evaluation.planted_cues import PlantedPatchClassifier
         ds = PlantedPatchClassifier(
             split="val", root=data_root, image_size=image_size, patch_seed=0,
         )
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "imagenet9":
+        from evaluation.imagenet9_pairs import ImageNet9Classifier
+        ds = ImageNet9Classifier(split="val", root=data_root / "imagenet9", image_size=image_size)
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "waterbirds":
+        from evaluation.waterbirds_pairs import WaterbirdsClassifier
+        ds = WaterbirdsClassifier(split="val", image_size=image_size)
         return _dataloader(ds, batch_size, False, 0)
     spec = load_spec(dataset)
     root_rel = spec["roots"]["val"]

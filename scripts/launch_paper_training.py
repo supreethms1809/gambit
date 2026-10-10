@@ -35,7 +35,7 @@ CONTRASTIVE = (
     "cifar10", "cifar100", "oxford_pets", "stanford_dogs", "cub200",
     "ham10000", "brain_tumor",
 )
-SHIFT = ("planted_patch",)
+SHIFT = ("colored_mnist", "planted_patch", "imagenet9", "waterbirds")
 MODELS = ("resnet50", "vit_b_16")
 SEEDS = (0, 1, 2, 3, 4)
 EPOCHS = 15
@@ -45,7 +45,8 @@ LOG_DIR = REPO / "results" / "paper" / "logs" / "train"
 # Longest training first, from the measured Spark wall times, so the parallel
 # queue does not end on one long cell. Only the order matters here.
 LONGEST_FIRST = (
-    "planted_patch", "cifar10", "cifar100",
+    "planted_patch", "waterbirds", "imagenet9", "colored_mnist",
+    "cifar10", "cifar100",
     "stanford_dogs", "ham10000", "cub200", "oxford_pets", "brain_tumor",
 )
 

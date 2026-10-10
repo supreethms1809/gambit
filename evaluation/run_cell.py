@@ -364,16 +364,174 @@ def _jsonable(extra: dict) -> dict:
     return out
 
 
+def run_shift(spec: CellSpec, device) -> Path:
+    """Score every requested shift method. Records go to ``shift.csv.gz``."""
+    from baselines.adapter import budget_or_floor, random_floor
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_data import shift_sample
+    from evaluation.run_methods import SHIFT_CANDIDATES, shift_ablation, shift_method
+    from evaluation.run_models import load_cell_model
+    from evaluation.scores import (
+        delta_d,
+        robust_necessity,
+        shortcut_patch_contrast,
+        transplant_closure,
+    )
+    from evaluation.masks import mass_in, top_fraction_mask
+
+    loaded = load_cell_model(
+        spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
+        checkpoint=spec.checkpoint, device=device,
+    )
+    model = loaded.model
+    sample = shift_sample(
+        spec.dataset, spec.split, spec.n, spec.seed,
+        final=spec.final, config_hash=spec.config_hash,
+    )
+    xs_cpu = sample.env.xs
+    n = int(xs_cpu[0].shape[0])
+    code_hash = method_code_hash()
+    knob_hash = knobs_hash(spec.knobs)
+    rows: list[dict] = []
+    status: dict[str, dict] = {}
+    runs = [(method, method, None) for method in spec.methods]
+    runs += [("cdea_shift", f"cdea_shift:{ablation}", shift_ablation(ablation)) for ablation in spec.ablations]
+    runs += [("cdea_shift", candidate, SHIFT_CANDIDATES[candidate]) for candidate in spec.candidates]
+    grid_h, grid_w = __import__("core.grid", fromlist=["grid_of"]).grid_of(spec.backbone)
+
+    for method, label, cfg in runs:
+        areas = spec.areas if method in {"cdea_shift", "extremal_shift"} else (None,)
+        whole = method == "spray"
+        ranges = [(0, n)] if whole else _ranges(n, spec.image_batch)
+        for area_for_map in areas:
+            start = time.perf_counter()
+            failed = None
+            chunk_rows: list[dict] = []
+            try:
+                for start_i, end_i in ranges:
+                    views = [view[start_i:end_i].to(device) for view in xs_cpu]
+                    if cfg == "precomputed":
+                        raise FileNotFoundError("precomputed maps need a directory")
+                    fn = shift_method(method)
+                    kwargs = {}
+                    if method in {"cdea_shift", "extremal_shift"}:
+                        kwargs["area"] = area_for_map if area_for_map is not None else spec.areas[0]
+                    if method == "cdea_shift":
+                        kwargs["cfg"] = cfg
+                    if method in {"spray", "random_floor"}:
+                        kwargs["seed"] = spec.seed
+                    maps = fn(model, views, spec.backbone, spec.knobs, device, **kwargs)
+                    y = model(views[0]).argmax(dim=-1)
+                    for area in (spec.areas if area_for_map is None else (area_for_map,)):
+                        chunk_rows += _score_shift(
+                            model, views, maps, y, area, spec, label, sample, start_i,
+                            code_hash, knob_hash, budget_or_floor, random_floor,
+                            delta_d, robust_necessity, transplant_closure,
+                            shortcut_patch_contrast, mass_in, top_fraction_mask, grid_h, grid_w,
+                        )
+            except Exception as exc:
+                failed = exc
+            if failed is not None:
+                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}"}
+                continue
+            status[label] = {"status": "ok", "seconds": time.perf_counter() - start}
+            rows += chunk_rows
+    summary = {
+        "game": "shift",
+        "dataset": spec.dataset,
+        "backbone": spec.backbone,
+        "seed": spec.seed,
+        "split": spec.split,
+        "n": n,
+        "fast": bool(spec.knobs.fast),
+        "model_source": loaded.source,
+        "method_code_hash": code_hash,
+        "knobs_hash": knob_hash,
+        "methods": status,
+        "rows": len(rows),
+        "errors": sorted(name for name, item in status.items() if item["status"] == "error"),
+    }
+    return _write(spec, rows, summary, device)
+
+
+def _score_shift(
+    model, views, maps, y, area, spec, label, sample, start_i,
+    code_hash, knob_hash, budget_or_floor, random_floor,
+    delta_d, robust_necessity, transplant_closure,
+    shortcut_patch_contrast, mass_in, top_fraction_mask, grid_h, grid_w,
+) -> list[dict]:
+    height, width = views[0].shape[-2:]
+    grid = maps.grid
+    kwargs = dict(
+        grid_h=None if grid is None else grid[0],
+        grid_w=None if grid is None else grid[1],
+        height=height, width=width,
+    )
+    shortcut, failed_s = budget_or_floor(maps.shortcut, area, spec.seed, **kwargs)
+    robust, failed_r = budget_or_floor(maps.robust, area, spec.seed + 1, **kwargs)
+    random_mask = random_floor(maps.shortcut, area, spec.seed + 2, **kwargs)
+    odds, prob = delta_d(
+        model, views, y, shortcut, random_mask, ROAD["iters"], ROAD["noise"], spec.seed,
+    )
+    necessity = robust_necessity(
+        model, views, y, robust, random_mask, ROAD["iters"], ROAD["noise"], spec.seed + 3,
+    )
+    if grid is not None:
+        units = top_fraction_mask(maps.shortcut, area, spec.seed)
+    else:
+        units = _units_from_pixels(shortcut, grid_h, grid_w)
+    closure = transplant_closure(model, views, y, units, grid_h, grid_w)
+    rolled = torch.roll(shortcut, shifts=max(height // grid_h, 1), dims=-1)
+    odds_rolled, _prob_rolled = delta_d(
+        model, views, y, rolled, random_mask, ROAD["iters"], ROAD["noise"], spec.seed,
+    )
+    foreground = None if sample.foreground is None else sample.foreground[start_i:start_i + shortcut.shape[0]].to(shortcut.device)
+    rows = []
+    for i in range(shortcut.shape[0]):
+        row = {
+            "method": label,
+            "area": area,
+            "image_index": sample.index[start_i + i],
+            "delta_d": float(odds[i]),
+            "delta_d_prob": float(prob[i]),
+            "rn": float(necessity[i]),
+            "tc": float(closure[i]),
+            "delta_d_translated": float(odds_rolled[i]),
+            "failed_row": int(bool(failed_s[i] or failed_r[i])),
+            "method_code_hash": code_hash,
+            "knobs_hash": knob_hash,
+            "fast": int(spec.knobs.fast),
+        }
+        if sample.mask_a is not None:
+            row["spc"] = float(shortcut_patch_contrast(
+                shortcut[i:i + 1],
+                sample.mask_a[start_i + i:start_i + i + 1].to(shortcut.device),
+                sample.mask_b[start_i + i:start_i + i + 1].to(shortcut.device),
+            )[0])
+        if foreground is not None:
+            row["mass_shortcut_background"] = float(mass_in(shortcut[i:i + 1], 1.0 - foreground[i:i + 1])[0])
+            row["mass_robust_foreground"] = float(mass_in(robust[i:i + 1], foreground[i:i + 1])[0])
+            row["mass_random_background"] = float(mass_in(random_mask[i:i + 1], 1.0 - foreground[i:i + 1])[0])
+        rows.append(row)
+    return rows
+
+
+def _units_from_pixels(mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+    pooled = torch.nn.functional.adaptive_avg_pool2d(mask.unsqueeze(1), (grid_h, grid_w))
+    return (pooled.flatten(1) > 0.5).to(dtype=mask.dtype)
+
+
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
 
     summary["device_peak_mb"] = _peak_mb(device)
     root = Path(spec.out_dir) if spec.out_dir else CELLS_ROOT
-    out = root / spec.split / "contrastive" / spec.dataset / spec.backbone / f"seed{spec.seed}"
+    out = root / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}"
     out.mkdir(parents=True, exist_ok=True)
+    name = "shift.csv.gz" if spec.game == "shift" else "records.csv.gz"
     if rows:
         keys = sorted({k for r in rows for k in r})
-        with gzip.open(out / "records.csv.gz", "wt", newline="") as handle:
+        with gzip.open(out / name, "wt", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=keys)
             writer.writeheader()
             writer.writerows(rows)

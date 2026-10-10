@@ -149,6 +149,27 @@ def record_matches(summary: dict, *, code_hash: str, knob_hash: str, gate: bool 
     return True
 
 
+def shift_cells() -> list[dict]:
+    """Job list for the shift units. Hashes are checked by ``record_matches``."""
+    from evaluation.environments import SHIFT_DATASETS
+    from evaluation.run_methods import SHIFT_CORE
+
+    cells = []
+    for dataset in SHIFT_DATASETS:
+        for model in MODELS:
+            for method in SHIFT_CORE:
+                for seed in SEEDS:
+                    cells.append({
+                        "id": f"shift_{dataset}_{model}_{method}_seed{seed}",
+                        "dataset": dataset,
+                        "model": model,
+                        "method": method,
+                        "seed": seed,
+                        "game": "shift",
+                    })
+    return cells
+
+
 def runs_complete(contrastive_log: Path = CONTRASTIVE_LOG) -> dict:
     """The contrastive manifest has a done marker for every cell."""
     part = completion_report(contrastive_cells(), contrastive_log)
