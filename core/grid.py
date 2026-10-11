@@ -76,6 +76,11 @@ def _cell_index(length: int, cells: int, device) -> torch.Tensor:
     return index.long().clamp(max=cells - 1)
 
 
+def _cell_onehot(length: int, cells: int, device, dtype) -> torch.Tensor:
+    """``(length, cells)``: row ``i`` is the indicator of the cell that pixel ``i`` falls in."""
+    return F.one_hot(_cell_index(length, cells, device), cells).to(dtype)
+
+
 def upsample_units(
     unit_mask: torch.Tensor,
     grid_h: int,
@@ -83,25 +88,33 @@ def upsample_units(
     height: int,
     width: int,
 ) -> torch.Tensor:
-    """Hard ``phi``: each pixel takes the value of its nearest cell. ``(B, 1, H, W)``."""
+    """Hard ``phi``: each pixel takes the value of its nearest cell. ``(B, 1, H, W)``.
+
+    A product with one-hot cell indicators, not indexing. Each pixel has one
+    nonzero term, so values are exact, and the backward pass is a fixed-order
+    sum. The backward of indexing accumulates in a different order each call
+    on GPUs, and Adam amplifies that into a different allocation.
+    """
     if unit_mask.ndim != 2 or unit_mask.shape[1] != grid_h * grid_w:
         raise ValueError("unit mask must be (batch, grid_h * grid_w)")
     grid = unit_mask.reshape(unit_mask.shape[0], grid_h, grid_w)
-    iy = _cell_index(height, grid_h, unit_mask.device)
-    ix = _cell_index(width, grid_w, unit_mask.device)
-    return grid[:, iy[:, None], ix[None, :]].unsqueeze(1)
+    rows = _cell_onehot(height, grid_h, unit_mask.device, unit_mask.dtype)
+    cols = _cell_onehot(width, grid_w, unit_mask.device, unit_mask.dtype)
+    return (rows @ grid @ cols.t()).unsqueeze(1)
 
 
 def pool_sum(pixel: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
-    """Sum pixels into their cells. ``pixel`` is ``(B, H, W)`` and the result is ``(B, R)``."""
+    """Sum pixels into their cells. ``pixel`` is ``(B, H, W)`` and the result is ``(B, R)``.
+
+    A fixed-order product with one-hot cell indicators, so it is deterministic
+    on GPUs, unlike ``scatter_add``.
+    """
     if pixel.ndim != 3:
         raise ValueError("pool_sum expects (batch, height, width)")
     batch, height, width = pixel.shape
-    iy = _cell_index(height, grid_h, pixel.device)
-    ix = _cell_index(width, grid_w, pixel.device)
-    flat = (iy[:, None] * grid_w + ix[None, :]).reshape(1, -1).expand(batch, -1)
-    out = torch.zeros(batch, grid_h * grid_w, device=pixel.device, dtype=pixel.dtype)
-    return out.scatter_add(1, flat, pixel.reshape(batch, -1))
+    rows = _cell_onehot(height, grid_h, pixel.device, pixel.dtype)
+    cols = _cell_onehot(width, grid_w, pixel.device, pixel.dtype)
+    return (rows.t() @ pixel @ cols).reshape(batch, grid_h * grid_w)
 
 
 def boundary_offset(height: int, width: int, grid_h: int, grid_w: int) -> tuple[int, int]:

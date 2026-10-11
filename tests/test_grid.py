@@ -64,3 +64,44 @@ def test_delete_with_an_offset_deletes_the_moved_cells():
     expected = (1 - pixel) * x + pixel * deletion_baseline(x, 7, 7)
     assert torch.allclose(delete(x, mask, 7, 7, offset=(2, -1)), expected)
     assert torch.equal(delete(x, mask, 7, 7, offset=(0, 0)), delete(x, mask, 7, 7))
+
+
+def _accelerator():
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return None
+
+
+def test_cell_upsampling_matches_indexing_and_pooling_matches_scatter():
+    from core.grid import _cell_index, pool_sum
+
+    torch.manual_seed(0)
+    for height, cells in ((224, 7), (224, 14), (30, 7)):
+        mask = torch.rand(3, cells * cells)
+        iy, ix = _cell_index(height, cells, "cpu"), _cell_index(height, cells, "cpu")
+        reference = mask.reshape(3, cells, cells)[:, iy[:, None], ix[None, :]].unsqueeze(1)
+        assert torch.equal(upsample_units(mask, cells, cells, height, height), reference)
+        pixel = torch.rand(3, height, height)
+        flat = (iy[:, None] * cells + ix[None, :]).reshape(1, -1).expand(3, -1)
+        summed = torch.zeros(3, cells * cells).scatter_add(1, flat, pixel.reshape(3, -1))
+        assert torch.allclose(pool_sum(pixel, cells, cells), summed, rtol=1e-5)
+
+
+def test_cell_upsampling_backward_repeats_exactly_on_an_accelerator():
+    """Indexing's backward accumulates in a varying order on GPUs; Adam amplified it."""
+    import pytest
+
+    device = _accelerator()
+    if device is None:
+        pytest.skip("no GPU")
+    torch.manual_seed(0)
+    mask = torch.rand(8, 49, device=device)
+    weight = torch.rand(8, 224, 224, device=device)
+    grads = []
+    for _ in range(3):
+        leaf = mask.clone().requires_grad_(True)
+        (upsample_units(leaf, 7, 7, 224, 224).squeeze(1) * weight).sum().backward()
+        grads.append(leaf.grad.clone())
+    assert torch.equal(grads[0], grads[1]) and torch.equal(grads[0], grads[2])
