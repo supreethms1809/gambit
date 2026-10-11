@@ -35,6 +35,7 @@ def test_every_ablation_changes_the_config_it_names():
     assert ABLATIONS["A6_hard_top_mass"](base).projection == "hard_top_mass"
     assert ABLATIONS["A7_steps_100"](base).steps == 100
     assert ABLATIONS["A9_first_order"](base).kind == "first_order"
+    assert ABLATIONS["A10_boundary_shift"](base).boundary_shift is True
 
 
 def test_vit_uses_ig_and_skips_cve():

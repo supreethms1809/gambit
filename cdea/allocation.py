@@ -16,13 +16,16 @@ import torch
 import torch.nn as nn
 
 from core.eval_mode import eval_mode
-from core.grid import delete, keep
+from core.grid import boundary_offset, delete, keep
 from core.types import HypothesisSet
 from cdea.payoffs import deletion_payoffs, shared_log_odds, unique_log_odds
 from cdea.sinkhorn import hard_top_mass, sinkhorn
 
 EPS = 1e-6
 SINKHORN_ITERS = 20
+# Offsets of the boundary-robust payoff come from this seed alone, never from the
+# batch, so an image's allocation does not depend on n or on chunking.
+OFFSET_SEED = 0
 
 
 @dataclass
@@ -45,6 +48,7 @@ class AllocateConfig:
     pair_only: bool = False
     backend: str = "gradcam"
     ig_steps: int = 16
+    boundary_shift: bool = False         # FORMULATION.md section 4.1
 
 
 def _prior(
@@ -98,14 +102,24 @@ def _project(theta: torch.Tensor, row_target: torch.Tensor, projection: str, dua
     return torch.stack(rows, dim=1)
 
 
-def _edited(x, masks, grid_h, grid_w, preserve: bool) -> torch.Tensor:
+def _edited(x, masks, grid_h, grid_w, preserve: bool, offsets=None) -> torch.Tensor:
     edit = keep if preserve else delete
-    return torch.cat([edit(x, masks[:, player], grid_h, grid_w) for player in range(masks.shape[1])], dim=0)
+    players = range(masks.shape[1])
+    if offsets is None:
+        return torch.cat([edit(x, masks[:, p], grid_h, grid_w) for p in players], dim=0)
+    return torch.cat([edit(x, masks[:, p], grid_h, grid_w, offset=offsets[p]) for p in players], dim=0)
 
 
-def _player_logits(model, x, masks, grid_h, grid_w, preserve: bool) -> torch.Tensor:
-    flat = model(_edited(x, masks, grid_h, grid_w, preserve))
+def _player_logits(model, x, masks, grid_h, grid_w, preserve: bool, offsets=None) -> torch.Tensor:
+    flat = model(_edited(x, masks, grid_h, grid_w, preserve, offsets))
     return flat.view(masks.shape[1], x.shape[0], -1).transpose(0, 1)
+
+
+def _offsets(generator: torch.Generator, players: int, limit: tuple[int, int]) -> list[tuple[int, int]]:
+    """One pixel offset per player, uniform on ``{-s, ..., s}`` per axis."""
+    dy = torch.randint(-limit[0], limit[0] + 1, (players,), generator=generator)
+    dx = torch.randint(-limit[1], limit[1] + 1, (players,), generator=generator)
+    return [(int(a), int(b)) for a, b in zip(dy, dx)]
 
 
 def _reference(model, x, grid_h, grid_w, preserve: bool) -> torch.Tensor:
@@ -115,10 +129,10 @@ def _reference(model, x, grid_h, grid_w, preserve: bool) -> torch.Tensor:
     return model(keep(x, blank, grid_h, grid_w))
 
 
-def _loss(model, x, masks, hypotheses, grid_h, grid_w, preserve: bool, shared: bool) -> torch.Tensor:
+def _loss(model, x, masks, hypotheses, grid_h, grid_w, preserve: bool, shared: bool, offsets=None) -> torch.Tensor:
     ids = hypotheses.ids.long()
     reference = _reference(model, x, grid_h, grid_w, preserve)
-    edited = _player_logits(model, x, masks, grid_h, grid_w, preserve)
+    edited = _player_logits(model, x, masks, grid_h, grid_w, preserve, offsets)
     if preserve:
         ref_unique = unique_log_odds(reference, ids)
         total = torch.zeros((), device=x.device, dtype=reference.dtype)
@@ -206,11 +220,14 @@ def allocate(
             opt = torch.optim.Adam([theta], lr=float(cfg.lr))
             row_target = _row_targets(players, units, float(area), x.device, x.dtype)
             dual: list = [None]
+            generator = torch.Generator(device="cpu").manual_seed(OFFSET_SEED)
+            limit = boundary_offset(x.shape[-2], x.shape[-1], grid_h, grid_w)
             for _ in range(int(cfg.steps)):
                 opt.zero_grad(set_to_none=True)
+                offsets = _offsets(generator, players, limit) if cfg.boundary_shift else None
                 loss = _loss(
                     model, x.detach(), _masks(theta, row_target, float(area), cfg, dual),
-                    hypotheses, grid_h, grid_w, cfg.preserve, use_shared,
+                    hypotheses, grid_h, grid_w, cfg.preserve, use_shared, offsets,
                 )
                 loss.backward()
                 opt.step()

@@ -195,3 +195,19 @@ def test_cdea_does_not_import_the_scorer() -> None:
                 continue
             for name in names:
                 assert name.split(".")[0] not in {"evaluation", "baselines", "analysis"}
+
+
+def test_boundary_shift_keeps_marginals_and_is_chunk_invariant() -> None:
+    torch.manual_seed(5)
+    model = CellLinear(torch.randn(4, 16), (4, 4)).eval()
+    x = torch.rand(4, 3, 32, 32)
+    ids = torch.tensor([[0, 1, 2], [1, 2, 0], [2, 0, 1], [0, 2, 1]])
+    hypotheses = _hypotheses(ids)
+    cfg = AllocateConfig(steps=6, lr=0.2, init="uniform", boundary_shift=True)
+    whole = allocate(model, x, hypotheses, 4, 4, 0.125, cfg)
+    parts = [allocate(model, x[i:i + 2], _hypotheses(ids[i:i + 2]), 4, 4, 0.125, cfg) for i in (0, 2)]
+    assert torch.allclose(whole.unique, torch.cat([p.unique for p in parts]), atol=1e-5)
+    assert torch.allclose(whole.transport.sum(-2), torch.ones(4, 16), atol=1e-3)
+    assert torch.allclose(whole.transport.sum(-1), whole.row_target.expand(4, -1), atol=1e-3)
+    fixed = allocate(model, x, hypotheses, 4, 4, 0.125, AllocateConfig(steps=6, lr=0.2, init="uniform"))
+    assert not torch.allclose(whole.unique, fixed.unique)
