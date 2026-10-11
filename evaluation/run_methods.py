@@ -82,7 +82,7 @@ class CdeaConfig:
     pair_only: bool = False
     kind: str = "allocate"             # allocate | first_order | precomputed
     precomputed_dir: Optional[str] = None
-    boundary_shift: bool = False       # FORMULATION.md section 4.1
+    boundary_shift: bool = True        # FORMULATION.md section 4.1; False is ablation A10
     offset_seed: int = 0
 
 
@@ -106,10 +106,10 @@ ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
     "A7_steps_200": lambda c: replace(c, steps=200),
     "A8_precomputed": lambda c: replace(c, kind="precomputed"),
     "A9_first_order": lambda c: replace(c, kind="first_order"),
-    "A10_boundary_shift": lambda c: replace(c, boundary_shift=True),
-    # Sensitivity of A10 to its offset seed. Every seed is reported; none is selected.
-    "A10_boundary_shift_o1": lambda c: replace(c, boundary_shift=True, offset_seed=1),
-    "A10_boundary_shift_o2": lambda c: replace(c, boundary_shift=True, offset_seed=2),
+    "A10_fixed_boundary": lambda c: replace(c, boundary_shift=False),
+    # Sensitivity to the offset draw. Every seed is reported; none is selected.
+    "A11_offset_seed_1": lambda c: replace(c, offset_seed=1),
+    "A11_offset_seed_2": lambda c: replace(c, offset_seed=2),
 }
 
 

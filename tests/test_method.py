@@ -209,13 +209,15 @@ def test_boundary_shift_keeps_marginals_and_is_chunk_invariant() -> None:
     assert torch.allclose(whole.unique, torch.cat([p.unique for p in parts]), atol=1e-5)
     assert torch.allclose(whole.transport.sum(-2), torch.ones(4, 16), atol=1e-3)
     assert torch.allclose(whole.transport.sum(-1), whole.row_target.expand(4, -1), atol=1e-3)
-    fixed = allocate(model, x, hypotheses, 4, 4, 0.125, AllocateConfig(steps=6, lr=0.2, init="uniform"))
+    fixed = allocate(model, x, hypotheses, 4, 4, 0.125,
+                     AllocateConfig(steps=6, lr=0.2, init="uniform", boundary_shift=False))
     assert not torch.allclose(whole.unique, fixed.unique)
 
 
 def test_offset_seed_zero_is_the_default_and_other_seeds_move_the_offsets() -> None:
     from cdea.allocation import OFFSET_SEED, _offsets
 
+    assert AllocateConfig().boundary_shift is True
     assert AllocateConfig().offset_seed == OFFSET_SEED == 0
     torch.manual_seed(5)
     model = CellLinear(torch.randn(4, 16), (4, 4)).eval()

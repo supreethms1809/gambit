@@ -48,7 +48,7 @@ class AllocateConfig:
     pair_only: bool = False
     backend: str = "gradcam"
     ig_steps: int = 16
-    boundary_shift: bool = False         # FORMULATION.md section 4.1
+    boundary_shift: bool = True          # FORMULATION.md section 4.1; False is ablation A10
     offset_seed: int = OFFSET_SEED
 
 
