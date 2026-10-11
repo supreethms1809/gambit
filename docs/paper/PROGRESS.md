@@ -61,6 +61,16 @@ The default is unchanged until the user confirms adoption.
   - The G1 read on seed 1 needs seed-1 checkpoints. This section says not to train seeds 1–4, so the user decides when.
   - Every paper cell, including the baseline rows, is rerun at the current hash before anything is reported.
 
+## D2 fix, declared 2026-10-11 before the full run
+
+- **Diagnosis.** Diagnostic on 24 seed-0 CIFAR-10 val images at 5% (scratch, not a record):
+  - With more Adam steps, D2 grew instead of shrinking. The soft objective rewards spreading partial deletions over many cells, which no binary mask reproduces.
+  - Two changes closed D2 on that sample: payoffs evaluated on binary masks drawn from the plan, and annealing the Sinkhorn temperature.
+- **Choice.** By a rule fixed now, binary masks are adopted, because they add no setting. Annealing is used only if binary masks fail D2 on a dev cell.
+  - **Draw.** Each unit goes to one row of the plan, with probability given by its column. The draw is shared across images, so allocations stay chunk-invariant, and players stay exclusive in every draw.
+  - **Gradient.** Straight-through.
+- **Checks.** D2 at all three areas on both dev datasets (`scripts/check_degenerate.py`), then the G1 read-out. CD did not enter the choice and is reported beside it.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
