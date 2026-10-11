@@ -32,6 +32,12 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
 
 The default is unchanged until the user confirms adoption.
 
+## Offset-seed check, declared 2026-10-11 before it ran
+
+- **What runs.** The boundary-robust payoff with offset seeds 0, 1 and 2: `A10_boundary_shift`, `_o1`, `_o2`. Seed-0 val, both dev datasets, n = 64, CD@5% under ROAD, same baseline rows. Seed 0 is rerun so all three share one code hash, and so its rows can be compared with `results/paper/cdea_boundary/` as an end-to-end reproducibility check.
+- **How it is read.** Every seed is reported; none is selected.
+- **Verdict.** The G1 result counts as robust to the offset draw only if all three seeds are ahead (mean paired difference above 0) of margin Grad-CAM and of deletion Extremal Perturbations on both datasets. Otherwise the margin cannot be told apart from the method's sensitivity to its offsets.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
