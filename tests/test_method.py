@@ -252,3 +252,30 @@ def test_binary_draw_is_exclusive_and_matches_the_plan_on_average() -> None:
     assert torch.equal(plan.grad, torch.ones_like(plan))
     independent = _draw(plan.detach(), torch.rand((3, 16), generator=generator), joint=False)
     assert torch.all((independent == 0) | (independent == 1))
+
+
+def test_a_resnet_allocation_repeats_exactly_on_an_accelerator() -> None:
+    """Run on the machine that runs the cells. A nondeterministic backward kernel
+    would let Adam turn float noise into a different allocation."""
+    import pytest
+    import torchvision
+
+    from core.device import make_deterministic
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        pytest.skip("no GPU")
+    make_deterministic(device)
+    torch.manual_seed(0)
+    model = torchvision.models.resnet18(weights=None, num_classes=8).to(device).eval()
+    x = torch.rand(2, 3, 224, 224, device=device)
+    with torch.no_grad():
+        ids = model(x).topk(5, dim=-1).indices
+    hypotheses = HypothesisSet(ids=ids, mask=torch.ones_like(ids, dtype=torch.bool))
+    cfg = AllocateConfig(steps=20, lr=0.1)
+    first = allocate(model, x, hypotheses, 7, 7, 0.05, cfg)
+    second = allocate(model, x, hypotheses, 7, 7, 0.05, cfg)
+    assert torch.equal(first.unique, second.unique)

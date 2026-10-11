@@ -113,6 +113,9 @@ def run(spec, device_name: str = "auto"):
     import torch
 
     device = get_device(None if device_name == "auto" else torch.device(device_name))
+    from core.device import make_deterministic
+
+    make_deterministic(device)
     if spec.game == "shift":
         return run_shift(spec, device)
     return run_contrastive(spec, device)
