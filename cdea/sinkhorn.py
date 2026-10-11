@@ -1,12 +1,30 @@
 """Log-domain Sinkhorn. FORMULATION.md section 7.
 
 Column marginals are 1. Row marginals are the player budgets ``a * R`` and the
-unallocated remainder. ``I = 20``. The marginal error is asserted at ``1e-3``.
+unallocated remainder. ``I = 20`` iterations are unrolled for backpropagation.
+A detached catch-up brings a sharp kernel to the marginal bound first; twenty
+steps cannot reach it from a cold dual once ``theta`` is peaked.
 """
 
 from __future__ import annotations
 
 import torch
+
+# Enough for a kernel whose entries span a few tens of nats. The unrolled
+# count stays ``iters``. This cap only finishes the dual before those steps.
+CATCHUP_ITERS = 4096
+
+
+def _factors(masked, log_row, log_col, u, v, active):
+    u = log_row - torch.logsumexp(masked + v.unsqueeze(-2), dim=-1)
+    u = torch.where(active, u, torch.zeros_like(u))
+    v = log_col - torch.logsumexp(masked + u.unsqueeze(-1), dim=-2)
+    return u, v
+
+
+def _plan_from(masked, u, v, active):
+    plan = torch.exp(masked + u.unsqueeze(-1) + v.unsqueeze(-2))
+    return torch.where(active.unsqueeze(-1), plan, torch.zeros_like(plan))
 
 
 def sinkhorn(
@@ -57,22 +75,38 @@ def sinkhorn(
         v = dual[0][1].to(dtype=work_dtype, device=theta.device)
     masked = work.masked_fill(~active.unsqueeze(-1), -1e30)
     log_row = torch.where(active, log_row, torch.zeros_like(log_row))
+    # Detached. A peaked theta needs more than twenty steps from a zero dual,
+    # and the Adam step can move the kernel faster than twenty warm steps track.
+    # Catch-up restores the marginals; the unrolled steps then follow theta.
+    with torch.no_grad():
+        for _ in range(CATCHUP_ITERS):
+            u, v = _factors(masked, log_row, log_col, u, v, active)
+            caught = _plan_from(masked, u, v, active)
+            if _marginals_ok(caught, row_target.to(dtype=caught.dtype), tol):
+                break
+    u = u.detach()
+    v = v.detach()
     for _ in range(int(iters)):
-        u = log_row - torch.logsumexp(masked + v.unsqueeze(-2), dim=-1)
-        u = torch.where(active, u, torch.zeros_like(u))
-        v = log_col - torch.logsumexp(masked + u.unsqueeze(-1), dim=-2)
-    plan = torch.exp(masked + u.unsqueeze(-1) + v.unsqueeze(-2))
-    plan = torch.where(active.unsqueeze(-1), plan, torch.zeros_like(plan))
+        u, v = _factors(masked, log_row, log_col, u, v, active)
+    plan = _plan_from(masked, u, v, active)
     if dual is not None:
         dual[0] = (u.detach(), v.detach())
     _assert_marginals(plan, row_target.to(dtype=plan.dtype), tol)
     return plan.to(dtype=theta.dtype)
 
 
+def _marginals_ok(plan: torch.Tensor, row_target: torch.Tensor, tol: float) -> bool:
+    if not torch.isfinite(plan).all():
+        return False
+    row_error = (plan.sum(dim=-1) - row_target).abs().max().detach()
+    col_error = (plan.sum(dim=-2) - 1.0).abs().max().detach()
+    return bool(float(max(row_error, col_error)) <= tol)
+
+
 def _assert_marginals(plan: torch.Tensor, row_target: torch.Tensor, tol: float) -> None:
     row_error = (plan.sum(dim=-1) - row_target).abs().max().detach()
     col_error = (plan.sum(dim=-2) - 1.0).abs().max().detach()
-    if not torch.isfinite(plan).all() or float(row_error) > tol or float(col_error) > tol:
+    if not _marginals_ok(plan, row_target, tol):
         raise AssertionError(
             f"Sinkhorn marginal error {float(max(row_error, col_error)):.3e} exceeds {tol}"
         )

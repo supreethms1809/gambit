@@ -37,6 +37,29 @@ def _hypotheses(ids: torch.Tensor) -> HypothesisSet:
     return HypothesisSet(ids=ids, mask=torch.ones_like(ids, dtype=torch.bool))
 
 
+def test_sharp_kernel_meets_the_marginal_bound() -> None:
+    """Twenty cold steps leave a peaked plan about 0.1 off. The dual catch-up closes it."""
+    torch.manual_seed(0)
+    theta = 5 * torch.randn(4, 6, 49)
+    budget = 0.05 * 49
+    empty = 49 - 5 * budget
+    target = torch.tensor([budget] * 5 + [empty])
+    plan = sinkhorn(theta, target, iters=20)
+    assert torch.allclose(plan.sum(-1), target.expand(4, -1), atol=1e-3)
+    assert torch.allclose(plan.sum(-2), torch.ones(4, 49), atol=1e-3)
+
+
+def test_sinkhorn_gradient_reaches_theta() -> None:
+    theta = torch.randn(2, 3, 16, requires_grad=True)
+    budget = 0.25 * 16
+    target = torch.tensor([budget, budget, 16 - 2 * budget])
+    plan = sinkhorn(theta, target, iters=20)
+    plan.sum().backward()
+    assert theta.grad is not None
+    assert bool(torch.isfinite(theta.grad).all())
+    assert float(theta.grad.abs().sum()) > 0
+
+
 def test_sinkhorn_hits_the_marginals() -> None:
     torch.manual_seed(0)
     theta = torch.randn(4, 6, 49)
