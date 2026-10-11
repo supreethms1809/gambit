@@ -77,8 +77,26 @@ The default is unchanged until the user confirms adoption.
 - **Decision, 2026-10-11.** Evaluation-paper route (`G1.md`). There is no further formulation change.
 - **Labels.** Records under `results/paper/cdea_offset_seeds/` use the earlier `A10_boundary_shift*` labels.
 
-## Next session
+## Next session: full run on the GH200
 
-Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
+**Before merging to `main`, 2026-10-11.**
+- **Smoke run.** `scripts/smoke_e2e.py` at fast knobs ran every contrastive unit on both backbones, with every method and ablation. ImageNet was skipped because its data is not on the Mac.
+  - The only error was `cdea:A8_precomputed`, which needs maps exported from tag `framing-v1`.
+  - There were no non-finite scores.
+  - CVE and SC-CVE fell back to the random floor only on random-head smoke models.
+- **Shift game.** Only Waterbirds ResNet-50 ran before the run was stopped. It was clean.
 
-Smoke records, not paper numbers: shift Waterbirds is under `results/paper/smoke_shift_trained`; planted-patch is trained and not scored. Contrastive CIFAR-10 and HAM10000 are under `results/paper/smoke_contrastive`. Do not train seeds 1–4. The sixth dataset is still unchosen.
+**Known gaps.**
+- No launcher passes an A8 maps directory, and no export script exists. Every `--ablations` cell records A8 as an error until one does. The cell finishes everything else.
+- The shift units other than Waterbirds ResNet-50 were not smoke-tested.
+- On a smoke model, the analytic decomposition gave the same masks as base evidence. Check this at full n.
+
+**On the GH200.**
+1. Pull `main`, then run `PYTHONPATH=. python -m pytest tests/`. `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism there.
+2. Launch with `scripts/launch_paper_eval.py`; its docstring has the usage.
+   - Done markers carry the code and knobs hashes, so cells written by older code run again.
+   - `--image-batch` trades memory for `--jobs` and does not change scores.
+
+The test split stays locked until `eval-plan-frozen`.
+
+Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. `scripts/gate_shift.py` prints the read-out and the stop rule. Do not train seeds 1–4 without a user decision. The sixth shift dataset is still unchosen.
