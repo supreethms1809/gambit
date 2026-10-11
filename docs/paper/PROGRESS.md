@@ -7,8 +7,16 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
 ## Running
 
 - **Seed-0 cells.** CIFAR-10 and HAM10000 val cells (ResNet-50, n = 64) are in `results/paper/cells/`. Their CDEA rows were merged in after the Sinkhorn catch-up (`d271283`). Seed 1 is not trained.
-- **CDEA rerun with stage payoffs** (`ecbbfa2`, D2 inputs) goes to `results/paper/cdea_stages/`. The baseline rows are not rerun: no baseline calls `cdea/`.
+- **CDEA was not reproducible before `d010f02`.**
+  - Two runs at the same method hash (`540acbe0`: `results/paper/cdea_rerun/` and `results/paper/cdea_stages/`) shared no identical row.
+  - At 5% on CIFAR-10 val, the median per-image difference in CD was 0.71 nats, and the mean moved from 2.39 to 1.99.
+  - The cause was the backward of the cell upsampling, which accumulates in a varying order on GPUs; Adam amplified it.
+  - Since `d010f02`, a repeated allocation on MPS is identical. CDEA rows from before it carry run-to-run noise of that size.
+- **D2 fails** in `results/paper/cdea_stages/` (`scripts/check_degenerate.py --records`). At 5% the soft-minus-hard gap is above 0.5 nats for ranks 0 and 1 on both dev datasets.
 - **Declared departure from the G1 stop rule.** One formulation change is under test: the boundary-robust payoff, `FORMULATION.md` section 4.1. Its read-out and decision rule are in `G1.md` and were fixed before it ran.
+  - The fixed-boundary and boundary-robust CDEA cells run together at `f011c8e3` into `results/paper/cdea_boundary/`.
+  - The baseline rows are not rerun: no baseline calls the changed code.
+  - Read with `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`.
 
 ## Next session
 
