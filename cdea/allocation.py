@@ -23,9 +23,9 @@ from cdea.sinkhorn import hard_top_mass, sinkhorn
 
 EPS = 1e-6
 SINKHORN_ITERS = 20
-# Offsets of the boundary-robust payoff come from a seed alone, never from the
-# batch, so an image's allocation does not depend on n or on chunking.
-OFFSET_SEED = 0
+# Boundary offsets and binary mask draws come from this seed alone, never from
+# the batch, so an image's allocation does not depend on n or on chunking.
+DRAW_SEED = 0
 
 
 @dataclass
@@ -49,7 +49,8 @@ class AllocateConfig:
     backend: str = "gradcam"
     ig_steps: int = 16
     boundary_shift: bool = True          # FORMULATION.md section 4.1; False is ablation A10
-    offset_seed: int = OFFSET_SEED
+    binary_masks: bool = True            # FORMULATION.md section 7; False is ablation A12
+    draw_seed: int = DRAW_SEED
 
 
 def _prior(
@@ -114,6 +115,26 @@ def _edited(x, masks, grid_h, grid_w, preserve: bool, offsets=None) -> torch.Ten
 def _player_logits(model, x, masks, grid_h, grid_w, preserve: bool, offsets=None) -> torch.Tensor:
     flat = model(_edited(x, masks, grid_h, grid_w, preserve, offsets))
     return flat.view(masks.shape[1], x.shape[0], -1).transpose(0, 1)
+
+
+def _draw(masks: torch.Tensor, uniform: torch.Tensor, joint: bool) -> torch.Tensor:
+    """Binary masks drawn from the plan, with a straight-through gradient.
+
+    Joint plan: unit ``r`` goes to the player whose share of column ``r``
+    covers ``uniform[r]``, or to no player, so players stay exclusive in every
+    draw. ``uniform`` is ``(R,)``. Independent rows: entry ``(p, r)`` is kept
+    when ``uniform[p, r]`` is below it; ``uniform`` is ``(P, R)``. The same
+    draw serves every image in the batch.
+    """
+    if joint:
+        upper = masks.cumsum(dim=1)
+        lower = upper - masks
+        u = uniform.to(masks.device, masks.dtype).view(1, 1, -1)
+        hard = ((u >= lower) & (u < upper)).to(masks.dtype)
+    else:
+        hard = (uniform.to(masks.device, masks.dtype).unsqueeze(0) < masks).to(masks.dtype)
+    # (masks - masks.detach()) is exactly 0 forward, so the drawn mask stays exactly binary.
+    return hard + (masks - masks.detach())
 
 
 def _offsets(generator: torch.Generator, players: int, limit: tuple[int, int]) -> list[tuple[int, int]]:
@@ -221,13 +242,18 @@ def allocate(
             opt = torch.optim.Adam([theta], lr=float(cfg.lr))
             row_target = _row_targets(players, units, float(area), x.device, x.dtype)
             dual: list = [None]
-            generator = torch.Generator(device="cpu").manual_seed(int(cfg.offset_seed))
+            generator = torch.Generator(device="cpu").manual_seed(int(cfg.draw_seed))
             limit = boundary_offset(x.shape[-2], x.shape[-1], grid_h, grid_w)
+            joint = not cfg.independent and cfg.projection == "sinkhorn"
             for _ in range(int(cfg.steps)):
                 opt.zero_grad(set_to_none=True)
                 offsets = _offsets(generator, players, limit) if cfg.boundary_shift else None
+                masks = _masks(theta, row_target, float(area), cfg, dual)
+                if cfg.binary_masks:
+                    shape = (units,) if joint else (players, units)
+                    masks = _draw(masks, torch.rand(shape, generator=generator), joint)
                 loss = _loss(
-                    model, x.detach(), _masks(theta, row_target, float(area), cfg, dual),
+                    model, x.detach(), masks,
                     hypotheses, grid_h, grid_w, cfg.preserve, use_shared, offsets,
                 )
                 loss.backward()

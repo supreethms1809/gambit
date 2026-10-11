@@ -35,10 +35,11 @@ def test_every_ablation_changes_the_config_it_names():
     assert ABLATIONS["A6_hard_top_mass"](base).projection == "hard_top_mass"
     assert ABLATIONS["A7_steps_100"](base).steps == 100
     assert ABLATIONS["A9_first_order"](base).kind == "first_order"
-    assert base.boundary_shift is True and base.offset_seed == 0
+    assert base.boundary_shift is True and base.binary_masks is True and base.draw_seed == 0
     assert ABLATIONS["A10_fixed_boundary"](base).boundary_shift is False
-    for name, seed in (("A11_offset_seed_1", 1), ("A11_offset_seed_2", 2)):
-        assert ABLATIONS[name](base).boundary_shift is True and ABLATIONS[name](base).offset_seed == seed
+    for name, seed in (("A11_draw_seed_1", 1), ("A11_draw_seed_2", 2)):
+        assert ABLATIONS[name](base).boundary_shift is True and ABLATIONS[name](base).draw_seed == seed
+    assert ABLATIONS["A12_fractional_masks"](base).binary_masks is False
 
 
 def test_vit_uses_ig_and_skips_cve():

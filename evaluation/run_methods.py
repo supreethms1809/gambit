@@ -83,7 +83,8 @@ class CdeaConfig:
     kind: str = "allocate"             # allocate | first_order | precomputed
     precomputed_dir: Optional[str] = None
     boundary_shift: bool = True        # FORMULATION.md section 4.1; False is ablation A10
-    offset_seed: int = 0
+    binary_masks: bool = True          # FORMULATION.md section 7; False is ablation A12
+    draw_seed: int = 0
 
 
 ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
@@ -107,9 +108,10 @@ ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
     "A8_precomputed": lambda c: replace(c, kind="precomputed"),
     "A9_first_order": lambda c: replace(c, kind="first_order"),
     "A10_fixed_boundary": lambda c: replace(c, boundary_shift=False),
-    # Sensitivity to the offset draw. Every seed is reported; none is selected.
-    "A11_offset_seed_1": lambda c: replace(c, offset_seed=1),
-    "A11_offset_seed_2": lambda c: replace(c, offset_seed=2),
+    # Sensitivity to the random draws. Every seed is reported; none is selected.
+    "A11_draw_seed_1": lambda c: replace(c, draw_seed=1),
+    "A11_draw_seed_2": lambda c: replace(c, draw_seed=2),
+    "A12_fractional_masks": lambda c: replace(c, binary_masks=False),
 }
 
 
@@ -188,7 +190,8 @@ def _allocate_config(cfg: CdeaConfig, knobs: Knobs):
         backend=cfg.backend,
         ig_steps=knobs.ig_steps,
         boundary_shift=cfg.boundary_shift,
-        offset_seed=cfg.offset_seed,
+        binary_masks=cfg.binary_masks,
+        draw_seed=cfg.draw_seed,
     )
 
 

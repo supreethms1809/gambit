@@ -214,18 +214,41 @@ def test_boundary_shift_keeps_marginals_and_is_chunk_invariant() -> None:
     assert not torch.allclose(whole.unique, fixed.unique)
 
 
-def test_offset_seed_zero_is_the_default_and_other_seeds_move_the_offsets() -> None:
-    from cdea.allocation import OFFSET_SEED, _offsets
+def test_draw_seed_zero_is_the_default_and_other_seeds_move_the_draws() -> None:
+    from cdea.allocation import DRAW_SEED, _offsets
 
-    assert AllocateConfig().boundary_shift is True
-    assert AllocateConfig().offset_seed == OFFSET_SEED == 0
+    cfg = AllocateConfig()
+    assert cfg.boundary_shift is True and cfg.binary_masks is True
+    assert cfg.draw_seed == DRAW_SEED == 0
     torch.manual_seed(5)
     model = CellLinear(torch.randn(4, 16), (4, 4)).eval()
     x = torch.rand(2, 3, 32, 32)
     hypotheses = _hypotheses(torch.tensor([[0, 1, 2], [1, 2, 0]]))
-    base = AllocateConfig(steps=4, lr=0.2, init="uniform", boundary_shift=True)
+    base = AllocateConfig(steps=4, lr=0.2, init="uniform")
     pinned = allocate(model, x, hypotheses, 4, 4, 0.125, base)
-    explicit = allocate(model, x, hypotheses, 4, 4, 0.125, AllocateConfig(**{**base.__dict__, "offset_seed": 0}))
+    explicit = allocate(model, x, hypotheses, 4, 4, 0.125, AllocateConfig(**{**base.__dict__, "draw_seed": 0}))
     assert torch.equal(pinned.unique, explicit.unique)
     draws = [_offsets(torch.Generator().manual_seed(seed), 6, (16, 16)) for seed in (0, 1)]
     assert draws[0] != draws[1]
+
+
+def test_binary_draw_is_exclusive_and_matches_the_plan_on_average() -> None:
+    from cdea.allocation import _draw
+
+    torch.manual_seed(0)
+    theta = torch.randn(3, 4, 16)
+    target = torch.tensor([2.0, 2.0, 2.0, 10.0])
+    plan = sinkhorn(theta, target)[:, :-1].requires_grad_(True)
+    generator = torch.Generator().manual_seed(0)
+    total = torch.zeros_like(plan)
+    draws = 4000
+    for _ in range(draws):
+        hard = _draw(plan, torch.rand((16,), generator=generator), joint=True)
+        assert torch.all((hard.detach() == 0) | (hard.detach() == 1))
+        assert float(hard.detach().sum(dim=1).max()) <= 1.0
+        total += hard.detach()
+    assert torch.allclose(total / draws, plan.detach(), atol=0.03)
+    hard.sum().backward()
+    assert torch.equal(plan.grad, torch.ones_like(plan))
+    independent = _draw(plan.detach(), torch.rand((3, 16), generator=generator), joint=False)
+    assert torch.all((independent == 0) | (independent == 1))
