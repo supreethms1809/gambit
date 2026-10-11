@@ -75,7 +75,7 @@ Each payoff of section 4 becomes its expectation over offsets:
 
 **Optimisation.** One offset per player per step, drawn from a generator with a fixed seed that does not see the batch. Every image in a step uses the same offsets, so an image's allocation still does not depend on n or on chunking. Cost per step is unchanged.
 
-**Status.** Adopted by user decision on 2026-10-11. The payoffs CDEA optimises are the section-4 payoffs in this boundary-robust form. It was the one formulation change tested after the seed-0 read. `G1.md` records it as a declared departure from the stop rule, with its read-out fixed before it ran. It met that read-out with each of three offset seeds (`PROGRESS.md`). The fixed-boundary payoff is ablation A10, and the offset seed is ablation A11.
+**Status.** Adopted by user decision on 2026-10-11. The payoffs CDEA optimises are the section-4 payoffs in this boundary-robust form. It was the one formulation change tested after the seed-0 read. `G1.md` records it as a declared departure from the stop rule, with its read-out fixed before it ran. It met that read-out with each of three offset seeds while the plan was still fractional. With the binary draws of section 7, it no longer does (`G1.md`). The fixed-boundary payoff is ablation A10, and the draw seed is ablation A11.
 
 ## 5. Constraints
 
@@ -104,6 +104,12 @@ The word "game" means what it means here and nothing more: players with their ow
 
   The evidence is a prior. Ablation A5 measures how much the result depends on it.
 - **Steps.** Adam on θ, T steps, learning rate η.
+- **Binary draws** (adopted 2026-10-11; fractional masks are ablation A12). At each step, the payoffs are evaluated on a binary allocation drawn from the plan.
+  - Unit r goes to player p with probability A_{p,r}, or to no player with the rest of its column. Players are exclusive in every draw.
+  - One draw serves every image in the step, and the gradient is straight-through.
+  - The objective is then the expected payoff of binary masks, the kind that is scored.
+  - Why: on the fractional plan, the optimiser rewarded spreading partial deletions over many cells, which no binary mask reproduces. D2 failed on CIFAR-10, and more steps made it worse.
+  - The boundary offsets of section 4.1 and the draws come from one generator, seeded by the draw seed and never by the batch.
 - **Loss.** The loss is −Σ_images Σ_players u, summed over images, not averaged. An image's allocation therefore does not depend on n or on chunking.
 - **Area.** The problem is solved separately at each scored area, as Extremal Perturbations is.
 - **Cost.** One base-evidence pass, then T × P forward and backward passes per image per area: one deleted input per player per step.
@@ -122,7 +128,7 @@ The word "game" means what it means here and nothing more: players with their ow
 | Blur in b(x) | The existing unit-space default | Fixed |
 | ε | 1e-6 | Fixed |
 | Boundary offset s (section 4.1) | ⌊½ unit side⌋ | Fixed |
-| Offset seed (section 4.1) | 0 | Fixed. Seeds 1 and 2 are ablation A11 |
+| Draw seed (offsets of section 4.1 and binary draws of section 7) | 0 | Fixed. Seeds 1 and 2 are ablation A11 |
 
 The default for the G1 gate is: Grad-CAM initialisation on ResNet-50, T = 100, η = 0.1, with the boundary-robust payoff of section 4.1.
 

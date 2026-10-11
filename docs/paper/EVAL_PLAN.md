@@ -336,7 +336,8 @@ The routes are redefined for this formulation in `FORMULATION.md` section 11. `s
 | A8 | the earlier formulation (tag `framing-v1`) (the Oct 7 objective, runner default) | What the revision changed |
 | A9 | First-order solution: top units of the margin gradient × (x − b(x)), `FORMULATION.md` section 9 | What optimisation adds beyond its own linearisation |
 | A10 | Fixed-boundary payoff: section 4's payoffs without the offsets of `FORMULATION.md` section 4.1 | Dependence of the payoff on the exact cell border |
-| A11 | Offset seeds 1 and 2 of section 4.1, against the default seed 0. All three are reported; none is selected | Sensitivity to the offset draw |
+| A11 | Draw seeds 1 and 2 (boundary offsets and binary draws), against the default seed 0. All three are reported; none is selected | Sensitivity to the random draws |
+| A12 | Fractional masks: payoffs evaluated on the soft plan instead of binary draws (`FORMULATION.md` section 7) | What the relaxation adds, and the D2 gap it opens |
 
 Confounds are stated per row: forward passes, number of masks, and K.
 

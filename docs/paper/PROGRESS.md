@@ -71,6 +71,12 @@ The default is unchanged until the user confirms adoption.
   - **Gradient.** Straight-through.
 - **Checks.** D2 at all three areas on both dev datasets (`scripts/check_degenerate.py`), then the G1 read-out. CD did not enter the choice and is reported beside it.
 
+**Result, 2026-10-11.**
+- **D2.** Binary draws (`532c686`, hash `4c623f66`) pass D2 at 2.5%, 5% and 10% on both dev datasets (`results/paper/cdea_binary/`). The annealing fallback was not needed.
+- **G1 read-out.** With D2 closed, the read-out is no longer met: CDEA is behind margin Grad-CAM on CIFAR-10 and HAM10000. See `G1.md`.
+- **Next.** The user decides the paper route.
+- **Labels.** Records under `results/paper/cdea_offset_seeds/` use the earlier `A10_boundary_shift*` labels.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
