@@ -199,7 +199,7 @@ def main() -> None:
     p.add_argument("--one", default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
 
-    from scripts.final_grid import pending_cells, run_grid
+    from scripts.final_grid import is_done, pending_cells, run_grid
     from scripts.paper_run import run
 
     if args.candidates and args.split == "test":
@@ -210,6 +210,10 @@ def main() -> None:
         if not cells:
             raise SystemExit(f"unknown cell {args.one!r}")
     log_dir = Path(args.out) / "_markers" / args.split
+    from evaluation.provenance import knobs_hash, method_code_hash
+
+    # A marker counts only for the code and knobs that wrote it.
+    stamp = f"{method_code_hash()} {knobs_hash(FAST if args.fast else Knobs())}"
     if args.dry_run:
         for cell in cells:
             spec = spec_for(cell, args)
@@ -220,8 +224,8 @@ def main() -> None:
 
     if args.jobs > 1 and args.one is None:
         run_grid([], log_dir, lambda cell: None, final=args.final)   # the freeze and clean-tree checks
-        _run_cells_in_parallel(pending_cells(cells, log_dir), log_dir, args)
-        rows = [{"id": c["id"], "status": "done" if (log_dir / f"{c['id']}.done").is_file() else "failed"}
+        _run_cells_in_parallel(pending_cells(cells, log_dir, stamp), log_dir, args)
+        rows = [{"id": c["id"], "status": "done" if is_done(log_dir / f"{c['id']}.done", stamp) else "failed"}
                 for c in cells]
         failed = [r["id"] for r in rows if r["status"] == "failed"]
         print(f"{len(rows)} cells: {len(rows) - len(failed)} done, {len(failed)} failed")
@@ -236,7 +240,7 @@ def main() -> None:
         out = run(spec, args.device)
         print(f"done {cell['id']} -> {out}", flush=True)
 
-    rows = run_grid(cells, log_dir, execute, final=args.final)
+    rows = run_grid(cells, log_dir, execute, final=args.final, stamp=stamp)
     failed = [r["id"] for r in rows if r["status"] == "failed"]
     print(f"{len(rows)} cells: {sum(r['status'] == 'done' for r in rows)} done, "
           f"{sum(r['status'] == 'skipped' for r in rows)} skipped, {len(failed)} failed")
