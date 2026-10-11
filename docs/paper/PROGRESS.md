@@ -18,6 +18,20 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
   - The baseline rows are not rerun: no baseline calls the changed code.
   - Read with `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`.
 
+## G1 declared read-out, 2026-10-11 (seed 0 only)
+
+`scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`
+
+- **Boundary-robust payoff** (`cdea:A10_boundary_shift`): "ahead of both comparators on both datasets". The declared rule is met.
+- **Fixed-boundary payoff** (`cdea`): not ahead of margin Grad-CAM on either dataset.
+
+**Open before section 4.1 becomes the method.**
+- The 95% intervals against margin Grad-CAM include 0 on both datasets.
+- D2 still fails at 5% on CIFAR-10, though the gap is smaller than with the fixed boundary.
+- The G1 read is to be repeated on seed 1, which is not trained.
+
+The default is unchanged until the user confirms adoption.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
