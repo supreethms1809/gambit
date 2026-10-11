@@ -1,6 +1,8 @@
 """Resumable grid runner. It does not launch the contrastive final runs.
 
-A cell is skipped when its done marker already exists. ``--final`` is refused
+A cell is skipped when its done marker exists and carries the current stamp
+(the method-code and knobs hashes), so a cell finished under older code runs
+again instead of leaving stale records in place. ``--final`` is refused
 while ``EVAL_PLAN.md`` says it is not frozen, and a dirty tree is refused by
 the same check as the other final entry points. This module does not read the
 test split.
@@ -29,13 +31,19 @@ def cell_id(cell: Mapping) -> str:
     return f"{cell['dataset']}_{cell['model']}_{cell['method']}_seed{cell['seed']}"
 
 
-def pending_cells(cells: Sequence[Mapping], log_dir: Path) -> list[Mapping]:
-    """Cells whose done marker is absent. Order is preserved."""
-    waiting = []
-    for cell in cells:
-        if not (Path(log_dir) / f"{cell_id(cell)}.done").is_file():
-            waiting.append(cell)
-    return waiting
+def is_done(marker: Path, stamp: str | None = None) -> bool:
+    """A marker counts when it exists and, given a stamp, its second line is that stamp."""
+    if not marker.is_file():
+        return False
+    if stamp is None:
+        return True
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    return len(lines) > 1 and lines[1].strip() == stamp
+
+
+def pending_cells(cells: Sequence[Mapping], log_dir: Path, stamp: str | None = None) -> list[Mapping]:
+    """Cells without a current done marker. Order is preserved."""
+    return [cell for cell in cells if not is_done(Path(log_dir) / f"{cell_id(cell)}.done", stamp)]
 
 
 def run_grid(
@@ -45,6 +53,7 @@ def run_grid(
     *,
     final: bool,
     eval_plan_path: Path = EVAL_PLAN_PATH,
+    stamp: str | None = None,
 ) -> list[dict[str, str]]:
     """Run cells that are not already done. Returns one status row per cell."""
     if final:
@@ -59,7 +68,7 @@ def run_grid(
     for cell in cells:
         name = cell_id(cell)
         marker = log_dir / f"{name}.done"
-        if marker.is_file():
+        if is_done(marker, stamp):
             rows.append({"id": name, "status": "skipped"})
             continue
         try:
@@ -68,7 +77,7 @@ def run_grid(
             (log_dir / f"{name}.failed").write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
             rows.append({"id": name, "status": "failed"})
             continue
-        marker.write_text(name + "\n", encoding="utf-8")
+        marker.write_text(name + "\n" + (stamp or "") + "\n", encoding="utf-8")
         rows.append({"id": name, "status": "done"})
     return rows
 

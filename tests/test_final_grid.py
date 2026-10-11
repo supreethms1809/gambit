@@ -61,3 +61,18 @@ def test_final_is_refused_while_the_draft_says_it_is_not_frozen() -> None:
 def test_the_module_refuses_to_launch() -> None:
     with pytest.raises(SystemExit, match="not frozen"):
         main()
+
+
+def test_a_marker_from_other_code_does_not_count(tmp_path: Path) -> None:
+    """A cell finished under older code or knobs runs again."""
+    cells = [{"dataset": "cifar10", "model": "resnet50", "method": "all", "seed": 0}]
+    ran = []
+    rows = run_grid(cells, tmp_path, ran.append, final=False, stamp="code-a knobs-a")
+    assert rows[0]["status"] == "done" and len(ran) == 1
+    assert run_grid(cells, tmp_path, ran.append, final=False, stamp="code-a knobs-a")[0]["status"] == "skipped"
+    assert pending_cells(cells, tmp_path, "code-b knobs-a") == cells
+    assert run_grid(cells, tmp_path, ran.append, final=False, stamp="code-b knobs-a")[0]["status"] == "done"
+    assert len(ran) == 2
+    # A marker written before stamps existed holds only the name.
+    (tmp_path / "cifar10_resnet50_all_seed0.done").write_text("cifar10_resnet50_all_seed0\n", encoding="utf-8")
+    assert pending_cells(cells, tmp_path, "code-b knobs-a") == cells

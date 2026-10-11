@@ -206,13 +206,10 @@ def build_provider(name: str, grid_h: int, grid_w: int, **kw):
         return IntegratedGradientsRegionsProvider(grid_h=grid_h, grid_w=grid_w,
                                                   steps=kw.get("steps", 16),
                                                   baseline=kw.get("baseline", "zero"))
-    if name == "occlusion":
-        from .occlusion_regions import OcclusionRegionsProvider
-        return OcclusionRegionsProvider(grid_h=grid_h, grid_w=grid_w, **kw)
     raise ValueError(f"unknown provider '{name}'")
 
 
-ALL_METHODS = CAM_METHODS + CAPTUM_METHODS + ("ig", "occlusion")
+ALL_METHODS = CAM_METHODS + CAPTUM_METHODS + ("ig",)
 __all__ = ["CamLibraryProvider", "CaptumRegionsProvider", "build_provider",
            "ALL_METHODS", "DEFAULT_METHODS", "SLOW_METHODS",
            "CAM_METHODS", "CAPTUM_METHODS"]

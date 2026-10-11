@@ -19,8 +19,8 @@ class IntegratedGradientsRegionsProvider:
     ):
         if steps <= 0:
             raise ValueError("steps must be > 0")
-        if baseline not in {"zero", "mean"}:
-            raise ValueError("baseline must be 'zero' or 'mean'")
+        if baseline not in {"zero", "mean", "blur"}:
+            raise ValueError("baseline must be 'zero', 'mean', or 'blur'")
         self.grid_h = grid_h
         self.grid_w = grid_w
         self.R = grid_h * grid_w
@@ -30,6 +30,10 @@ class IntegratedGradientsRegionsProvider:
     def _baseline_input(self, x: Tensor) -> Tensor:
         if self.baseline == "mean":
             return x.mean(dim=(2, 3), keepdim=True).expand_as(x)
+        if self.baseline == "blur":
+            from core.grid import deletion_baseline
+
+            return deletion_baseline(x, self.grid_h, self.grid_w)
         return torch.zeros_like(x)
 
     def _ig_for_class(

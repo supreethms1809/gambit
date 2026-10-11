@@ -5,10 +5,6 @@ dataset × backbone × seed, scored as EVAL_PLAN.md defines, written as records.
     PYTHONPATH=. python scripts/paper_run.py --game contrastive --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 200 --methods all --ablations all
 
-    # shift, with the area pilot
-    PYTHONPATH=. python scripts/paper_run.py --game shift --dataset waterbirds \\
-        --backbone resnet50 --seed 0 --split val --n 128 --methods all --areas 0.05,0.10,0.25
-
 ``--split test`` is refused until EVAL_PLAN.md is frozen and ``--final`` and
 ``--config-hash`` are given; ``--final`` also refuses a dirty tree.
 """
@@ -32,6 +28,7 @@ from evaluation.run_methods import (  # noqa: E402
     SHIFT_ABLATIONS,
     SHIFT_CANDIDATES,
     SHIFT_CORE,
+    SHIFT_EXTENDED,
     Knobs,
     candidate_applies,
 )
@@ -67,11 +64,12 @@ def parse(argv=None):
     p.add_argument("--operators", default="road,blur")
     p.add_argument("--model-source", default="auto", choices=["auto", "paper", "checkpoint", "imagenet", "smoke"])
     p.add_argument("--checkpoint", default=None)
-    p.add_argument("--image-batch", type=int, default=4,
-                   help="images on the device at once. 0 keeps the whole sample.")
     p.add_argument("--fast", action="store_true", help="smoke knobs; never a paper number")
-    p.add_argument("--out", default=str(REPO / "results" / "paper" / "runs"))
+    p.add_argument("--out", default=str(REPO / "results" / "paper" / "cells"))
     p.add_argument("--device", default="auto")
+    p.add_argument("--image-batch", type=int, default=4,
+                   help="images on the device at once inside a cell; 0 keeps the whole sample. "
+                   "Scores do not depend on it.")
     p.add_argument("--final", action="store_true")
     p.add_argument("--config-hash", default=None)
     return p.parse_args(argv)
@@ -80,19 +78,22 @@ def parse(argv=None):
 def spec_from_args(args):
     from evaluation.run_cell import CellSpec
 
-    if args.game == "contrastive":
+    if args.game == "shift":
+        methods = _list(args.methods, SHIFT_CORE + SHIFT_EXTENDED, SHIFT_CORE)
+        ablations = _list(args.ablations, tuple(SHIFT_ABLATIONS))
+        candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
+    else:
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
-        operators = tuple(o.strip() for o in args.operators.split(","))
-    else:
-        methods = _list(args.methods, SHIFT_CORE, SHIFT_CORE)
-        ablations = _list(args.ablations, tuple(SHIFT_ABLATIONS))
-        candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
-        operators = ("road",)
+    operators = tuple(o.strip() for o in args.operators.split(","))
     candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
-    if args.game == "contrastive" and args.backbone != "resnet50" and "cve" in methods:
-        methods.remove("cve")   # CVE is ResNet-50 only (EVAL_PLAN 4.2)
+    if args.backbone != "resnet50":
+        for resnet_only in ("cve", "sc_cve"):
+            if resnet_only in methods:
+                methods.remove(resnet_only)   # CVE and SC-CVE are ResNet-50 only (EVAL_PLAN 4.2)
+    if not args.backbone.startswith("vit") and "chefer" in methods:
+        methods.remove("chefer")   # Chefer is ViT only (EVAL_PLAN 4.2)
     return CellSpec(
         game=args.game, dataset=args.dataset, backbone=args.backbone, seed=args.seed,
         split=args.split, n=args.n, methods=methods, ablations=ablations, candidates=candidates,
@@ -112,7 +113,12 @@ def run(spec, device_name: str = "auto"):
     import torch
 
     device = get_device(None if device_name == "auto" else torch.device(device_name))
-    return (run_contrastive if spec.game == "contrastive" else run_shift)(spec, device)
+    from core.device import make_deterministic
+
+    make_deterministic(device)
+    if spec.game == "shift":
+        return run_shift(spec, device)
+    return run_contrastive(spec, device)
 
 
 def main(argv=None) -> None:

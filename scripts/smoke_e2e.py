@@ -40,9 +40,6 @@ from evaluation.run_methods import (  # noqa: E402
     CONTRASTIVE_CORE,
     CONTRASTIVE_EXTENDED,
     FAST,
-    SHIFT_ABLATIONS,
-    SHIFT_CANDIDATES,
-    SHIFT_CORE,
     Knobs,
     candidate_applies,
 )
@@ -50,9 +47,7 @@ from evaluation.run_methods import (  # noqa: E402
 BACKBONES = ("resnet50", "vit_b_16")
 CONTRASTIVE_UNITS = ("cifar10", "cifar100", "oxford_pets", "stanford_dogs", "cub200",
                      "ham10000", "brain_tumor", "imagenet")
-SHIFT_UNITS = ("waterbirds", "imagenet9", "stanford_dogs", "planted_patch", "colored_mnist")
 ABLATION_UNIT = "cifar10"
-SHIFT_ABLATION_UNIT = "waterbirds"
 
 
 def _source(dataset: str, backbone: str, seed: int, checkpoint_dir=None, checkpoint_epochs: int = 15):
@@ -74,6 +69,23 @@ def _data_present(dataset: str) -> bool:
     return True
 
 
+SHIFT_SMOKE_UNITS = ("waterbirds", "planted_patch")
+
+
+def shift_cells():
+    from evaluation.run_cell import CellSpec
+    from evaluation.run_methods import SHIFT_CORE
+
+    return [
+        CellSpec(
+            game="shift", dataset=dataset, backbone=backbone, seed=0, n=4,
+            methods=list(SHIFT_CORE), knobs=FAST,
+        )
+        for dataset in SHIFT_SMOKE_UNITS
+        for backbone in BACKBONES
+    ]
+
+
 def cells(production_timing: bool = True):
     from evaluation.run_cell import CellSpec
 
@@ -81,20 +93,13 @@ def cells(production_timing: bool = True):
     for dataset in CONTRASTIVE_UNITS:
         for backbone in BACKBONES:
             methods = [m for m in CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED
-                       if not (m == "cve" and backbone != "resnet50")]
+                       if not (m in ("cve", "sc_cve") and backbone != "resnet50")
+                       and not (m == "chefer" and not backbone.startswith("vit"))]
             ablations = list(ABLATIONS) if dataset == ABLATION_UNIT else []
             candidates = ([c for c in CONTRASTIVE_CANDIDATES if candidate_applies(c, backbone)]
                           if dataset == ABLATION_UNIT else [])
             out.append(CellSpec(game="contrastive", dataset=dataset, backbone=backbone, seed=0, n=1,
                                 methods=methods, ablations=ablations, candidates=candidates, knobs=FAST))
-    for dataset in SHIFT_UNITS:
-        for backbone in BACKBONES:
-            ablations = list(SHIFT_ABLATIONS) if dataset == SHIFT_ABLATION_UNIT else []
-            candidates = ([c for c in SHIFT_CANDIDATES if candidate_applies(c, backbone)]
-                          if dataset == SHIFT_ABLATION_UNIT else [])
-            out.append(CellSpec(game="shift", dataset=dataset, backbone=backbone, seed=0, n=4,
-                                methods=list(SHIFT_CORE), ablations=ablations, candidates=candidates,
-                                areas=(0.05, 0.10, 0.25), operators=("road",), knobs=FAST))
     if production_timing:
         for backbone in BACKBONES:
             methods = [m for m in CONTRASTIVE_CORE if not (m == "cve" and backbone != "resnet50")]
@@ -105,6 +110,7 @@ def cells(production_timing: bool = True):
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--game", default="contrastive", choices=["contrastive", "shift"])
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "smoke"))
     p.add_argument("--device", default="auto")
     p.add_argument("--only", default=None, help="comma list of datasets to keep")
@@ -125,7 +131,8 @@ def main() -> None:
         _run_datasets_in_parallel(args, keep)
         args.resume = True
     results = []
-    for spec in cells(not args.no_production_timing):
+    planned = shift_cells() if args.game == "shift" else cells(not args.no_production_timing)
+    for spec in planned:
         if keep and spec.dataset not in keep:
             continue
         timing = not spec.knobs.fast

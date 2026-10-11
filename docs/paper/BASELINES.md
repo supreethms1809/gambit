@@ -63,38 +63,32 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** A non-finite feature map raises. If the query map is already predicted as the distractor class, the edit list is empty. If the class never flips, `flipped` is false and the caller counts a failure rather than dropping the image.
 - **Cost.** One decision-network evaluation per candidate pair per step. On the paper's 7×7 map that is 2,401 evaluations per edit.
 
-## Attribution difference
+## SC-CVE (semantically consistent counterfactuals)
 
-- **Reviewer question.** Why not subtract two heatmaps?
-- **Source.** `baselines.shift_maps.environment_maps`. The maps are the shared Grad-CAM or integrated-gradients attributions, one per environment. There is no separate reference implementation: the reduction is the baseline.
-- **Patches.** None.
-- **Defaults.** Index 0 is the in-distribution map. The robust map is the elementwise minimum across environments. The shortcut map is the largest absolute gap between the in-distribution map and any other environment.
-- **Reproduction.** The constructed-map test in `tests/test_shift_baselines.py`. A patch that exists only in the in-distribution map is the shortcut, and the square shared by every environment is the robust map. There is no single published number for this reduction.
-- **Conversion.** The shared budget conversion, applied to each of the two maps.
-- **Failure modes.** Fewer than two environments raises. A non-finite map raises.
-- **Cost.** One attribution per environment, then an elementwise reduction.
+- **Reviewer question.** Fine-grained "why k rather than l", with a semantic-consistency prior (the recent ResNet-50 row).
+- **Citation.** Sam Vandenhende, Stamatios Georgoulis, and Luc Van Gool, Making Heads or Tails: Towards Semantically Consistent Visual Counterfactuals, ECCV 2022.
+- **Source.** `facebookresearch/visual-counterfactuals` at `cd879d6d41e2a24a6d74f398811b8226b57c39b4` (archived), vendored at `third_party/sc_cve`. Licence CC BY-NC 4.0, the same terms as the TorchRay we already vendor.
+- **Patches.** A `device` argument on `compute_counterfactual` and `_find_single_best_edit` (upstream called `.cuda()`; the driver still asserts CUDA for the published repro). `_CallableHead` in `baselines/sc_cve.py` wraps our closure split-heads in an `nn.Module` because the vendored search calls `.eval()`. Neither changes the edit scores.
+- **Defaults.** `counterfactuals_ours_cub_res50.yaml`: λ=0.4, temperature 0.1, `topk=0.2` kNN prefilter, up to 20 distractors. The Goyal configs in the same repo (`counterfactuals_goyal_cub_*.yaml`) set λ=0, no prefilter, 1 distractor. SwAV ResNet-50 at `facebookresearch/swav` @ `06b1b7c`, weights `swav_800ep_pretrain.pth.tar` hash-recorded at download and loaded offline.
+- **Reproduction target.** Their README, ResNet-50 CUB, all edits: 2.9 edits, Near KP 64.6, Same KP 31.1. Their Goyal port in the same repo: 3.5 edits, Near KP 54.0, Same KP 7.4. Not run: needs a CUDA node plus the CUB ResNet checkpoint (191.7 MB) and SwAV weights (113.7 MB) downloads, each with approval at run time.
+- **Audit (2026-10-08).** The objective in `_find_single_best_edit` is argmax of `log p(distractor | edit) + λ · log semantic_prob(edit)` (Eq. 4). The exclusion drops every pair sharing the used query cell *or* the used distractor cell, while our CVE reimplementation lets a distractor cell be copied again. The distractor class comes from the confusion matrix (most-confused class); ours is the foil. Their ResNet head keeps `layer4[1:]` on `layer4[0]` features; ours is avgpool+fc on the full `layer4` output. The `while` loop has no exit when edits run out (`argmax` on empty); the wrapper maps that to `flipped=False`.
+- **Conversion.** Edit-order rank encoding shared with `cve_pair`: earliest edit scores highest, untouched cells 0. One-sided, `l=None`, scored with CD1.
+- **Failure modes.** No correctly-classified foil image in the tries writes a NaN row (floored downstream), as in CVE. A non-finite feature map raises. No flip after exhaustion records `flipped=False`, never hangs. Missing SwAV weights raise an informative error. SwAV is ImageNet self-supervised, so its semantic prior is weak on HAM10000 and brain MRI.
+- **Cost.** One head evaluation per candidate pair per step over the joint `49 × (N × 49)` set after the prefilter, per edit. Per-image wall time and memory at 200 images on CIFAR-10 and HAM10000 feed `scripts/launch_paper_eval.py` scheduling before the grid runs.
 
-## Per-environment Extremal Perturbations
+## Extremal Perturbations, deletion variant
 
-- **Reviewer question.** Same mask method, differenced across environments.
-- **Source.** `per_environment_extremal` calls `class_masks` on each environment, then `environment_maps`. The TorchRay pin, patches, and defaults are the Extremal Perturbations entry.
-- **Reproduction target.** The same VOC pointing game as Extremal Perturbations. It has not been run. The CI check is that two identical environments keep that mask as the robust map and a zero shortcut.
-- **Conversion.** Each environment uses the native area mask. The difference is taken after that conversion.
-- **Failure modes.** The same as Extremal Perturbations, once per environment.
-- **Cost.** One Extremal Perturbations run per environment per image.
+- **Reviewer question.** The preservation mask answers sufficiency. Necessity needs a deletion mask.
+- **Source.** TorchRay `extremal_perturbation` with `variant=DELETE_VARIANT` and the margin reward `z_k - z_l`. The preservation call stays as the sufficiency comparator.
+- **Status.** Not re-audited. The deletion flag is new, and `scripts/crosscheck_evidence.py` has not been re-run for this variant.
+- **Conversion.** The shared budget conversion, same area as the preservation mask.
 
-## Spectral Relevance Analysis
+## Analytic decomposition
 
-- **Reviewer question.** Explanation-based shortcut discovery already exists.
-- **Citation.** Sebastian Lapuschkin, Stephan Wäldchen, Alexander Binder, Grégoire Montavon, Wojciech Samek, and Klaus-Robert Müller, Unmasking Clever Hans predictors and assessing what machines really learn, Nature Communications 2019.
-- **Source.** CoRelAy `SpectralClustering`, commit `bc80524b6ff4f7a2ccd60219465d8badc5f437e1`, vendored at `third_party/corelay`. Relevance for a module is Zennit `EpsilonPlus`, commit `3e98348aa95e908f550ab2a13fca2245c30f7de3`, vendored at `third_party/zennit`. Both are LGPL-3.0-or-later. CoRelAy imports `metrohash`, installed as `metrohash-python` 1.1.3.3.
-- **Patches.** None. The vendor directories are added to `sys.path` only for the import.
-- **Defaults.** Euclidean distance, symmetric sparse 10-nearest neighbors, symmetric normalized Laplacian, 32 eigenvalues, k-means with 2 clusters. k-means uses `random_state` and `n_init=10`. The 32-eigenvalue default needs more maps than 32. A smaller stack passes a smaller `n_eigval`.
-- **Reproduction target.** Their Fisher-vector classifier on PASCAL VOC 2007 horse images separates four strategies: horse and rider, a portrait source tag, riding context, and a landscape source tag. The source tag is present in about one-fifth of the horse images. That run has not been started. The CI check is two synthetic relevance prototypes.
-- **Conversion.** Each image receives the mean relevance map of its cluster. That map then uses the shared budget conversion.
-- **Pseudoreplication.** Images in one cluster share one identical map, so per-image statistics overstate the effective sample size. Treat the number of clusters as the effective N, or state the caveat beside any per-image number.
-- **Failure modes.** Fewer than three maps raises. `n_eigval` greater than or equal to the number of maps raises. A non-finite map raises.
-- **Cost.** One LRP backward per image, then one spectral clustering of the stack.
+- **Reviewer question.** Why not subtract the weakest hypothesis map from each class map?
+- **Source.** `baselines` analytic pair: unique map `E_k - min_j E_j`, shared map `min_j E_j`, with `E` the same base evidence used to initialise CDEA.
+- **Status.** Not re-audited. This entry replaces the earlier pairwise subtraction.
+- **Conversion.** The shared budget conversion.
 
 ## Contrastive Grad-CAM
 
@@ -140,13 +134,56 @@ records the pin, the conversion, and the check each method has to pass first.
 - **Failure modes.** The floor is the score for a failed row. It is not itself a failure.
 - **Cost.** One seeded ranking of the pixels. No model call.
 
+## Gap attribution
+
+- **Reviewer question.** Does the shortcut payoff's own first-order path integral already find the units that change the prediction?
+- **Source.** `baselines/gap_attribution.py`. Integrated gradients of the log-odds from `x_e` to `x_id`, pooled with `pool_sum` and signed by `g_e`. The robust companion is the min over environments of the same integral from the deletion baseline.
+- **Patches.** None. Captum is not used. The sum is the path integral in `cdea/shift.py`.
+- **Defaults.** 16 steps. Fast smoke uses 4.
+- **Reproduction.** On a model linear in the pixels the pooled map sums to `g_e`. `tests/test_shift.py` checks that identity.
+- **Conversion.** The shared top-a conversion.
+- **Failure modes.** Fewer than two environments raises. A one-class model raises inside the log-odds.
+- **Cost.** One backward per step per environment other than id, plus the same for the robust companion.
+
+## Attribution difference
+
+- **Reviewer question.** Does an elementwise difference of per-environment maps already separate the shortcut?
+- **Source.** `baselines/shift_maps.py`. The robust map is the elementwise minimum. The shortcut map is the largest absolute gap from the id map. The input maps are Grad-CAM on ResNet-50 and integrated gradients on ViT-B/16.
+- **Patches.** None. The reduction is the one in the file.
+- **Defaults.** The evidence step count is the shared knob.
+- **Reproduction.** There is no published number for this reduction.
+- **Conversion.** The shared top-a conversion.
+- **Failure modes.** Fewer than two maps raises. A non-finite map raises.
+- **Cost.** One evidence pass per environment.
+
+## SpRAy
+
+- **Reviewer question.** Does clustering relevance maps separate a shortcut from the object?
+- **Source.** `baselines/spray.py`, with Zennit and CoRelAy under `third_party/`. Each environment is attributed with Zennit's `EpsilonPlus`, clustered, and replaced by its cluster mean. The robust and shortcut maps are then the attribution-difference reduction.
+- **Patches.** None in the clustering steps. The eigenvalue count, the neighbor count, the cluster count, and the k-means seed are chosen here.
+- **Defaults.** Two clusters. Eigenvalues and neighbors shrink when the batch is smaller than the published setting.
+- **Reproduction.** The published Fisher-vector analysis used a different attribution implementation. That number is not claimed here.
+- **Conversion.** The shared top-a conversion, applied to the cluster-mean maps.
+- **Failure modes.** Fewer than three maps skips the clustering and keeps the raw relevance. A non-finite map raises.
+- **Cost.** One LRP backward per image per environment, then a clustering of that stack. The whole sample is one call.
+
+## Per-environment Extremal Perturbations
+
+- **Reviewer question.** Does differencing a mask that was optimised in each environment find the shortcut?
+- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. The class mask in each environment uses the deletion Extremal Perturbations entry above. The reduction is the same elementwise min and max-gap.
+- **Patches.** None beyond that entry.
+- **Defaults.** The shared extremal step count and smoothing.
+- **Reproduction.** The published pointing-game number is the contrastive entry's, not this reduction's.
+- **Conversion.** The native area mask, then the shared budget conversion of the reduced map.
+- **Failure modes.** The deletion entry's failures, plus fewer than two environments.
+- **Cost.** One extremal solve per environment per image.
+
 ## Not in this harness yet
 
 | Method | Reviewer question | Stage |
 |---|---|---|
 | Extremal Perturbations on the full pointing game | The published VOC number above. | Still needs VOC 2007 and the fine-tuned classifiers. |
 | CVE on the CUB edit counts | The published 7.4 / 5.3 edit counts above. | Still needs their VGG-16 and the CUB keypoint annotations. |
-| SpRAy on the VOC horse analysis | The four strategies above. | Still needs their Fisher-vector classifier and VOC 2007. |
 | RISE deletion and insertion | The published ImageNet table above. | Still needs ImageNet-1k. |
 | Grad-CAM pointing game | TorchRay's published Grad-CAM number on VOC 2007. | Still needs VOC 2007 and the fine-tuned classifiers. |
 

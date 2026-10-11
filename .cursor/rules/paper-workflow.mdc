@@ -5,7 +5,9 @@ alwaysApply: true
 
 # Paper workflow
 
-Read `docs/paper/PROGRESS.md` before editing. Specs are in `docs/paper/PLAN.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
+Read `docs/paper/PROGRESS.md` before editing. Specs are in `docs/paper/PLAN.md` and `docs/paper/FORMULATION.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
+
+`cdea/` is written from `FORMULATION.md`. Do not open the earlier method; it is on tag `framing-v1`. Records go to `results/paper/cells/`. Archive work, including the GH200 seed-1 chain, stays pinned at `cf07ac2` / tag `framing-v1`.
 
 Environment, from the repo root:
 

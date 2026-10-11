@@ -23,7 +23,7 @@ from core.reporting import save_json
 from evaluation.accuracy import worst_group_accuracy
 from scripts.train_backbone import _build_model, get_val_loader, score_loader
 
-SHIFT_DATASETS = ("colored_mnist", "planted_patch", "imagenet9", "waterbirds")
+SHIFT_DATASETS = ("planted_patch",)
 
 
 def _load(path: Path, device: torch.device) -> tuple[torch.nn.Module, dict]:
@@ -42,41 +42,8 @@ def _shift_fields(dataset: str, model, device, data_root: Path, batch_size: int)
     """Shortcut reliance on val. Empty for contrastive datasets."""
     if dataset not in SHIFT_DATASETS:
         return {}
-    if dataset == "waterbirds":
-        from instantiations.shift.waterbirds import WaterbirdsClassifier
-        ds = WaterbirdsClassifier(split="val", image_size=224)
-        loader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False)
-        preds, targets = [], []
-        with torch.no_grad():
-            for x, y in loader:
-                preds.append(model(x.to(device)).argmax(1).cpu())
-                targets.append(y.cpu())
-        pred = torch.cat(preds)
-        target = torch.cat(targets)
-        return {
-            "worst_group_accuracy": worst_group_accuracy(
-                pred, target, torch.tensor(ds.groups)
-            ),
-        }
-    if dataset == "imagenet9":
-        from instantiations.shift.imagenet9 import ImageNet9Pairs
-        ds = ImageNet9Pairs(split="val", root=data_root / "imagenet9", image_size=224)
-        loader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False)
-        correct = {"original": 0, "mixed_rand": 0}
-        total = 0
-        with torch.no_grad():
-            for batch in loader:
-                y = batch["label"].to(device)
-                total += int(y.shape[0])
-                for name in correct:
-                    pred = model(batch[name].to(device)).argmax(1)
-                    correct[name] += int((pred == y).sum().item())
-        original = correct["original"] / max(total, 1)
-        mixed = correct["mixed_rand"] / max(total, 1)
-        return {"original_accuracy": original, "mixed_rand_accuracy": mixed,
-                "background_gap": original - mixed}
     if dataset == "planted_patch":
-        from instantiations.shift.planted_patch import PlantedPatchCIFAR
+        from evaluation.planted_cues import PlantedPatchCIFAR
         ds = PlantedPatchCIFAR(split="val", root=data_root, seed=0)
         loader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False)
         hit = {"present": 0, "removed": 0}
@@ -92,17 +59,7 @@ def _shift_fields(dataset: str, model, device, data_root: Path, batch_size: int)
         removed = hit["removed"] / max(total, 1)
         return {"present_accuracy": present, "removed_accuracy": removed,
                 "patch_gap": present - removed}
-    from instantiations.shift.biased_data import env_batch_colored_mnist, model_id_ood_gap
-    loader = get_val_loader(dataset, batch_size, data_root)
-    gaps = []
-    seen = 0
-    for x, y in loader:
-        env = env_batch_colored_mnist(x.to(device), y.to(device))
-        gaps.append(model_id_ood_gap(model, env, y.to(device)))
-        seen += int(y.shape[0])
-        if seen >= 64:
-            break
-    return {"id_ood_gap": float(sum(gaps) / max(len(gaps), 1))}
+    return {}
 
 
 def score_checkpoint(

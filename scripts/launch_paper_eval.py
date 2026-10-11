@@ -28,6 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from evaluation.environments import SHIFT_DATASETS  # noqa: E402
 from evaluation.run_methods import (  # noqa: E402
     ABLATIONS,
     CONTRASTIVE_CANDIDATES,
@@ -37,17 +38,16 @@ from evaluation.run_methods import (  # noqa: E402
     SHIFT_ABLATIONS,
     SHIFT_CANDIDATES,
     SHIFT_CORE,
+    SHIFT_EXTENDED,
     Knobs,
     candidate_applies,
 )
-from scripts.smoke_e2e import BACKBONES, CONTRASTIVE_UNITS, SHIFT_UNITS  # noqa: E402
+from scripts.smoke_e2e import BACKBONES, CONTRASTIVE_UNITS  # noqa: E402
 
 # EVAL_PLAN.md section 8: ablations on the non-dev units, seeds 0-2.
 ABLATION_UNITS = ("cifar100", "cub200", "brain_tumor", "imagenet")
 ABLATION_SEEDS = (0, 1, 2)
-SHIFT_ABLATION_UNIT = "waterbirds"
-N_MIN = {("contrastive", "resnet50"): 200, ("contrastive", "vit_b_16"): 64,
-         ("shift", "resnet50"): 128, ("shift", "vit_b_16"): 32}
+N_MIN = {("contrastive", "resnet50"): 200, ("contrastive", "vit_b_16"): 64}
 
 
 def parse_n(value) -> dict:
@@ -70,50 +70,46 @@ def grid(args) -> list[dict]:
     datasets = set(args.datasets.split(",")) if args.datasets else None
     backbones = args.backbones.split(",")
     seeds = [int(s) for s in args.seeds.split(",")]
+    units = SHIFT_DATASETS if args.game == "shift" else CONTRASTIVE_UNITS
     cells = []
-    for game, units in (("contrastive", CONTRASTIVE_UNITS), ("shift", SHIFT_UNITS)):
-        if args.game not in {"both", game}:
+    for dataset in units:
+        if datasets and dataset not in datasets:
             continue
-        for dataset in units:
-            if datasets and dataset not in datasets:
-                continue
-            for backbone in backbones:
-                for seed in seeds:
-                    cells.append({
-                        "id": f"{args.split}_{game}_{dataset}_{backbone}_seed{seed}",
-                        "game": game, "dataset": dataset, "backbone": backbone, "seed": seed,
-                    })
+        for backbone in backbones:
+            for seed in seeds:
+                cells.append({
+                    "id": f"{args.split}_{args.game}_{dataset}_{backbone}_seed{seed}",
+                    "game": args.game, "dataset": dataset, "backbone": backbone, "seed": seed,
+                })
     return cells
 
 
 def spec_for(cell: dict, args):
     from evaluation.run_cell import CellSpec
 
-    game, dataset, backbone, seed = cell["game"], cell["dataset"], cell["backbone"], cell["seed"]
-    n = parse_n(args.n_contrastive if game == "contrastive" else args.n_shift).get(backbone)
-    n = n or N_MIN[(game, backbone)]
-    if game == "contrastive":
+    dataset, backbone, seed = cell["dataset"], cell["backbone"], cell["seed"]
+    n = parse_n(args.n_contrastive).get(backbone) or N_MIN[("contrastive", backbone)]
+    if cell["game"] == "shift":
+        methods = list(SHIFT_CORE + (SHIFT_EXTENDED if args.extended else ()))
+        ablations = (list(SHIFT_ABLATIONS) if args.ablations and dataset in ("waterbirds", "planted_patch")
+                     and seed in ABLATION_SEEDS and backbone == "resnet50" else [])
+        areas = tuple(float(a) for a in args.areas_shift.split(","))
+        candidates = list(SHIFT_CANDIDATES) if args.candidates else []
+    else:
         methods = [m for m in CONTRASTIVE_CORE + (CONTRASTIVE_EXTENDED if args.extended else ())
-                   if not (m == "cve" and backbone != "resnet50")]
+                   if not (m in ("cve", "sc_cve") and backbone != "resnet50")
+                   and not (m == "chefer" and not backbone.startswith("vit"))]
         ablations = (list(ABLATIONS) if args.ablations and dataset in ABLATION_UNITS
                      and seed in ABLATION_SEEDS and backbone == "resnet50" else [])
         areas = tuple(float(a) for a in args.areas.split(","))
-        operators = ("road", "blur")
         candidates = list(CONTRASTIVE_CANDIDATES) if args.candidates else []
-    else:
-        methods = list(SHIFT_CORE)
-        ablations = (list(SHIFT_ABLATIONS) if args.ablations and dataset == SHIFT_ABLATION_UNIT
-                     and seed in ABLATION_SEEDS and backbone == "resnet50" else [])
-        areas = tuple(float(a) for a in args.shift_areas.split(","))
-        operators = ("road",)
-        candidates = list(SHIFT_CANDIDATES) if args.candidates else []
+    operators = ("road", "blur")
     candidates = [c for c in candidates if candidate_applies(c, backbone)]
-    return CellSpec(game=game, dataset=dataset, backbone=backbone, seed=seed, split=args.split, n=n,
+    return CellSpec(game=cell["game"], dataset=dataset, backbone=backbone, seed=seed, split=args.split, n=n,
                     methods=methods, ablations=ablations, candidates=candidates, areas=areas,
                     operators=operators,
                     model_source="auto", final=args.final, config_hash=args.config_hash,
-                    knobs=FAST if args.fast else Knobs(), out_dir=args.out,
-                    image_batch=args.image_batch)
+                    knobs=FAST if args.fast else Knobs(), out_dir=args.out, image_batch=args.image_batch)
 
 
 def child_argv(argv: list[str], cell_id: str) -> list[str]:
@@ -175,14 +171,13 @@ def _run_cells_in_parallel(cells: list[dict], log_dir: Path, args) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--split", default="val", choices=["val", "test"])
-    p.add_argument("--game", default="both", choices=["both", "contrastive", "shift"])
+    p.add_argument("--game", default="contrastive", choices=["contrastive", "shift"])
     p.add_argument("--datasets", default=None, help="units for this machine, comma list")
     p.add_argument("--backbones", default=",".join(BACKBONES))
     p.add_argument("--seeds", default="0,1,2,3,4")
     p.add_argument("--n-contrastive", default=None, help="per backbone, e.g. resnet50:200,vit_b_16:64")
-    p.add_argument("--n-shift", default=None, help="per backbone, e.g. resnet50:128,vit_b_16:32")
     p.add_argument("--areas", default="0.025,0.05,0.10")
-    p.add_argument("--shift-areas", default="0.05,0.10,0.25")
+    p.add_argument("--areas-shift", default="0.05,0.10,0.25")
     p.add_argument("--extended", action="store_true", help="also run the Extended baselines")
     p.add_argument("--ablations", action="store_true", help="run ablations on the ablation units")
     p.add_argument("--candidates", action="store_true",
@@ -191,11 +186,11 @@ def main() -> None:
     p.add_argument("--final", action="store_true")
     p.add_argument("--config-hash", default=None)
     p.add_argument("--device", default="auto")
-    p.add_argument("--out", default=str(REPO / "results" / "paper" / "runs"))
-    p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
     p.add_argument("--image-batch", type=int, default=4,
-                   help="images on the device at once inside a cell. 0 keeps the whole sample. "
-                   "A smaller batch is what leaves room for --jobs greater than 1.")
+                   help="images on the device at once inside a cell; 0 keeps the whole sample. "
+                   "Scores do not depend on it. A smaller batch leaves room for --jobs above 1.")
+    p.add_argument("--out", default=str(REPO / "results" / "paper" / "cells"))
+    p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
     p.add_argument("--jobs", type=int, default=1,
                    help="cells run at the same time, one process each, logs beside the markers. "
                    "Cells launch in high/low memory balance order (2 high + 2 low at --jobs 4).")
@@ -204,7 +199,7 @@ def main() -> None:
     p.add_argument("--one", default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
 
-    from scripts.final_grid import pending_cells, run_grid
+    from scripts.final_grid import is_done, pending_cells, run_grid
     from scripts.paper_run import run
 
     if args.candidates and args.split == "test":
@@ -215,6 +210,10 @@ def main() -> None:
         if not cells:
             raise SystemExit(f"unknown cell {args.one!r}")
     log_dir = Path(args.out) / "_markers" / args.split
+    from evaluation.provenance import knobs_hash, method_code_hash
+
+    # A marker counts only for the code and knobs that wrote it.
+    stamp = f"{method_code_hash()} {knobs_hash(FAST if args.fast else Knobs())}"
     if args.dry_run:
         for cell in cells:
             spec = spec_for(cell, args)
@@ -225,8 +224,8 @@ def main() -> None:
 
     if args.jobs > 1 and args.one is None:
         run_grid([], log_dir, lambda cell: None, final=args.final)   # the freeze and clean-tree checks
-        _run_cells_in_parallel(pending_cells(cells, log_dir), log_dir, args)
-        rows = [{"id": c["id"], "status": "done" if (log_dir / f"{c['id']}.done").is_file() else "failed"}
+        _run_cells_in_parallel(pending_cells(cells, log_dir, stamp), log_dir, args)
+        rows = [{"id": c["id"], "status": "done" if is_done(log_dir / f"{c['id']}.done", stamp) else "failed"}
                 for c in cells]
         failed = [r["id"] for r in rows if r["status"] == "failed"]
         print(f"{len(rows)} cells: {len(rows) - len(failed)} done, {len(failed)} failed")
@@ -241,7 +240,7 @@ def main() -> None:
         out = run(spec, args.device)
         print(f"done {cell['id']} -> {out}", flush=True)
 
-    rows = run_grid(cells, log_dir, execute, final=args.final)
+    rows = run_grid(cells, log_dir, execute, final=args.final, stamp=stamp)
     failed = [r["id"] for r in rows if r["status"] == "failed"]
     print(f"{len(rows)} cells: {sum(r['status'] == 'done' for r in rows)} done, "
           f"{sum(r['status'] == 'skipped' for r in rows)} skipped, {len(failed)} failed")

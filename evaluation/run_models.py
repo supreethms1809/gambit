@@ -22,27 +22,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from models.build import FINE_TUNED, NUM_CLASSES
+
 REPO = Path(__file__).resolve().parent.parent
 PAPER_CKPT_DIR = REPO / "results" / "paper" / "checkpoints"
-
-NUM_CLASSES = {
-    "mnist": 10,
-    "cifar10": 10,
-    "cifar100": 100,
-    "oxford_pets": 37,
-    "stanford_dogs": 120,
-    "cub200": 200,
-    "ham10000": 7,
-    "brain_tumor": 3,
-    "imagenet": 1000,
-    "waterbirds": 2,
-    "imagenet9": 9,
-    "planted_patch": 10,
-    "colored_mnist": 10,
-}
-
-# Shift datasets are full fine-tunes; contrastive datasets are linear probes.
-FINE_TUNED = {"waterbirds", "imagenet9", "planted_patch", "colored_mnist"}
 
 
 @dataclass
@@ -54,9 +37,9 @@ class LoadedModel:
 
 
 def _bare(backbone: str, num_classes: int, pretrained: bool) -> nn.Module:
-    from scripts.ablation_contrastive import _build_model
+    from models.build import build_backbone
 
-    return _build_model(backbone, num_classes, pretrained=pretrained)
+    return build_backbone(backbone, num_classes, pretrained=pretrained)
 
 
 def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
@@ -65,8 +48,8 @@ def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
 
     ``ckpt_dir`` and ``num_epochs`` locate smoke checkpoints; paper cells use the defaults.
     """
+    from models.build import FINE_TUNED, paper_checkpoint_name
     from models.wrapper import read_input_convention
-    from scripts.train_backbone import paper_checkpoint_name
 
     fine_tune = dataset in FINE_TUNED
     name = paper_checkpoint_name(

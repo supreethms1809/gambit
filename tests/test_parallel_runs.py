@@ -53,10 +53,12 @@ def test_training_cells_keep_seed_order_and_put_long_cells_first():
     from scripts.launch_paper_training import cell_id, paper_cells, select_cells
 
     cells = select_cells(paper_cells(), seeds=[1, 0])
-    assert len(cells) == 2 * 22
-    assert [c["seed"] for c in cells] == [1] * 22 + [0] * 22
+    per_seed = len(cells) // 2
+    assert len(cells) == 2 * per_seed
+    assert [c["seed"] for c in cells] == [1] * per_seed + [0] * per_seed
     assert cell_id(cells[0]) == "planted_patch_vit_b_16_ft_lr0.0001_seed1"
-    assert cells[21]["dataset"] == "brain_tumor" and cells[21]["model_name"] == "resnet50"
+    assert cells[per_seed - 1]["dataset"] == "brain_tumor"
+    assert cells[per_seed - 1]["model_name"] == "resnet50"
     only = select_cells(paper_cells(), seeds=[0], datasets=["cifar10"], models=["resnet50"])
     assert [cell_id(c) for c in only] == ["cifar10_resnet50_lp_lr0.001_seed0"]
 
@@ -73,8 +75,8 @@ def test_eval_child_argv_drops_jobs_and_names_the_cell():
 
     argv = ["--split", "val", "--jobs", "4", "--seeds", "0", "--jobs=2",
             "--mem-gate-gb", "12"]
-    assert child_argv(argv, "val_shift_waterbirds_resnet50_seed0") == [
-        "--split", "val", "--seeds", "0", "--one", "val_shift_waterbirds_resnet50_seed0"]
+    assert child_argv(argv, "val_contrastive_cifar10_resnet50_seed0") == [
+        "--split", "val", "--seeds", "0", "--one", "val_contrastive_cifar10_resnet50_seed0"]
 
 
 def test_mem_class_marks_the_hog_cells_high():

@@ -92,6 +92,9 @@ def budget_or_floor(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """``(masks, failed)``. Failed rows become the random floor. No row is dropped.
 
+    ``offset`` is the first image's index in the full sample, so a chunk draws
+    the same tie-breaks as a call on the whole sample.
+
     Non-finite entries are zeroed only so the shared conversion can run. Those
     rows are then overwritten by the floor, so the zeros never become the score.
     """

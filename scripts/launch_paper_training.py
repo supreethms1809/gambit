@@ -45,7 +45,8 @@ LOG_DIR = REPO / "results" / "paper" / "logs" / "train"
 # Longest training first, from the measured Spark wall times, so the parallel
 # queue does not end on one long cell. Only the order matters here.
 LONGEST_FIRST = (
-    "planted_patch", "colored_mnist", "cifar10", "cifar100", "imagenet9", "waterbirds",
+    "planted_patch", "waterbirds", "imagenet9", "colored_mnist",
+    "cifar10", "cifar100",
     "stanford_dogs", "ham10000", "cub200", "oxford_pets", "brain_tumor",
 )
 

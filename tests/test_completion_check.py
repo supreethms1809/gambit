@@ -76,11 +76,11 @@ def test_the_real_grids_are_not_complete_and_the_tag_is_absent() -> None:
     assert report["pending"] > 0
     text = (ROOT / "docs" / "paper" / "FINAL_RUNS.md").read_text(encoding="utf-8")
     assert "Final runs are not complete" in text
-    assert "final-runs-v1" in text
+    assert "final-runs tag" in text
     assert "was not created" in text
     assert "ImageNet-S" in text
     tags = subprocess.check_output(
-        ["git", "tag", "--list", "final-runs-v1"],
+        ["git", "tag", "--list", "final-runs*"],
         cwd=ROOT,
         text=True,
     )

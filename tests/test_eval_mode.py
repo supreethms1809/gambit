@@ -7,12 +7,8 @@ import torch.nn as nn
 
 from base_evidence.gradcam_regions import GradCAMRegionsProvider
 from core.eval_mode import eval_mode
-from core.types import EnvBatch, HypothesisSet
-from instantiations.contrastive.allocator import OptimizationAllocator
-from instantiations.contrastive.objective import ContrastiveObjective
-from instantiations.shift.allocator import RobustShortcutOptimizationAllocator
-from instantiations.shift.objective import RobustShortcutObjective
-from modality.grid_regions import VisionGridUnitSpace
+from core.types import HypothesisSet
+from cdea.allocation import AllocateConfig, allocate
 
 
 class _DropoutNet(nn.Module):
@@ -59,65 +55,17 @@ def test_eval_mode_passes_through_plain_callables():
     assert called
 
 
-def test_contrastive_allocator_keeps_train_mode_and_bn_stats():
+def test_allocation_restores_train_mode_and_bn_stats():
     torch.manual_seed(0)
-    b, k, r = 2, 2, 16
-    space = VisionGridUnitSpace(4, 4)
     model = _DropoutNet().train()
-    objective = ContrastiveObjective()
-    allocator = OptimizationAllocator(objective, num_steps=4, lr=0.5)
-    x = torch.rand(b, 3, 32, 32)
-    hypotheses = _hypotheses(b, k, 4)
-    evidence = torch.rand(b, k, r)
-    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
     before = model.bn.running_mean.clone()
-    masks = allocator.allocate(
-        x=x, model=model, unit_space=space, hypotheses=hypotheses, evidence=evidence
+    x = torch.rand(2, 3, 32, 32)
+    allocate(
+        model, x, _hypotheses(2, 2, 4), 4, 4, 0.2,
+        AllocateConfig(steps=2, lr=0.1, init="uniform", shared=False),
     )
-    assert model.training, "allocator must restore the training flag"
-    assert torch.equal(model.bn.running_mean, before), "BN stats must not move during allocation"
-    assert torch.isfinite(masks["unique"]).all()
-
-
-def test_contrastive_allocation_deterministic_in_train_mode():
-    torch.manual_seed(1)
-    b, k, r = 2, 2, 16
-    space = VisionGridUnitSpace(4, 4)
-    objective = ContrastiveObjective()
-    allocator = OptimizationAllocator(objective, num_steps=4, lr=0.5)
-    x = torch.rand(b, 3, 32, 32)
-    hypotheses = _hypotheses(b, k, 4)
-    evidence = torch.rand(b, k, r)
-    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
-    model = _DropoutNet().train()
-    first = allocator.allocate(
-        x=x, model=model, unit_space=space, hypotheses=hypotheses, evidence=evidence
-    )["unique"]
-    second = allocator.allocate(
-        x=x, model=model, unit_space=space, hypotheses=hypotheses, evidence=evidence
-    )["unique"]
-    assert torch.equal(first, second), "dropout must be off during allocation"
-
-
-def test_shift_allocator_keeps_train_mode():
-    torch.manual_seed(2)
-    b, r = 2, 16
-    space = VisionGridUnitSpace(4, 4)
-    model = _DropoutNet().train()
-    objective = RobustShortcutObjective()
-    allocator = RobustShortcutOptimizationAllocator(objective, num_steps=3, lr=0.5)
-    x = torch.rand(b, 3, 32, 32)
-    env = EnvBatch(xs=[x, torch.rand_like(x)], env_ids=["id", "ood"])
-    hypotheses = _hypotheses(b, 2, 4)
-    evidence = torch.rand(b, 2, r)
-    evidence = evidence / evidence.sum(dim=-1, keepdim=True)
-    before = model.bn.running_mean.clone()
-    masks = allocator.allocate(
-        x=x, model=model, unit_space=space, hypotheses=hypotheses, evidence=evidence, env=env
-    )
-    assert model.training, "allocator must restore the training flag"
-    assert torch.equal(model.bn.running_mean, before), "BN stats must not move during allocation"
-    assert torch.isfinite(masks["robust"]).all()
+    assert model.training
+    assert torch.equal(model.bn.running_mean, before)
 
 
 def test_gradcam_provider_restores_train_mode():
@@ -126,5 +74,5 @@ def test_gradcam_provider_restores_train_mode():
     provider = GradCAMRegionsProvider(4, 4)
     x = torch.rand(2, 3, 32, 32)
     out = provider.explain(x, model, _hypotheses(2, 2, 4))
-    assert model.training, "provider must restore the training flag"
+    assert model.training
     assert out.shape == (2, 2, 16)

@@ -14,7 +14,7 @@ from core.types import HypothesisSet
 
 
 def shared_hypotheses(logits: torch.Tensor, k: int) -> HypothesisSet:
-    """Top-k hypotheses. When ``k`` exceeds the number of classes, the extra slots are masked off."""
+    """Top-k hypotheses. K is min(k, C), with no padded slots."""
     if k < 1:
         raise ValueError("k must be >= 1")
     if logits.ndim != 2:

@@ -10,4 +10,4 @@ The audit does not pass. RESULTS.md is absent. Masks were not checked. No discre
 
 The plan asks for a fresh session that did not write the results text, and for an eye check of a sample of masks on every dataset. This session wrote the builder. The fresh session has not been run. The required datasets include ImageNet-S and the six shift datasets. No mask from those datasets was inspected.
 
-The test split was not read. The tag `final-runs-v1` was not created.
+The test split was not read. The final-runs tag was not created.

@@ -38,17 +38,17 @@ def mass_in(mask_px: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.where(total > 0, inside / total.clamp_min(1e-8), torch.zeros_like(total))
 
 
-def advance_generator(generator: torch.Generator, batch: int, tail: tuple[int, ...], *, normal: bool) -> None:
-    """Draw ``batch`` rows of shape ``tail`` and drop them.
+def advance_generator(generator: torch.Generator, rows: int, tail: tuple[int, ...], *, normal: bool) -> None:
+    """Draw ``rows`` rows of shape ``tail`` and drop them.
 
-    A later draw of the same rank then matches the corresponding rows of one
-    draw over the whole sample. ROAD noise and tie-breaks use that order, so a
-    chunked score stays the full-sample score.
+    A later draw then matches the corresponding rows of one draw over the whole
+    sample. ROAD noise and tie-breaks walk the sample in order, so a chunk that
+    starts at ``rows`` skips that prefix and scores as the whole sample would.
     """
-    if batch < 0:
-        raise ValueError("batch must be >= 0")
+    if rows < 0:
+        raise ValueError("rows must be >= 0")
     draw = torch.randn if normal else torch.rand
-    left = int(batch)
+    left = int(rows)
     while left:
         take = min(left, 8)
         draw((take, *tail), generator=generator)
@@ -77,8 +77,7 @@ def top_fraction_mask(scores: torch.Tensor, fraction: float, seed: int, offset: 
         return torch.ones_like(scores)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
-    if offset:
-        advance_generator(generator, int(offset), (n,), normal=False)
+    advance_generator(generator, int(offset), (n,), normal=False)
     jitter = torch.rand(flat.shape, generator=generator)
     tie_order = jitter.argsort(dim=-1, stable=True)
     ordered_scores = flat.gather(-1, tie_order)

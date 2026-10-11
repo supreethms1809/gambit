@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
 
-from core.types import EnvBatch, HypothesisSet
+from core.types import HypothesisSet
 
 
 # ---------------------------------------------------------------------------
@@ -27,19 +28,18 @@ from core.types import EnvBatch, HypothesisSet
 # ---------------------------------------------------------------------------
 
 @dataclass
+class ShiftMaps:
+    robust: torch.Tensor
+    shortcut: torch.Tensor
+    grid: Optional[tuple[int, int]]
+
+
+@dataclass
 class PairMaps:
     k: torch.Tensor
     l: Optional[torch.Tensor]                 # None: the method has no foil map (CVE)
     grid: Optional[tuple[int, int]]           # None: pixel maps
     per_class: Optional[torch.Tensor] = None  # (B, K, R) or (B, K, H, W)
-    extra: dict = field(default_factory=dict)
-
-
-@dataclass
-class ShiftMaps:
-    robust: torch.Tensor
-    shortcut: torch.Tensor
-    grid: Optional[tuple[int, int]]
     extra: dict = field(default_factory=dict)
 
 
@@ -54,59 +54,64 @@ class Knobs:
     extremal_max_iter: int = 800
     rise_masks: int = 4000
     rise_cell: int = 7
-    cdea_steps: int = 50
-    shift_steps: int = 50
+    cdea_steps: int = 100
     cve_distractor_tries: int = 32
+    sc_cve_distractors: int = 20       # authors' max_num_distractors (ours config)
+    sc_cve_swav_weights: Optional[str] = None  # local SwAV file; required off the fast path
     extremal_smooth: float = 0.0
     fast: bool = False
 
 
 FAST = Knobs(ig_steps=4, extremal_max_iter=40, rise_masks=200, rise_cell=7,
-             cdea_steps=8, shift_steps=8, cve_distractor_tries=8, fast=True)
+             cdea_steps=8, cve_distractor_tries=8, fast=True,
+             sc_cve_distractors=1)
 
 
 @dataclass
 class CdeaConfig:
-    """One CDEA configuration. Defaults are the plan's preset before selection."""
+    """One CDEA configuration. Defaults are the G1 gate: Grad-CAM, T = 100, lr = 0.1."""
 
     backend: str = "gradcam"           # gradcam | ig | library:<method>
-    preset: str = "mixed"
-    lambda_margin: float = 1.0
-    lambda_overlap: float = 0.2
-    lambda_shared_sparse: float = 0.25
-    use_shared: Optional[bool] = None  # None: the preset's choice
-    lr: float = 0.2
+    lr: float = 0.1
     steps: Optional[int] = None        # None: Knobs.cdea_steps
-    init_from_evidence: bool = True
-    interaction: str = "none"          # none | attention | transformer
-    attn_mix: float = 0.0
-    independent: bool = False          # A1: K separate single-class runs
-    top_k: int = 5
+    projection: str = "sinkhorn"       # sinkhorn | hard_top_mass
+    shared: bool = True
+    independent: bool = False
+    preserve: bool = False
+    init: str = "evidence"             # evidence | uniform
+    pair_only: bool = False
+    kind: str = "allocate"             # allocate | first_order | precomputed
+    precomputed_dir: Optional[str] = None
+    boundary_shift: bool = True        # FORMULATION.md section 4.1; False is ablation A10
+    binary_masks: bool = True          # FORMULATION.md section 7; False is ablation A12
+    draw_seed: int = 0
 
 
 ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
-    "A1_independent": lambda c: replace(c, independent=True, use_shared=False),
-    "A2_no_margin": lambda c: replace(c, lambda_margin=0.0),
-    "A3_no_overlap": lambda c: replace(c, lambda_overlap=0.0),
-    "A4_no_shared": lambda c: replace(c, use_shared=False),
-    "A5_init_zero": lambda c: replace(c, init_from_evidence=False),
-    "A5_init_evidence": lambda c: replace(c, init_from_evidence=True),
+    "A1_independent": lambda c: replace(c, independent=True, shared=False),
+    "A2_no_shared": lambda c: replace(c, shared=False),
+    "A3_preserve": lambda c: replace(c, preserve=True),
+    "A4_pair": lambda c: replace(c, pair_only=True),
+    "A5_uniform": lambda c: replace(c, init="uniform"),
+    "A5_evidence": lambda c: replace(c, init="evidence"),
     "A5_backend_ig": lambda c: replace(c, backend="ig"),
     "A5_backend_layercam": lambda c: replace(c, backend="library:layercam"),
     "A5_backend_xgradcam": lambda c: replace(c, backend="library:xgradcam"),
     "A5_backend_gradcam++": lambda c: replace(c, backend="library:gradcam++"),
     "A5_backend_inputxgradient": lambda c: replace(c, backend="library:inputxgradient"),
     "A5_backend_gradientshap": lambda c: replace(c, backend="library:gradientshap"),
-    "A6_interaction_none": lambda c: replace(c, interaction="none", attn_mix=0.0),
-    "A6_interaction_attention": lambda c: replace(c, interaction="attention", attn_mix=0.35),
-    "A6_interaction_transformer": lambda c: replace(c, interaction="transformer", attn_mix=0.35),
-    "A7_steps_10": lambda c: replace(c, steps=10),
+    "A6_hard_top_mass": lambda c: replace(c, projection="hard_top_mass"),
     "A7_steps_25": lambda c: replace(c, steps=25),
     "A7_steps_50": lambda c: replace(c, steps=50),
     "A7_steps_100": lambda c: replace(c, steps=100),
-    "A8_preset_mixed": lambda c: replace(c, preset="mixed"),
-    "A8_preset_cooperative": lambda c: replace(c, preset="cooperative"),
-    "A8_preset_competitive": lambda c: replace(c, preset="competitive"),
+    "A7_steps_200": lambda c: replace(c, steps=200),
+    "A8_precomputed": lambda c: replace(c, kind="precomputed"),
+    "A9_first_order": lambda c: replace(c, kind="first_order"),
+    "A10_fixed_boundary": lambda c: replace(c, boundary_shift=False),
+    # Sensitivity to the random draws. Every seed is reported; none is selected.
+    "A11_draw_seed_1": lambda c: replace(c, draw_seed=1),
+    "A11_draw_seed_2": lambda c: replace(c, draw_seed=2),
+    "A12_fractional_masks": lambda c: replace(c, binary_masks=False),
 }
 
 
@@ -115,9 +120,9 @@ ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
 # ---------------------------------------------------------------------------
 
 def grid_of(backbone: str) -> tuple[int, int]:
-    from scripts.train_backbone import model_grid_size
+    from core.grid import grid_of as _grid_of
 
-    return tuple(model_grid_size(backbone))
+    return _grid_of(backbone)
 
 
 def hypotheses_for(model: nn.Module, x: torch.Tensor, k: int) -> HypothesisSet:
@@ -170,141 +175,112 @@ def default_backend(backbone: str) -> str:
 # CDEA
 # ---------------------------------------------------------------------------
 
-class _OnlyRank:
-    """A1: the top-K set with every hypothesis but one rank masked out."""
+def _allocate_config(cfg: CdeaConfig, knobs: Knobs):
+    from cdea.allocation import AllocateConfig
 
-    def __init__(self, base, rank: int):
-        self.base = base
-        self.rank = rank
-
-    def select(self, logits, probs):
-        h = self.base.select(logits, probs)
-        keep = torch.zeros_like(h.mask)
-        keep[:, self.rank] = h.mask[:, self.rank]
-        return HypothesisSet(ids=h.ids, mask=keep)
-
-
-def build_cdea(model: nn.Module, backbone: str, cfg: CdeaConfig, knobs: Knobs, device, selector=None,
-               loss_scale: float = 1.0):
-    from core.game_modes import resolve_contrastive_game
-    from core.hypotheses import TopMSelector
-    from core.interaction import AttentionOnlyInteraction, Transformer1LayerInteraction
-    from core.runner import CDEAExplainer
-    from instantiations.contrastive.allocator import OptimizationAllocator
-    from instantiations.contrastive.objective import ContrastiveObjective
-    from modality.grid_regions import VisionGridUnitSpace
-
-    gh, gw = grid_of(backbone)
-    game = resolve_contrastive_game(cfg.preset)
-    use_shared = game.use_shared if cfg.use_shared is None else cfg.use_shared
-    margin = cfg.lambda_margin if cfg.preset == "mixed" else game.lambda_margin
-    overlap = cfg.lambda_overlap if cfg.preset == "mixed" else game.lambda_overlap
-    objective = ContrastiveObjective(
-        lambda_margin=margin,
-        lambda_overlap=overlap,
-        lambda_shared_sparse=cfg.lambda_shared_sparse,
-        mass_ref_regions=49,
-    )
-    allocator = OptimizationAllocator(
-        objective,
-        num_steps=cfg.steps if cfg.steps is not None else knobs.cdea_steps,
-        lr=cfg.lr,
-        use_shared=use_shared,
-        lambda_partition=game.lambda_partition,
-        init_from_evidence=cfg.init_from_evidence,
-        attn_mix=cfg.attn_mix,
-        loss_scale=loss_scale,
-    )
-    interaction = None
-    embed_dim = None
-    if cfg.interaction != "none":
-        embed_dim = 32
-        interaction = (AttentionOnlyInteraction(embed_dim) if cfg.interaction == "attention"
-                       else Transformer1LayerInteraction(embed_dim))
-    return CDEAExplainer(
-        model=model,
-        unit_space=VisionGridUnitSpace(gh, gw, embed_dim=embed_dim),
-        selector=selector or TopMSelector(m=cfg.top_k),
-        base_evidence=evidence_provider(cfg.backend, backbone, knobs),
-        allocator=allocator,
-        objective=objective,
-        interaction=interaction,
-        normalize_evidence=True,
-        device=device,
+    return AllocateConfig(
+        steps=knobs.cdea_steps if cfg.steps is None else int(cfg.steps),
+        lr=float(cfg.lr),
+        projection=cfg.projection,
+        shared=cfg.shared,
+        independent=cfg.independent,
+        preserve=cfg.preserve,
+        init=cfg.init,
+        pair_only=cfg.pair_only,
+        backend=cfg.backend,
+        ig_steps=knobs.ig_steps,
+        boundary_shift=cfg.boundary_shift,
+        binary_masks=cfg.binary_masks,
+        draw_seed=cfg.draw_seed,
     )
 
 
-def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = None,
-              loss_scale: float = 1.0) -> PairMaps:
-    """Unique masks of rank 0 and rank 1 (EVAL_PLAN 4.2). Shared is kept for the sensitivity check."""
-    from core.hypotheses import TopMSelector
-
+def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = None, area: float = 0.05, index=None) -> PairMaps:
+    """Unique allocations of rank 0 and rank 1. The shared row is kept for the sensitivity check."""
     cfg = cfg or CdeaConfig(backend=default_backend(backbone))
     grid = grid_of(backbone)
-    if cfg.independent:
-        base = TopMSelector(m=cfg.top_k)
-        columns = []
-        for rank in range(min(cfg.top_k, h.ids.shape[1])):
-            explainer = build_cdea(model, backbone, cfg, knobs, device, selector=_OnlyRank(base, rank),
-                                   loss_scale=loss_scale)
-            columns.append(explainer.explain(x).masks["unique"][:, rank])
-        unique = torch.stack(columns, dim=1)
-        shared = None
-    else:
-        out = build_cdea(model, backbone, cfg, knobs, device, loss_scale=loss_scale).explain(x)
-        unique = out.masks["unique"]
-        shared = out.masks.get("shared")
-    unique = unique.reshape(unique.shape[0], unique.shape[1], -1)
-    extra = {}
-    if shared is not None:
-        extra["shared"] = shared.reshape(shared.shape[0], -1)
-    return PairMaps(k=unique[:, 0], l=unique[:, 1], grid=grid, per_class=unique, extra=extra)
+    if cfg.kind == "precomputed":
+        from baselines.precomputed import load_pair
+
+        return load_pair(cfg.precomputed_dir, h, grid, index=index, area=area)
+    if cfg.kind == "first_order":
+        from cdea.first_order import unit_gradient
+
+        scores = unit_gradient(model, x, h, *grid)
+        return PairMaps(k=scores[:, 0], l=scores[:, 1], grid=grid, per_class=scores)
+    from cdea.allocation import allocate
+
+    out = allocate(model, x, h, grid[0], grid[1], float(area), _allocate_config(cfg, knobs))
+    # The hypotheses the payoffs were optimised against, for the D2 stage payoffs.
+    extra = {"payoff_ids": h.ids[:, :2] if cfg.pair_only else h.ids}
+    if out.shared is not None:
+        extra["shared"] = out.shared
+    return PairMaps(k=out.unique[:, 0], l=out.unique[:, 1], grid=grid, per_class=out.unique, extra=extra)
 
 
 # ---------------------------------------------------------------------------
 # Contrastive baselines
 # ---------------------------------------------------------------------------
 
-def base_evidence_pair(model, x, h, backbone, knobs, device) -> PairMaps:
-    provider = evidence_provider(default_backend(backbone), backbone, knobs)
+def base_evidence_pair(model, x, h, backbone, knobs, device, backend: Optional[str] = None) -> PairMaps:
+    provider = evidence_provider(backend or default_backend(backbone), backbone, knobs)
     E = provider.explain(x, model, h)
     return PairMaps(k=E[:, 0], l=E[:, 1], grid=grid_of(backbone), per_class=E)
 
 
-def naive_contrastive_pair(model, x, h, backbone, knobs, device) -> PairMaps:
-    provider = evidence_provider(default_backend(backbone), backbone, knobs)
-    E = provider.explain(x, model, h)
-    valid = h.mask.to(E.dtype).unsqueeze(-1)
-    total = (E * valid).sum(dim=1)
-    count = valid.sum(dim=1).clamp_min(2.0)
+def analytic_pair(model, x, h, backbone, knobs, device, backend: Optional[str] = None) -> PairMaps:
+    """``E_k - min_j E_j``, with shared map ``min_j E_j``."""
+    provider = evidence_provider(backend or default_backend(backbone), backbone, knobs)
+    evidence = provider.explain(x, model, h)
+    shared = evidence.min(dim=1).values
+    unique = evidence - shared.unsqueeze(1)
+    return PairMaps(k=unique[:, 0], l=unique[:, 1], grid=grid_of(backbone), per_class=unique,
+                    extra={"shared": shared})
 
-    def contrast(j):
-        others = (total - E[:, j] * valid[:, j]) / (count - 1)
-        return E[:, j] - others
 
-    return PairMaps(k=contrast(0), l=contrast(1), grid=grid_of(backbone))
+def _rival_pairs(model, x, h: HypothesisSet) -> list[HypothesisSet]:
+    """For each member j of H, rank 0 is j and rank 1 is the strongest other member."""
+    with torch.no_grad():
+        scores = model(x).gather(1, h.ids.long())
+    pairs = []
+    for j in range(h.ids.shape[1]):
+        others = scores.clone()
+        others[:, j] = float("-inf")
+        rival = others.argmax(dim=-1)
+        foil = h.ids.gather(1, rival.unsqueeze(1)).squeeze(1)
+        ids = torch.stack([h.ids[:, j], foil], dim=1)
+        pairs.append(HypothesisSet(ids=ids, mask=torch.ones_like(ids, dtype=torch.bool)))
+    return pairs
 
 
 def margin_gradcam_pair(model, x, h, backbone, knobs, device) -> PairMaps:
     from baselines.margin import margin_gradcam
 
-    # A separate call for l: with the ReLU, the l-map is not the negated k-map.
-    return PairMaps(k=margin_gradcam(model, x, h), l=margin_gradcam(model, x, swapped(h)), grid=None)
+    columns = [margin_gradcam(model, x, pair) for pair in _rival_pairs(model, x, h)]
+    return PairMaps(k=columns[0], l=columns[1], grid=None, per_class=torch.stack(columns, dim=1))
 
 
 def margin_ig_pair(model, x, h, backbone, knobs, device) -> PairMaps:
     from baselines.margin import margin_integrated_gradients
 
-    # IG is linear in the target, so attr(z_l - z_k) = -attr(z_k - z_l).
-    k_map = margin_integrated_gradients(model, x, h, steps=max(2, knobs.ig_steps))
-    return PairMaps(k=k_map, l=-k_map, grid=None)
+    pairs = _rival_pairs(model, x, h)
+    steps = max(2, knobs.ig_steps)
+    # IG is linear in the target, so the rank-1 map is the negated rank-0 map.
+    k_map = margin_integrated_gradients(model, x, pairs[0], steps=steps)
+    columns = [k_map, -k_map]
+    columns += [margin_integrated_gradients(model, x, pair, steps=steps) for pair in pairs[2:]]
+    return PairMaps(k=k_map, l=-k_map, grid=None, per_class=torch.stack(columns, dim=1))
 
 
-def extremal_contrastive_pair(model, x, h, backbone, knobs, device, area: float = 0.05) -> PairMaps:
+def extremal_contrastive_pair(model, x, h, backbone, knobs, device, area: float = 0.05, deletion: bool = True) -> PairMaps:
     from baselines.extremal import margin_masks
 
-    kw = dict(area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth)
+    kw = dict(area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth, deletion=deletion)
     return PairMaps(k=margin_masks(model, x, h, **kw), l=margin_masks(model, x, swapped(h), **kw), grid=None)
+
+
+def extremal_preserve_pair(model, x, h, backbone, knobs, device, area: float = 0.05) -> PairMaps:
+    return extremal_contrastive_pair(model, x, h, backbone, knobs, device, area=area, deletion=False)
 
 
 def extremal_class_pair(model, x, h, backbone, knobs, device, area: float = 0.05) -> PairMaps:
@@ -315,10 +291,18 @@ def extremal_class_pair(model, x, h, backbone, knobs, device, area: float = 0.05
 
 
 def rise_margin_pair(model, x, h, backbone, knobs, device, seed: int = 0) -> PairMaps:
-    from baselines.rise import margin_maps
+    from baselines.rise import class_maps, margin_maps
 
     kw = dict(n_masks=knobs.rise_masks, s=knobs.rise_cell, seed=seed)
-    return PairMaps(k=margin_maps(model, x, h, **kw), l=margin_maps(model, x, swapped(h), **kw), grid=None)
+    columns = []
+    for j in range(h.ids.shape[1]):
+        per_image = [
+            class_maps(model, x[i:i + 1], int(h.ids[i, j]), **kw)[0]
+            for i in range(x.shape[0])
+        ]
+        columns.append(torch.stack(per_image, dim=0))
+    return PairMaps(k=margin_maps(model, x, h, **kw), l=margin_maps(model, x, swapped(h), **kw),
+                    grid=None, per_class=torch.stack(columns, dim=1))
 
 
 def contrastive_gradcam_pair(model, x, h, backbone, knobs, device) -> PairMaps:
@@ -327,12 +311,40 @@ def contrastive_gradcam_pair(model, x, h, backbone, knobs, device) -> PairMaps:
     return PairMaps(k=contrastive_gradcam(model, x, h), l=contrastive_gradcam(model, x, swapped(h)), grid=None)
 
 
+def chefer_class_pair(model, x, h, backbone, knobs, device) -> PairMaps:
+    """Author-default class maps for k and l: two relprops (EVAL_PLAN 4.2).
+
+    ViT only; the dossier records non-applicability to ResNet. Output is
+    14x14 like extremal_class_pair. Normalisation follows the
+    ``NormalizedModel`` convention: the converted model has no wrapper, so
+    raw input is normalised here when the caller passes one.
+    """
+    from baselines.chefer import class_relprop, from_torchvision
+    from models.wrapper import NormalizedModel, unwrap
+
+    converted = from_torchvision(unwrap(model))
+    dev = next(converted.parameters()).device
+    if isinstance(model, NormalizedModel):
+        x = (x - model.mean.to(x.device)) / model.std.to(x.device)
+    columns = []
+    with torch.enable_grad():
+        for j in range(h.ids.shape[1]):
+            maps = []
+            for i in range(x.shape[0]):
+                img = x[i:i + 1].to(dev)
+                maps.append(class_relprop(converted, img, int(h.ids[i, j])).to(x.device))
+            columns.append(torch.stack(maps))
+    per = torch.stack(columns, dim=1)
+    gh, gw = 14, 14
+    flat = per.reshape(x.shape[0], h.ids.shape[1], -1)
+    return PairMaps(k=flat[:, 0], l=flat[:, 1], grid=(gh, gw), per_class=flat)
+
+
 def random_pair(model, x, h, backbone, knobs, device, seed: int = 0) -> PairMaps:
     g = torch.Generator(device="cpu").manual_seed(int(seed))
     gh, gw = grid_of(backbone)
-    k_map = torch.rand(x.shape[0], gh * gw, generator=g)
-    l_map = torch.rand(x.shape[0], gh * gw, generator=g)
-    return PairMaps(k=k_map.to(x.device), l=l_map.to(x.device), grid=(gh, gw))
+    per = torch.rand(x.shape[0], h.ids.shape[1], gh * gw, generator=g).to(x.device)
+    return PairMaps(k=per[:, 0], l=per[:, 1], grid=(gh, gw), per_class=per)
 
 
 # ---- CVE -------------------------------------------------------------------
@@ -391,7 +403,158 @@ def cve_pair(model, x, h, backbone, knobs, device, dataset: str, seed: int = 0) 
                     extra={"cve_flipped": flipped, "cve_distractor_found": found})
 
 
+# ---- SC-CVE -----------------------------------------------------------------
+
+_AUX_CACHE: dict = {}
+_SWAV: dict = {}
+
+
+def _swav_model(device, weights_path: Optional[str] = None):
+    """Pinned SwAV trunk, loaded once per device from a local weights file."""
+    from baselines.sc_cve import load_swav_backbone
+
+    key = str(torch.device(device))
+    if key not in _SWAV:
+        if not weights_path:
+            raise ValueError(
+                "SC-CVE needs the SwAV weights file (downloaded with approval and "
+                "hash-recorded at repro time); pass knobs.sc_cve_swav_weights"
+            )
+        _SWAV[key] = load_swav_backbone(weights_path, device)
+    return _SWAV[key]
+
+
+def _aux_features(images: torch.Tensor, model, device, dataset: str, split: str,
+                  indices: Optional[list[int]], weights_path: Optional[str] = None) -> torch.Tensor:
+    """SwAV trunk features for raw ``[0, 1]`` images, cached per pool index.
+
+    ``indices=None`` means batch images outside the pool (the query): computed
+    without caching.
+    """
+    from baselines.sc_cve import swav_features
+
+    swav = _swav_model(device, weights_path)
+    if indices is None:
+        return swav_features(images, swav, device)
+    out = []
+    for idx, image in zip(indices, images):
+        key = (dataset, split, int(idx))
+        if key not in _AUX_CACHE:
+            _AUX_CACHE[key] = swav_features(image.unsqueeze(0), swav, device)[0]
+        out.append(_AUX_CACHE[key])
+    return torch.stack(out, dim=0)
+
+
+def sc_cve_pair(model, x, h, backbone, knobs, device, dataset: str, seed: int = 0) -> PairMaps:
+    """One-sided SC-CVE map: query cells in joint-search edit order (CD1 only).
+
+    The distractor class is the foil (rank 1), not the confusion-matrix class
+    upstream uses; the dossier names this shared rule. Fast knobs take the
+    Goyal path (``lambd=0``, no prefilter, 1 distractor) so smoke runs never
+    touch the SwAV weights; paper runs use the authors' defaults.
+    """
+    from baselines.sc_cve import (
+        OURS_LAMBD,
+        OURS_TEMPERATURE,
+        OURS_TOPK,
+        NoFlipError,
+        edits_to_rank,
+        edits_to_scores,
+        run_sc_cve_edits,
+    )
+
+    features, decision, _fc = _resnet_split(model)
+    foil = h.ids[:, 1]
+    if knobs.fast:
+        lambd, temperature, topk, n_dist = 0.0, None, None, 1
+    else:
+        lambd, temperature, topk = OURS_LAMBD, OURS_TEMPERATURE, OURS_TOPK
+        n_dist = knobs.sc_cve_distractors
+    pool_split = "val" if dataset == "imagenet" else "train"
+    with torch.no_grad():
+        query_feats = features(x)
+    maps, flipped, found, n_edits = [], [], [], []
+    for i in range(x.shape[0]):
+        cands = find_distractors(model, dataset, int(foil[i]), seed + i,
+                                 knobs.cve_distractor_tries, device, n=n_dist)
+        if not cands:
+            maps.append(torch.full(query_feats.shape[-2:], float("nan"), device=x.device))
+            flipped.append(False)
+            found.append(False)
+            n_edits.append(0)
+            continue
+        pool_idx, d_imgs = zip(*cands)
+        d_batch = torch.stack(list(d_imgs), dim=0).to(x.device)
+        with torch.no_grad():
+            d_feat = features(d_batch)
+        if topk is None and lambd == 0.0:
+            query_aux = distractor_aux = None
+        else:
+            query_aux = _aux_features(x[i:i + 1], model, device, dataset, pool_split,
+                                      None, knobs.sc_cve_swav_weights)
+            distractor_aux = _aux_features(d_batch, model, device, dataset, pool_split,
+                                           list(pool_idx), knobs.sc_cve_swav_weights)
+        try:
+            edits = run_sc_cve_edits(query_feats[i].detach(), d_feat.detach(),
+                                     decision, int(foil[i]), lambd=lambd,
+                                     temperature=temperature, topk=topk,
+                                     query_aux=query_aux, distractor_aux=distractor_aux,
+                                     device=x.device)
+        except NoFlipError:
+            maps.append(torch.full(query_feats.shape[-2:], float("nan"), device=x.device))
+            flipped.append(False)
+            found.append(True)
+            n_edits.append(0)
+            continue
+        rank = edits_to_rank(edits, *query_feats.shape[-2:], x.device)
+        maps.append(edits_to_scores(rank))
+        flipped.append(True)
+        found.append(True)
+        n_edits.append(len(edits))
+    k_map = torch.stack(maps).reshape(x.shape[0], -1)
+    gh, gw = query_feats.shape[-2:]
+    return PairMaps(k=k_map, l=None, grid=(int(gh), int(gw)),
+                    extra={"sc_cve_flipped": flipped, "sc_cve_distractor_found": found,
+                           "sc_cve_n_edits": n_edits})
+
+
 _POOLS: dict = {}
+
+
+def find_distractors(model, dataset: str, class_idx: int, seed: int, tries: int, device,
+                     n: int = 1) -> list[tuple[int, torch.Tensor]]:
+    """Up to ``n`` seeded ``(pool_index, image)`` pairs of ``class_idx``.
+
+    Each image is also predicted as ``class_idx`` by the model. Drawn from the
+    train split (ImageNet: our val carve, since it has no train split here).
+    CVE keeps ``n=1``; SC-CVE takes up to ``n`` for the joint search.
+    """
+    pool_split = "val" if dataset == "imagenet" else "train"
+    key = (dataset, pool_split)
+    if key not in _POOLS:
+        from evaluation.datasets import get_eval_loader
+        from evaluation.run_data import DATA_ROOT, IMAGE_SIZE
+
+        loader, _ = get_eval_loader(dataset, 1, DATA_ROOT, image_size=IMAGE_SIZE, split=pool_split)
+        ds = loader.dataset
+        targets = _targets(ds)
+        _POOLS[key] = (ds, targets)
+    ds, targets = _POOLS[key]
+    members = [i for i, t in enumerate(targets) if t == class_idx]
+    if not members:
+        return []
+    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    order = torch.randperm(len(members), generator=g)[:tries].tolist()
+    found = []
+    for j in order:
+        image, _ = ds[members[j]]
+        with torch.no_grad():
+            pred = int(model(image.unsqueeze(0).to(device)).argmax(-1))
+        if pred == class_idx:
+            found.append((members[j], image))
+            if len(found) >= max(1, int(n)):
+                break
+    return found
 
 
 def find_distractor(model, dataset: str, class_idx: int, seed: int, tries: int, device) -> Optional[torch.Tensor]:
@@ -400,29 +563,8 @@ def find_distractor(model, dataset: str, class_idx: int, seed: int, tries: int, 
     Drawn from the train split (ImageNet: our val carve, since it has no train
     split here). Returns ``None`` when no such image is found within ``tries``.
     """
-    pool_split = "val" if dataset == "imagenet" else "train"
-    key = (dataset, pool_split)
-    if key not in _POOLS:
-        from scripts.ablation_contrastive import _get_eval_loader
-        from evaluation.run_data import DATA_ROOT, IMAGE_SIZE
-
-        loader, _ = _get_eval_loader(dataset, 1, DATA_ROOT, image_size=IMAGE_SIZE, split=pool_split)
-        ds = loader.dataset
-        targets = _targets(ds)
-        _POOLS[key] = (ds, targets)
-    ds, targets = _POOLS[key]
-    members = [i for i, t in enumerate(targets) if t == class_idx]
-    if not members:
-        return None
-    g = torch.Generator(device="cpu").manual_seed(int(seed))
-    order = torch.randperm(len(members), generator=g)[:tries].tolist()
-    for j in order:
-        image, _ = ds[members[j]]
-        with torch.no_grad():
-            pred = int(model(image.unsqueeze(0).to(device)).argmax(-1))
-        if pred == class_idx:
-            return image
-    return None
+    found = find_distractors(model, dataset, class_idx, seed, tries, device, n=1)
+    return found[0][1] if found else None
 
 
 def _targets(ds) -> list[int]:
@@ -438,7 +580,9 @@ def _targets(ds) -> list[int]:
 
 
 CONTRASTIVE_CORE = ("cdea", "base_evidence", "margin_gradcam", "margin_ig", "extremal", "cve", "random_floor")
-CONTRASTIVE_EXTENDED = ("extremal_class", "rise_margin", "contrastive_gradcam", "naive_contrastive")
+CONTRASTIVE_EXTENDED = ("extremal_preserve", "rise_margin", "contrastive_gradcam", "analytic", "sc_cve", "chefer")
+
+WHOLE_SAMPLE = ("cve", "sc_cve", "random_floor")
 
 
 def contrastive_method(name: str):
@@ -450,193 +594,28 @@ def contrastive_method(name: str):
         "extremal": extremal_contrastive_pair,
         "cve": cve_pair,
         "random_floor": random_pair,
-        "extremal_class": extremal_class_pair,
+        "extremal_preserve": extremal_preserve_pair,
         "rise_margin": rise_margin_pair,
         "contrastive_gradcam": contrastive_gradcam_pair,
-        "naive_contrastive": naive_contrastive_pair,
-    }[name]
-
-
-# ---------------------------------------------------------------------------
-# Shift methods
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ShiftConfig:
-    backend: str = "gradcam"
-    preset: str = "mixed"
-    lambda_gap: Optional[float] = None
-    lambda_mass: float = 0.1
-    lambda_disjoint: Optional[float] = None
-    lr: float = 0.5
-    steps: Optional[int] = None
-    objective: str = "paired"        # paired | unpaired (AS1)
-
-
-SHIFT_ABLATIONS: dict[str, Callable[[ShiftConfig], ShiftConfig]] = {
-    "AS1_paired_mass": lambda c: replace(c, objective="paired", lambda_mass=0.1),
-    "AS1_paired_nomass": lambda c: replace(c, objective="paired", lambda_mass=0.0),
-    "AS1_unpaired_mass": lambda c: replace(c, objective="unpaired", lambda_mass=0.1),
-    "AS1_unpaired_nomass": lambda c: replace(c, objective="unpaired", lambda_mass=0.0),
-}
-
-
-def _predicted(model, x) -> torch.Tensor:
-    with torch.no_grad():
-        return model(x).argmax(-1)
-
-
-def cdea_shift_maps(model, sample, backbone, knobs, device, cfg: Optional[ShiftConfig] = None, seed: int = 0,
-                    loss_scale: float = 1.0, init_offset: int = 0) -> ShiftMaps:
-    from core.game_modes import resolve_shift_game
-    from core.hypotheses import TopMSelector
-    from core.runner import CDEAExplainer
-    from instantiations.shift.allocator import RobustShortcutOptimizationAllocator
-    from instantiations.shift.objective import GroupStatisticsObjective, RobustShortcutObjective
-    from modality.grid_regions import VisionGridUnitSpace
-
-    cfg = cfg or ShiftConfig(backend=default_backend(backbone))
-    game = resolve_shift_game(cfg.preset)
-    gap = game.lambda_gap if cfg.lambda_gap is None else cfg.lambda_gap
-    disjoint = game.lambda_disjoint if cfg.lambda_disjoint is None else cfg.lambda_disjoint
-    gh, gw = grid_of(backbone)
-    common = dict(lambda_mean=game.lambda_mean, lambda_var=game.lambda_var, lambda_gap=gap,
-                  lambda_disjoint=disjoint, lambda_sparse=game.lambda_sparse,
-                  lambda_mass=cfg.lambda_mass, target="pred")
-    steps = cfg.steps if cfg.steps is not None else knobs.shift_steps
-    if cfg.objective == "unpaired":
-        # Each image belongs to one group: the ID and OOD views become separate
-        # images, grouped by (label, view).
-        objective = GroupStatisticsObjective(**common)
-        x = torch.cat(sample.env.xs[:2], dim=0)
-        labels = sample.labels.repeat(2)
-        view = torch.cat([torch.zeros_like(sample.labels), torch.ones_like(sample.labels)])
-        group = (labels * 2 + view).to(device)
-        allocator = RobustShortcutOptimizationAllocator(objective, num_steps=steps, lr=cfg.lr,
-                                                        lambda_disjoint=disjoint, init_seed=seed,
-                                                        loss_scale=loss_scale, init_offset=init_offset)
-        explainer = CDEAExplainer(model=model, unit_space=VisionGridUnitSpace(gh, gw),
-                                  selector=TopMSelector(m=1),
-                                  base_evidence=evidence_provider(cfg.backend, backbone, knobs),
-                                  allocator=_GroupAllocator(allocator, group), objective=_GroupObjective(objective, group),
-                                  device=device)
-        # The allocator requires an EnvBatch; the group objective ignores it.
-        out = explainer.explain(x, env=EnvBatch(xs=[x], env_ids=["pooled"]))
-        n = sample.labels.shape[0]
-        robust = out.masks["robust"].reshape(2 * n, -1)[:n]
-        shortcut = out.masks["shortcut"].reshape(2 * n, -1)[:n]
-        return ShiftMaps(robust=robust, shortcut=shortcut, grid=(gh, gw))
-    objective = RobustShortcutObjective(**common, lambda_shortcut=game.lambda_shortcut)
-    allocator = RobustShortcutOptimizationAllocator(objective, num_steps=steps, lr=cfg.lr,
-                                                    lambda_disjoint=disjoint, init_seed=seed,
-                                                    loss_scale=loss_scale, init_offset=init_offset)
-    explainer = CDEAExplainer(model=model, unit_space=VisionGridUnitSpace(gh, gw),
-                              selector=TopMSelector(m=1),
-                              base_evidence=evidence_provider(cfg.backend, backbone, knobs),
-                              allocator=allocator, objective=objective, device=device)
-    out = explainer.explain(sample.x_id, env=sample.env)
-    return ShiftMaps(robust=out.masks["robust"].reshape(sample.x_id.shape[0], -1),
-                     shortcut=out.masks["shortcut"].reshape(sample.x_id.shape[0], -1), grid=(gh, gw))
-
-
-class _GroupObjective:
-    """Passes the fixed ``group`` tensor to GroupStatisticsObjective.compute."""
-
-    def __init__(self, inner, group):
-        self.inner = inner
-        self.group = group
-        for name in ("lambda_mass", "mass_ref_regions", "ld"):
-            if hasattr(inner, name):
-                setattr(self, name, getattr(inner, name))
-
-    def compute(self, *args, **kwargs):
-        kwargs.setdefault("group", self.group)
-        return self.inner.compute(*args, **kwargs)
-
-
-class _GroupAllocator:
-    def __init__(self, inner, group):
-        self.inner = inner
-        self.inner.objective = _GroupObjective(inner.objective, group)
-
-    def allocate(self, **kwargs):
-        return self.inner.allocate(**kwargs)
-
-
-def attribution_difference_maps(model, sample, backbone, knobs, device, backend: Optional[str] = None) -> ShiftMaps:
-    from baselines.shift_maps import environment_maps
-
-    provider = evidence_provider(backend or default_backend(backbone), backbone, knobs)
-    gh, gw = grid_of(backbone)
-    h = _single(_predicted(model, sample.x_id))
-    per_env = [provider.explain(xe, model, h)[:, 0].reshape(-1, gh, gw) for xe in sample.env.xs]
-    robust, shortcut = environment_maps(per_env)
-    b = sample.x_id.shape[0]
-    return ShiftMaps(robust=robust.reshape(b, -1), shortcut=shortcut.reshape(b, -1), grid=(gh, gw))
-
-
-def spray_maps(model, sample, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
-    """Zennit EpsilonPlus relevance on x_id, clustered with CoRelAy (EVAL_PLAN 4.3).
-
-    Clustering needs at least 3 images. The shortcut map is each image's
-    cluster-mean relevance; the robust map is the image's own relevance.
-    """
-    from baselines.spray import cluster_mean_relevance, lrp_maps
-
-    pred = _predicted(model, sample.x_id)
-    relevance = lrp_maps(model, sample.x_id, pred, batch_size=4).detach()
-    n = relevance.shape[0]
-    if n < 3:
-        raise ValueError("SpRAy clusters relevance maps and needs at least 3 images in the cell")
-    means, labels = cluster_mean_relevance(relevance, n_clusters=2, n_eigval=min(32, n - 1),
-                                           n_neighbors=min(10, n - 1), seed=seed)
-    return ShiftMaps(robust=relevance, shortcut=means, grid=None,
-                     extra={"spray_clusters": labels.tolist()})
-
-
-def extremal_per_env_maps(model, sample, backbone, knobs, device, area: float = 0.05) -> ShiftMaps:
-    from baselines.shift_maps import per_environment_extremal
-
-    pred = _predicted(model, sample.x_id)
-    robust, shortcut = per_environment_extremal(model, list(sample.env.xs), pred, area=area,
-                                                max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth)
-    return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
-
-
-def random_shift_maps(model, sample, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
-    g = torch.Generator(device="cpu").manual_seed(int(seed) + 7919)
-    gh, gw = grid_of(backbone)
-    b = sample.x_id.shape[0]
-    return ShiftMaps(robust=torch.rand(b, gh * gw, generator=g).to(sample.x_id.device),
-                     shortcut=torch.rand(b, gh * gw, generator=g).to(sample.x_id.device), grid=(gh, gw))
-
-
-SHIFT_CORE = ("cdea_shift", "attribution_difference", "spray", "extremal_per_env", "random_floor")
-
-
-def shift_method(name: str):
-    return {
-        "cdea_shift": cdea_shift_maps,
-        "attribution_difference": attribution_difference_maps,
-        "spray": spray_maps,
-        "extremal_per_env": extremal_per_env_maps,
-        "random_floor": random_shift_maps,
+        "analytic": analytic_pair,
+        "sc_cve": sc_cve_pair,
+        "chefer": chefer_class_pair,
     }[name]
 
 
 # ---------------------------------------------------------------------------
 # Val selection candidates (EVAL_PLAN.md section 6.2). Each name is
-# ``method@variant``. A CdeaConfig or ShiftConfig replaces the method's config;
-# a dict replaces Knobs fields; {"backend": ...} picks the evidence backend.
+# ``method@variant``. A CdeaConfig replaces the method's config; a dict
+# replaces Knobs fields.
 # ---------------------------------------------------------------------------
 
 def _cdea_grid() -> dict:
     out = {}
     for backend in ("gradcam", "ig"):
-        for margin in (0.5, 1.0, 2.0):
-            for overlap in (0.1, 0.2, 0.4):
-                out[f"cdea@{backend}_m{margin:g}_o{overlap:g}"] = CdeaConfig(
-                    backend=backend, lambda_margin=margin, lambda_overlap=overlap)
+        for lr in (0.05, 0.2):
+            out[f"cdea@{backend}_lr{lr:g}_t100"] = CdeaConfig(backend=backend, lr=lr, steps=100)
+    for lr in (0.05, 0.2):
+        out[f"cdea@ig_lr{lr:g}_t50"] = CdeaConfig(backend="ig", lr=lr, steps=50)
     return out
 
 
@@ -647,19 +626,198 @@ CONTRASTIVE_CANDIDATES: dict = {
     "margin_ig@ig32": {"ig_steps": 32},
     **{f"extremal@it{it}_sm{sm:g}": {"extremal_max_iter": it, "extremal_smooth": sm}
        for it in (300, 800) for sm in (0.0, 0.1)},
+    **{f"extremal_preserve@it{it}_sm{sm:g}": {"extremal_max_iter": it, "extremal_smooth": sm}
+       for it in (300, 800) for sm in (0.0, 0.1)},
     **{f"rise_margin@m{n}_s{s}": {"rise_masks": n, "rise_cell": s} for n in (2000, 4000) for s in (7, 8)},
+    "base_evidence@gradcam": {"backend": "gradcam"},
+    "base_evidence@ig": {"backend": "ig"},
+    "analytic@gradcam": {"backend": "gradcam"},
+    "analytic@ig": {"backend": "ig"},
+    "chefer@start0": {},
+    "chefer@start1": {},
 }
 
-SHIFT_CANDIDATES: dict = {
-    **{f"cdea_shift@g{g:g}_mass{m:g}_d{d:g}": ShiftConfig(lambda_gap=g, lambda_mass=m, lambda_disjoint=d)
-       for g in (0.5, 1.0, 1.5) for m in (0.1, 0.5) for d in (0.2, 0.4)},
-    "attribution_difference@gradcam": {"backend": "gradcam"},
-    "attribution_difference@ig": {"backend": "ig"},
+
+SHIFT_CORE = (
+    "cdea_shift",
+    "gap_attribution",
+    "attribution_difference",
+    "spray",
+    "extremal_shift",
+    "random_floor",
+)
+SHIFT_EXTENDED = ("r2r",)
+
+
+def _shift_config(cfg, knobs: Knobs):
+    from cdea.shift import ShiftConfig
+
+    cfg = cfg or ShiftConfig()
+    return ShiftConfig(
+        steps=knobs.cdea_steps if cfg.steps is None else int(cfg.steps),
+        lr=float(cfg.lr),
+        projection=cfg.projection,
+        independent=cfg.independent,
+        robust=cfg.robust,
+        shortcut=cfg.shortcut,
+        init=cfg.init,
+        backend=cfg.backend,
+        ig_steps=knobs.ig_steps,
+        kind=cfg.kind,
+    )
+
+
+def cdea_shift_maps(model, xs, backbone, knobs, device, cfg=None, area: float = 0.05) -> ShiftMaps:
+    from cdea.shift import allocate_shift
+
+    grid = grid_of(backbone)
+    resolved = _shift_config(cfg, knobs)
+    if backbone.startswith("vit") and resolved.backend == "gradcam":
+        resolved = replace(resolved, backend="ig")
+    out = allocate_shift(model, xs, grid[0], grid[1], area, resolved)
+    return ShiftMaps(robust=out.robust, shortcut=out.shortcut, grid=grid)
+
+
+def gap_attribution_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    from baselines.gap_attribution import gap_attribution
+
+    grid = grid_of(backbone)
+    robust, shortcut = gap_attribution(model, xs, grid[0], grid[1], steps=knobs.ig_steps)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=grid)
+
+
+def attribution_difference_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    from base_evidence.gradcam_regions import GradCAMRegionsProvider
+    from base_evidence.integrated_gradients_regions import IntegratedGradientsRegionsProvider
+    from baselines.shift_maps import environment_maps
+
+    grid = grid_of(backbone)
+    y = model(xs[0]).argmax(dim=-1)
+    hyp = HypothesisSet(
+        ids=y.view(-1, 1),
+        mask=torch.ones(y.shape[0], 1, dtype=torch.bool, device=y.device),
+    )
+    if default_backend(backbone) == "ig":
+        provider = IntegratedGradientsRegionsProvider(grid[0], grid[1], steps=knobs.ig_steps, baseline="blur")
+    else:
+        provider = GradCAMRegionsProvider(grid[0], grid[1])
+    maps = []
+    for view in xs:
+        evidence = provider.explain(view, model, hyp)[:, 0]
+        maps.append(evidence.reshape(evidence.shape[0], grid[0], grid[1]))
+    robust, shortcut = environment_maps(maps)
+    return ShiftMaps(
+        robust=robust.reshape(robust.shape[0], -1),
+        shortcut=shortcut.reshape(shortcut.shape[0], -1),
+        grid=grid,
+    )
+
+
+def spray_maps(model, xs, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
+    from baselines.shift_maps import environment_maps
+    from baselines.spray import cluster_mean_relevance, lrp_maps
+
+    y = model(xs[0]).argmax(dim=-1)
+    reduced = []
+    for view in xs:
+        relevance = lrp_maps(model, view, y)
+        count = int(relevance.shape[0])
+        if count >= 3:
+            eigenvalues = min(32, count - 1)
+            neighbors = min(10, count - 1)
+            means, _labels = cluster_mean_relevance(
+                relevance, n_clusters=2, n_eigval=eigenvalues, n_neighbors=neighbors, seed=seed,
+            )
+            reduced.append(means)
+        else:
+            reduced.append(relevance)
+    robust, shortcut = environment_maps(reduced)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
+
+
+def extremal_shift_maps(model, xs, backbone, knobs, device, area: float = 0.05) -> ShiftMaps:
+    from baselines.shift_maps import per_environment_extremal
+
+    y = model(xs[0]).argmax(dim=-1)
+    robust, shortcut = per_environment_extremal(
+        model, xs, y, area=area, max_iter=knobs.extremal_max_iter, smooth=knobs.extremal_smooth,
+    )
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=None)
+
+
+def random_shift_maps(model, xs, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
+    grid = grid_of(backbone)
+    count = xs[0].shape[0]
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    scores = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
+    return ShiftMaps(robust=scores, shortcut=scores, grid=grid)
+
+
+def r2r_shift_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
+    root = Path(__file__).resolve().parents[1] / "third_party" / "r2r"
+    if not root.is_dir():
+        raise FileNotFoundError("R2R is fetched by scripts/fetch_r2r.sh and is not vendored")
+    raise FileNotFoundError("R2R was fetched but the adapter has no weights for this cell")
+
+
+def shift_method(name: str):
+    return {
+        "cdea_shift": cdea_shift_maps,
+        "gap_attribution": gap_attribution_maps,
+        "attribution_difference": attribution_difference_maps,
+        "spray": spray_maps,
+        "extremal_shift": extremal_shift_maps,
+        "random_floor": random_shift_maps,
+        "r2r": r2r_shift_maps,
+    }[name]
+
+
+def _shift_grid() -> dict:
+    from cdea.shift import ShiftConfig
+
+    out = {}
+    for backend in ("gradcam", "ig"):
+        for lr in (0.05, 0.2):
+            out[f"cdea_shift@{backend}_lr{lr:g}_t100"] = ShiftConfig(backend=backend, lr=lr, steps=100)
+    return out
+
+
+SHIFT_ABLATIONS = {
+    "S1_deletion": None,
+    "S2_independent": None,
+    "S3_mean": None,
+    "S4_uniform": None,
+    "S5_first_order": None,
+    "S6_precomputed": "precomputed",
 }
+
+
+def shift_ablation(name: str):
+    from cdea.shift import ShiftConfig
+
+    return {
+        "S1_deletion": ShiftConfig(shortcut="deletion"),
+        "S2_independent": ShiftConfig(independent=True),
+        "S3_mean": ShiftConfig(robust="mean"),
+        "S4_uniform": ShiftConfig(init="uniform"),
+        "S5_first_order": ShiftConfig(kind="first_order"),
+        "S6_precomputed": "precomputed",
+    }[name]
+
+
+SHIFT_CANDIDATES = _shift_grid()
 
 
 def candidate_applies(name: str, backbone: str) -> bool:
-    """ViT has no Grad-CAM evidence (EVAL_PLAN 4.2); CVE has no candidates."""
-    if backbone.startswith("vit") and ("@gradcam" in name or name == "margin_gradcam@default"):
+    """ViT uses IG. ResNet's CDEA grid is T = 100. ViT's CDEA grid is IG only."""
+    vit = backbone.startswith("vit")
+    if vit and "gradcam" in name:
         return False
+    if name.startswith("cdea@"):
+        if vit:
+            return name.startswith("cdea@ig_")
+        return "_t50" not in name
+    if name.startswith("chefer"):
+        return vit
     return True

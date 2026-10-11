@@ -23,9 +23,6 @@ dependencies = [
     "metrohash-python==1.1.3.3",
 ]
 
-[tool.setuptools]
-py-modules = ["gambit"]
-
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "modality*", "base_evidence*", "instantiations*"]
+include = ["cdea*", "core*", "base_evidence*", "models*", "evaluation*", "baselines*", "analysis*"]
