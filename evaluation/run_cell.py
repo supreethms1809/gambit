@@ -262,6 +262,9 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
         ml, fl = budget_or_floor(maps.l.detach().float().cpu(), area, mask_seed + 1, **grid_kw)
         ml = ml.to(x.device)
     m_full = _pick(full, k) - _pick(full, l)
+    stages = {}
+    if "payoff_ids" in maps.extra and maps.grid is not None and ml is not None:
+        stages = _stage_payoffs(model, x, maps, mk, ml, area, grid)
     rows = []
     batch = x.shape[0]
     for operator in spec.operators:
@@ -291,6 +294,7 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
                 "failed_row": int(bool(fk[i]) or (fl is not None and bool(fl[i]))),
                 "fast": int(spec.knobs.fast), "model_source": spec.model_source,
                 "method_code_hash": code_hash, "knobs_hash": knob_hash,
+                **{key: float(value[i]) for key, value in stages.items()},
             })
         if label == "cdea" and maps.extra.get("shared") is not None and ml is not None:
             shared = maps.extra["shared"]
@@ -323,6 +327,36 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
                         "method_code_hash": code_hash, "knobs_hash": knob_hash,
                     })
     return rows
+
+
+def _stage_payoffs(model, x, maps: PairMaps, mk, ml, area, grid) -> dict[str, torch.Tensor]:
+    """Inputs to D2 for an allocation, ranks 0 and 1, all under blur deletion.
+
+    ``soft`` is the payoff the allocation optimised (the plan, nearest cells).
+    ``hard`` is its top ``a * R`` cells. ``scored_blur`` is the mask the scorer
+    uses. Each is the drop in the player's unique log-odds over the hypotheses
+    the allocation used.
+    """
+    from cdea.first_order import top_mass
+    from cdea.payoffs import unique_log_odds
+    from core.grid import delete
+
+    ids = maps.extra["payoff_ids"].to(x.device).long()
+    gh, gw = grid
+    budget = float(area) * gh * gw
+    reference = unique_log_odds(_logits(model, x), ids)
+    out = {}
+    for rank, name, plan, scored in ((0, "k", maps.k, mk), (1, "l", maps.l, ml)):
+        plan = plan.detach().to(device=x.device, dtype=x.dtype)
+        views = {
+            "soft": delete(x, plan, gh, gw),
+            "hard": delete(x, top_mass(plan, budget), gh, gw),
+            "scored_blur": remove(x, scored, "blur", 0, grid),
+        }
+        for stage, view in views.items():
+            dropped = unique_log_odds(_logits(model, view), ids)
+            out[f"payoff_{stage}_{name}"] = (reference[:, rank] - dropped[:, rank]).detach().float().cpu()
+    return out
 
 
 def device_memory_mb(device) -> float:

@@ -127,3 +127,47 @@ def test_record_index_names_the_dataset_image():
     split = Subset(base, [10, 20, 30, 40, 50])
     sample = Subset(split, [4, 1])
     assert root_indices(sample) == [50, 20]
+
+
+def test_stage_payoffs_are_recorded_for_an_allocation_only():
+    """D2 inputs ride on CDEA rows. Baseline rows keep the columns they had."""
+    from types import SimpleNamespace
+
+    from baselines.adapter import budget_or_floor
+    from core.grid import pool_sum
+    from evaluation.run_cell import CellSpec, _score_pair
+    from evaluation.run_methods import Knobs, PairMaps, cdea_pair, hypotheses_for
+
+    class CellLinear(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.randn(6, 49), requires_grad=False)
+
+        def forward(self, x):
+            spatial = x.mean(dim=1)
+            counts = pool_sum(torch.ones_like(spatial), 7, 7)
+            return (pool_sum(spatial, 7, 7) / counts) @ self.weight.t()
+
+    torch.manual_seed(0)
+    model = CellLinear().eval()
+    x = torch.rand(2, 3, 224, 224)
+    h = hypotheses_for(model, x, 5)
+    k, l = h.ids[:, 0], h.ids[:, 1]
+    full = model(x).detach()
+    spec = CellSpec(dataset="cifar10", backbone="resnet50", operators=("blur",))
+    sample = SimpleNamespace(index=[10, 11], labels=[0, 1])
+    args = (k, l, full, 0.05, spec, None, sample, budget_or_floor, 0, "code", "knobs")
+
+    maps = cdea_pair(model, x, h, "resnet50", Knobs(cdea_steps=2), torch.device("cpu"),
+                     CdeaConfig(init="uniform"), area=0.05)
+    rows = _score_pair(model, x, maps, *args[:4], args[4], "cdea", *args[6:])
+    stage_keys = {f"payoff_{s}_{r}" for s in ("soft", "hard", "scored_blur") for r in ("k", "l")}
+    unique_rows = [row for row in rows if row["method"] == "cdea"]
+    assert unique_rows and stage_keys <= set(unique_rows[0])
+    assert all(torch.isfinite(torch.tensor([row[key] for row in unique_rows for key in stage_keys])))
+    # The shared sensitivity rows delete two masks; D2 is about the unique players.
+    assert not stage_keys & {key for row in rows if row["method"] == "cdea+shared" for key in row}
+
+    baseline = PairMaps(k=torch.rand(2, 49), l=torch.rand(2, 49), grid=(7, 7))
+    base_rows = _score_pair(model, x, baseline, *args[:4], args[4], "base_evidence", *args[6:])
+    assert not stage_keys & set(base_rows[0])

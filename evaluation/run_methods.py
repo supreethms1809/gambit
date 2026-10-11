@@ -200,7 +200,8 @@ def cdea_pair(model, x, h, backbone, knobs, device, cfg: Optional[CdeaConfig] = 
     from cdea.allocation import allocate
 
     out = allocate(model, x, h, grid[0], grid[1], float(area), _allocate_config(cfg, knobs))
-    extra = {}
+    # The hypotheses the payoffs were optimised against, for the D2 stage payoffs.
+    extra = {"payoff_ids": h.ids[:, :2] if cfg.pair_only else h.ids}
     if out.shared is not None:
         extra["shared"] = out.shared
     return PairMaps(k=out.unique[:, 0], l=out.unique[:, 1], grid=grid, per_class=out.unique, extra=extra)
