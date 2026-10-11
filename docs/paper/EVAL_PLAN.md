@@ -335,6 +335,7 @@ The routes are redefined for this formulation in `FORMULATION.md` section 11. `s
 | A7 | Steps {25, 50, 100, 200}, against deletion Extremal Perturbations at the same forward-pass count | Cost–quality and the compute confound |
 | A8 | the earlier formulation (tag `framing-v1`) (the Oct 7 objective, runner default) | What the revision changed |
 | A9 | First-order solution: top units of the margin gradient × (x − b(x)), `FORMULATION.md` section 9 | What optimisation adds beyond its own linearisation |
+| A10 | Boundary-robust payoff, `FORMULATION.md` section 4.1 (under test). If it is adopted, the roles swap and A10 is the fixed-boundary payoff | Dependence of the payoff on the exact cell border |
 
 Confounds are stated per row: forward passes, number of masks, and K.
 

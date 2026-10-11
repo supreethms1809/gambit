@@ -57,6 +57,26 @@ Consider a unit that supports k and its rivals equally. Deleting it lowers their
 
 A unit whose deletion raises a rival also counts toward u_k. That unit was suppressing the rival, which is legitimate evidence for k over that rival. The share of u_k that comes this way is reported (route D3).
 
+### 4.1 Boundary-robust payoff (under test, declared 2026-10-11)
+
+**Why.** In the seed-0 val diagnosis on CIFAR-10 and HAM10000 (ResNet-50), CDEA's optimised payoff did not survive moving the mask boundary by less than a cell. On hard top cells under blur, CDEA's CD beat margin Grad-CAM's on the same cells. It fell behind on the mask the scorer uses: bilinear top-a, which covers the same cells give or take half a cell. Margin Grad-CAM gained under the same change. The evidence a player claims should not depend on where the cell border falls.
+
+**Definition.** Let T_δ move the upsampled mask M̃ by an integer pixel offset δ, with zero fill at the image border, so nothing outside the image is deleted:
+
+  x ⊖_δ A = (1 − T_δ M̃) ⊙ x + T_δ M̃ ⊙ b(x)
+
+Each payoff of section 4 becomes its expectation over offsets:
+
+  ū_p(A_p) = E_{δ ~ U(Δ)} [ payoff of p under x ⊖_δ A_p ],  Δ = {−s, …, s}²
+
+- s = ⌊½ unit side⌋: 16 px at 7×7/224, 8 px at 14×14. The scored mask differs from the cell mask by at most about half a cell, which is why s takes this value. It is not tuned.
+- δ = 0 is in Δ.
+- The constraints, the problem (section 6) and the output are unchanged. The output is the unshifted plan.
+
+**Optimisation.** One offset per player per step, drawn from a generator with a fixed seed that does not see the batch. Every image in a step uses the same offsets, so an image's allocation still does not depend on n or on chunking. Cost per step is unchanged.
+
+**Status.** This is the one formulation change tested after the seed-0 read. `G1.md` records it as a declared departure from the stop rule, with its read-out fixed before it ran. If it is not adopted, it is reported as an ablation (A10).
+
 ## 5. Constraints
 
 The allocation A ∈ ℝ_{≥0}^{(P+1)×R} has one row per player and one "unallocated" row ∅. P = K + 1 when the shared player exists, and P = K otherwise.
@@ -101,6 +121,7 @@ The word "game" means what it means here and nothing more: players with their ow
 | Sinkhorn iterations I | 20 | Fixed. Marginal error ≤ 1e-3 is asserted |
 | Blur in b(x) | The existing unit-space default | Fixed |
 | ε | 1e-6 | Fixed |
+| Boundary offset s (section 4.1, under test) | ⌊½ unit side⌋ | Fixed |
 
 The default for the G1 gate is: Grad-CAM initialisation on ResNet-50, T = 100, η = 0.1.
 
