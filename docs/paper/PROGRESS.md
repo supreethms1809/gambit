@@ -47,6 +47,20 @@ The default is unchanged until the user confirms adoption.
 - **Reproducibility.** The seed-0 rows reproduce `results/paper/cdea_boundary/` exactly.
 - **D2.** Still fails at 5% on CIFAR-10 for all three seeds. It passes on HAM10000.
 
+## Adopted, 2026-10-11
+
+- **Default.** By user decision, CDEA's default is the boundary-robust payoff (`5b3d99b`). The fixed-boundary payoff is ablation `A10_fixed_boundary`, and offset seeds 1 and 2 are `A11_offset_seed_1` and `A11_offset_seed_2`.
+- **Labels in older records.** Records written before `5b3d99b` use the earlier labels:
+  - `cdea` was the fixed-boundary payoff;
+  - `cdea:A10_boundary_shift` is the adopted default;
+  - `cdea:A10_boundary_shift_o1` and `_o2` are A11.
+
+  Their method hashes no longer match the tree.
+- **Open.**
+  - D2 fails at 5% on CIFAR-10.
+  - The G1 read on seed 1 needs seed-1 checkpoints. This section says not to train seeds 1–4, so the user decides when.
+  - Every paper cell, including the baseline rows, is rerun at the current hash before anything is reported.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
