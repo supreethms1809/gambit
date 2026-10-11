@@ -38,6 +38,15 @@ The default is unchanged until the user confirms adoption.
 - **How it is read.** Every seed is reported; none is selected.
 - **Verdict.** The G1 result counts as robust to the offset draw only if all three seeds are ahead (mean paired difference above 0) of margin Grad-CAM and of deletion Extremal Perturbations on both datasets. Otherwise the margin cannot be told apart from the method's sensitivity to its offsets.
 
+**Result, 2026-10-11.**
+
+`scripts/g1_readout.py --records results/paper/cells results/paper/cdea_offset_seeds --cdea cdea:A10_boundary_shift cdea:A10_boundary_shift_o1 cdea:A10_boundary_shift_o2 --seeds 0`
+
+- **Verdict.** All three offset seeds print "ahead of both comparators on both datasets". By the declared rule, the G1 result is robust to the offset draw.
+- **Margins.** Against margin Grad-CAM, every interval still includes 0, and the HAM10000 margins are the smallest.
+- **Reproducibility.** The seed-0 rows reproduce `results/paper/cdea_boundary/` exactly.
+- **D2.** Still fails at 5% on CIFAR-10 for all three seeds. It passes on HAM10000.
+
 ## Next session
 
 Shift lives beside contrastive. `cdea/shift.py` is the transplant payoff and its own Sinkhorn loop. The contrastive loop was not refactored. `scripts/gate_shift.py` prints the read-out and the stop rule and does not launch the n = 64 pilot.
