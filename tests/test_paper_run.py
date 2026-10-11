@@ -36,6 +36,9 @@ def test_every_ablation_changes_the_config_it_names():
     assert ABLATIONS["A7_steps_100"](base).steps == 100
     assert ABLATIONS["A9_first_order"](base).kind == "first_order"
     assert ABLATIONS["A10_boundary_shift"](base).boundary_shift is True
+    assert ABLATIONS["A10_boundary_shift"](base).offset_seed == 0
+    for name, seed in (("A10_boundary_shift_o1", 1), ("A10_boundary_shift_o2", 2)):
+        assert ABLATIONS[name](base).boundary_shift is True and ABLATIONS[name](base).offset_seed == seed
 
 
 def test_vit_uses_ig_and_skips_cve():

@@ -83,6 +83,7 @@ class CdeaConfig:
     kind: str = "allocate"             # allocate | first_order | precomputed
     precomputed_dir: Optional[str] = None
     boundary_shift: bool = False       # FORMULATION.md section 4.1
+    offset_seed: int = 0
 
 
 ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
@@ -106,6 +107,9 @@ ABLATIONS: dict[str, Callable[[CdeaConfig], CdeaConfig]] = {
     "A8_precomputed": lambda c: replace(c, kind="precomputed"),
     "A9_first_order": lambda c: replace(c, kind="first_order"),
     "A10_boundary_shift": lambda c: replace(c, boundary_shift=True),
+    # Sensitivity of A10 to its offset seed. Every seed is reported; none is selected.
+    "A10_boundary_shift_o1": lambda c: replace(c, boundary_shift=True, offset_seed=1),
+    "A10_boundary_shift_o2": lambda c: replace(c, boundary_shift=True, offset_seed=2),
 }
 
 
@@ -184,6 +188,7 @@ def _allocate_config(cfg: CdeaConfig, knobs: Knobs):
         backend=cfg.backend,
         ig_steps=knobs.ig_steps,
         boundary_shift=cfg.boundary_shift,
+        offset_seed=cfg.offset_seed,
     )
 
 

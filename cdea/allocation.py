@@ -23,7 +23,7 @@ from cdea.sinkhorn import hard_top_mass, sinkhorn
 
 EPS = 1e-6
 SINKHORN_ITERS = 20
-# Offsets of the boundary-robust payoff come from this seed alone, never from the
+# Offsets of the boundary-robust payoff come from a seed alone, never from the
 # batch, so an image's allocation does not depend on n or on chunking.
 OFFSET_SEED = 0
 
@@ -49,6 +49,7 @@ class AllocateConfig:
     backend: str = "gradcam"
     ig_steps: int = 16
     boundary_shift: bool = False         # FORMULATION.md section 4.1
+    offset_seed: int = OFFSET_SEED
 
 
 def _prior(
@@ -220,7 +221,7 @@ def allocate(
             opt = torch.optim.Adam([theta], lr=float(cfg.lr))
             row_target = _row_targets(players, units, float(area), x.device, x.dtype)
             dual: list = [None]
-            generator = torch.Generator(device="cpu").manual_seed(OFFSET_SEED)
+            generator = torch.Generator(device="cpu").manual_seed(int(cfg.offset_seed))
             limit = boundary_offset(x.shape[-2], x.shape[-1], grid_h, grid_w)
             for _ in range(int(cfg.steps)):
                 opt.zero_grad(set_to_none=True)
