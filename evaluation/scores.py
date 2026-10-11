@@ -21,8 +21,12 @@ def _restore(model: nn.Module, was_training: bool) -> None:
     model.train(was_training)
 
 
-def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed: int) -> torch.Tensor:
-    """Impute pixels where ``mask`` is 1. ``mask`` is ``(B, H, W)`` or ``(B, 1, H, W)``."""
+def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed: int, offset: int = 0) -> torch.Tensor:
+    """Impute pixels where ``mask`` is 1. ``mask`` is ``(B, H, W)`` or ``(B, 1, H, W)``.
+
+    ``offset`` is the first image's index in the full sample. The noise is then
+    the rows a single call on the whole sample would have drawn for these images.
+    """
     if mask.ndim == 3:
         mask = mask.unsqueeze(1)
     if mask.shape[0] != x.shape[0] or mask.shape[-2:] != x.shape[-2:]:
@@ -30,6 +34,9 @@ def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed:
     keep = (1.0 - mask).clamp(0.0, 1.0)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
+    from evaluation.masks import advance_generator
+
+    advance_generator(generator, int(offset), tuple(x.shape[1:]), normal=True)
     return noisy_linear_impute(x, keep, iters, noise, generator)
 
 
@@ -47,6 +54,7 @@ def contrastive_deletion(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """CD = m(x without M_l) − m(x without M_k), with m = z_k − z_l.
 
@@ -60,8 +68,8 @@ def contrastive_deletion(
     model.eval()
     try:
         with torch.no_grad():
-            without_l = model(_remove(x, mask_l, iters, noise, seed))
-            without_k = model(_remove(x, mask_k, iters, noise, seed))
+            without_l = model(_remove(x, mask_l, iters, noise, seed, offset))
+            without_k = model(_remove(x, mask_k, iters, noise, seed, offset))
             return _margin(without_l, class_k, class_l) - _margin(without_k, class_k, class_l)
     finally:
         _restore(model, was_training)
@@ -75,6 +83,7 @@ def deletion_matrix(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """``(B, K, K)`` drop in class i's logit when mask j is removed.
 
@@ -91,7 +100,7 @@ def deletion_matrix(
             base = model(x)
             drops = []
             for j in range(masks.shape[1]):
-                removed = model(_remove(x, masks[:, j], iters, noise, seed))
+                removed = model(_remove(x, masks[:, j], iters, noise, seed, offset))
                 drop = base - removed
                 drops.append(drop.gather(1, class_ids))
             # drops[j] is (B, K): drop in every class logit when mask j is removed.
@@ -111,6 +120,7 @@ def sufficiency_contrast(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """SC = m(x keep M_k) - m(x keep M_l). Kept pixels stay; the rest are ROAD-imputed."""
     class_k = class_k.long()
@@ -119,8 +129,8 @@ def sufficiency_contrast(
     model.eval()
     try:
         with torch.no_grad():
-            keep_k = model(_remove(x, 1.0 - mask_k, iters, noise, seed))
-            keep_l = model(_remove(x, 1.0 - mask_l, iters, noise, seed + 1))
+            keep_k = model(_remove(x, 1.0 - mask_k, iters, noise, seed, offset))
+            keep_l = model(_remove(x, 1.0 - mask_l, iters, noise, seed + 1, offset))
             return _margin(keep_k, class_k, class_l) - _margin(keep_l, class_k, class_l)
     finally:
         _restore(model, was_training)
@@ -134,6 +144,7 @@ def shared_validity(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """Drop in ``s_H`` minus the mean absolute change in ``c_j``, under ROAD removal.
 
@@ -149,7 +160,7 @@ def shared_validity(
             full = model(x)
             if not shared_defined(full, class_ids):
                 return torch.full((x.shape[0],), float("nan"), device=x.device)
-            deleted = model(_remove(x, mask_s, iters, noise, seed))
+            deleted = model(_remove(x, mask_s, iters, noise, seed, offset))
             shared_drop = shared_log_odds(full, class_ids) - shared_log_odds(deleted, class_ids)
             reorder = (unique_log_odds(full, class_ids) - unique_log_odds(deleted, class_ids)).abs().mean(dim=-1)
             return shared_drop - reorder
@@ -228,6 +239,7 @@ def disagreement_reduction(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """ΔD. The shortcut term minus the same term for a random mask of equal area.
 
@@ -249,8 +261,8 @@ def disagreement_reduction(
 
             def apply(mask: torch.Tensor) -> torch.Tensor:
                 return gap(
-                    _remove(x_id, mask, iters, noise, seed),
-                    [_remove(xo, mask, iters, noise, seed) for xo in x_ood],
+                    _remove(x_id, mask, iters, noise, seed, offset),
+                    [_remove(xo, mask, iters, noise, seed, offset) for xo in x_ood],
                 )
 
             full = gap(x_id, x_ood)
@@ -269,6 +281,7 @@ def logit_disagreement_reduction(
     iters: int = 24,
     noise: float = 0.01,
     seed: int = 0,
+    offset: int = 0,
 ) -> torch.Tensor:
     """ΔD in logit space. Same construction as ``disagreement_reduction`` with
     D = mean |z_y(id) − z_y(ood)| across the other environments.
@@ -292,8 +305,8 @@ def logit_disagreement_reduction(
 
             def apply(mask: torch.Tensor) -> torch.Tensor:
                 return gap(
-                    _remove(x_id, mask, iters, noise, seed),
-                    [_remove(xo, mask, iters, noise, seed) for xo in x_ood],
+                    _remove(x_id, mask, iters, noise, seed, offset),
+                    [_remove(xo, mask, iters, noise, seed, offset) for xo in x_ood],
                 )
 
             full = gap(x_id, x_ood)
@@ -350,8 +363,8 @@ def probability_disagreement(
         _restore(model, was_training)
 
 
-def _road(model, xs, y, mask, iters, noise, seed, measure):
-    edited = [_remove(view, mask, iters, noise, seed + index) for index, view in enumerate(xs)]
+def _road(model, xs, y, mask, iters, noise, seed, measure, offset=0):
+    edited = [_remove(view, mask, iters, noise, seed + index, offset) for index, view in enumerate(xs)]
     return measure(model, edited, y)
 
 
@@ -364,6 +377,7 @@ def delta_d(
     iters: int,
     noise: float,
     seed: int,
+    offset: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Drop in log-odds disagreement minus the same drop for a random mask, and the probability companion."""
     was_training = model.training
@@ -379,10 +393,10 @@ def delta_d(
             def prob(m, views, labels):
                 return probability_disagreement(m, views, labels)
 
-            drop = before - _road(model, xs, y, shortcut, iters, noise, seed, odds)
-            drop_random = before - _road(model, xs, y, random_mask, iters, noise, seed + 1, odds)
-            drop_p = before_p - _road(model, xs, y, shortcut, iters, noise, seed, prob)
-            drop_p_random = before_p - _road(model, xs, y, random_mask, iters, noise, seed + 1, prob)
+            drop = before - _road(model, xs, y, shortcut, iters, noise, seed, odds, offset)
+            drop_random = before - _road(model, xs, y, random_mask, iters, noise, seed + 1, odds, offset)
+            drop_p = before_p - _road(model, xs, y, shortcut, iters, noise, seed, prob, offset)
+            drop_p_random = before_p - _road(model, xs, y, random_mask, iters, noise, seed + 1, prob, offset)
             return drop - drop_random, drop_p - drop_p_random
     finally:
         _restore(model, was_training)
@@ -397,6 +411,7 @@ def robust_necessity(
     iters: int,
     noise: float,
     seed: int,
+    offset: int = 0,
 ) -> torch.Tensor:
     """Min over environments of the log-odds drop under ROAD deletion, minus the random mask."""
     from cdea.shift import log_odds
@@ -409,7 +424,7 @@ def robust_necessity(
                 drops = []
                 for index, view in enumerate(xs):
                     full = log_odds(model(view), y)
-                    edited = log_odds(model(_remove(view, mask, iters, noise, seed + index)), y)
+                    edited = log_odds(model(_remove(view, mask, iters, noise, seed + index, offset)), y)
                     drops.append(full - edited)
                 return torch.stack(drops, dim=0).min(dim=0).values
 

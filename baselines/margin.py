@@ -98,11 +98,15 @@ def margin_integrated_gradients(
     was_training = model.training
     model.eval()
     try:
+        # One Riemann step at a time on the device, so the steps do not stack
+        # in memory. Captum needs an internal batch of at least the example
+        # count, and the cell already chunks examples. The attribution is unchanged.
         attr = IntegratedGradients(margin_forward).attribute(
             x.detach(),
             baselines=torch.zeros_like(x),
             n_steps=steps,
             method="riemann_right",
+            internal_batch_size=x.shape[0],
         )
     finally:
         model.train(was_training)

@@ -67,6 +67,9 @@ def parse(argv=None):
     p.add_argument("--fast", action="store_true", help="smoke knobs; never a paper number")
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "cells"))
     p.add_argument("--device", default="auto")
+    p.add_argument("--image-batch", type=int, default=4,
+                   help="images on the device at once inside a cell; 0 keeps the whole sample. "
+                   "Scores do not depend on it.")
     p.add_argument("--final", action="store_true")
     p.add_argument("--config-hash", default=None)
     return p.parse_args(argv)
@@ -97,6 +100,7 @@ def spec_from_args(args):
         areas=tuple(float(a) for a in args.areas.split(",")), operators=operators,
         model_source=args.model_source, checkpoint=args.checkpoint, final=args.final,
         config_hash=args.config_hash, knobs=FAST if args.fast else Knobs(), out_dir=args.out,
+        image_batch=args.image_batch,
     )
 
 

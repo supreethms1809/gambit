@@ -109,7 +109,7 @@ def spec_for(cell: dict, args):
                     methods=methods, ablations=ablations, candidates=candidates, areas=areas,
                     operators=operators,
                     model_source="auto", final=args.final, config_hash=args.config_hash,
-                    knobs=FAST if args.fast else Knobs(), out_dir=args.out)
+                    knobs=FAST if args.fast else Knobs(), out_dir=args.out, image_batch=args.image_batch)
 
 
 def child_argv(argv: list[str], cell_id: str) -> list[str]:
@@ -186,6 +186,9 @@ def main() -> None:
     p.add_argument("--final", action="store_true")
     p.add_argument("--config-hash", default=None)
     p.add_argument("--device", default="auto")
+    p.add_argument("--image-batch", type=int, default=4,
+                   help="images on the device at once inside a cell; 0 keeps the whole sample. "
+                   "Scores do not depend on it. A smaller batch leaves room for --jobs above 1.")
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "cells"))
     p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
     p.add_argument("--jobs", type=int, default=1,

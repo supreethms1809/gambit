@@ -62,12 +62,13 @@ class PassCounter:
         self._handle.remove()
 
 
-def remove(x: torch.Tensor, mask: torch.Tensor, operator: str, seed: int, grid: tuple[int, int]) -> torch.Tensor:
+def remove(x: torch.Tensor, mask: torch.Tensor, operator: str, seed: int, grid: tuple[int, int],
+           offset: int = 0) -> torch.Tensor:
     from core.grid import deletion_baseline
     from evaluation.scores import _remove
 
     if operator == "road":
-        return _remove(x, mask, ROAD["iters"], ROAD["noise"], seed)
+        return _remove(x, mask, ROAD["iters"], ROAD["noise"], seed, offset)
     if operator == "blur":
         m = mask.unsqueeze(1) if mask.ndim == 3 else mask
         return x * (1 - m) + deletion_baseline(x, grid[0], grid[1]) * m
@@ -255,11 +256,13 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     if maps.grid is not None:
         grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=IMAGE_SIZE, width=IMAGE_SIZE)
     mask_seed = spec.seed * 1000 + int(round(area * 1000))
-    mk, fk = budget_or_floor(maps.k.detach().float().cpu(), area, mask_seed, **grid_kw)
+    # offset: tie-breaks and ROAD noise follow the image's place in the sample,
+    # so a chunked method and a whole-sample method score an image identically.
+    mk, fk = budget_or_floor(maps.k.detach().float().cpu(), area, mask_seed, offset=offset, **grid_kw)
     mk = mk.to(x.device)
     ml = fl = None
     if maps.l is not None:
-        ml, fl = budget_or_floor(maps.l.detach().float().cpu(), area, mask_seed + 1, **grid_kw)
+        ml, fl = budget_or_floor(maps.l.detach().float().cpu(), area, mask_seed + 1, offset=offset, **grid_kw)
         ml = ml.to(x.device)
     m_full = _pick(full, k) - _pick(full, l)
     stages = {}
@@ -268,14 +271,14 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     rows = []
     batch = x.shape[0]
     for operator in spec.operators:
-        out_k = _logits(model, remove(x, mk, operator, mask_seed, grid))
+        out_k = _logits(model, remove(x, mk, operator, mask_seed, grid, offset))
         zk_wo_k, zl_wo_k = _pick(out_k, k), _pick(out_k, l)
         cd1 = m_full - (zk_wo_k - zl_wo_k)
         if ml is not None:
-            out_l = _logits(model, remove(x, ml, operator, mask_seed, grid))
+            out_l = _logits(model, remove(x, ml, operator, mask_seed, grid, offset))
             zk_wo_l, zl_wo_l = _pick(out_l, k), _pick(out_l, l)
             cd = (zk_wo_l - zl_wo_l) - (zk_wo_k - zl_wo_k)
-            sc = sufficiency_contrast(model, x, mk, ml, k, l, seed=mask_seed) if operator == "road" else torch.full_like(cd, float("nan"))
+            sc = sufficiency_contrast(model, x, mk, ml, k, l, seed=mask_seed, offset=offset) if operator == "road" else torch.full_like(cd, float("nan"))
         else:
             zk_wo_l = zl_wo_l = cd = sc = torch.full_like(cd1, float("nan"))
         for i in range(batch):
@@ -299,12 +302,12 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
         if label == "cdea" and maps.extra.get("shared") is not None and ml is not None:
             shared = maps.extra["shared"]
             if shared.shape[0] == batch:
-                ms, fs = budget_or_floor(shared.detach().float().cpu(), area, mask_seed + 2, **grid_kw)
+                ms, fs = budget_or_floor(shared.detach().float().cpu(), area, mask_seed + 2, offset=offset, **grid_kw)
                 ms = ms.to(x.device)
                 both_k = (mk + ms).clamp(0, 1)
                 both_l = (ml + ms).clamp(0, 1)
-                out_k = _logits(model, remove(x, both_k, operator, mask_seed, grid))
-                out_l = _logits(model, remove(x, both_l, operator, mask_seed, grid))
+                out_k = _logits(model, remove(x, both_k, operator, mask_seed, grid, offset))
+                out_l = _logits(model, remove(x, both_l, operator, mask_seed, grid, offset))
                 zk_wo_k, zl_wo_k = _pick(out_k, k), _pick(out_k, l)
                 zk_wo_l, zl_wo_l = _pick(out_l, k), _pick(out_l, l)
                 cd = (zk_wo_l - zl_wo_l) - (zk_wo_k - zl_wo_k)
@@ -501,23 +504,24 @@ def _score_shift(
         grid_w=None if grid is None else grid[1],
         height=height, width=width,
     )
-    shortcut, failed_s = budget_or_floor(maps.shortcut, area, spec.seed, **kwargs)
-    robust, failed_r = budget_or_floor(maps.robust, area, spec.seed + 1, **kwargs)
-    random_mask = random_floor(maps.shortcut, area, spec.seed + 2, **kwargs)
+    # start_i: tie-breaks and ROAD noise follow the image's place in the sample.
+    shortcut, failed_s = budget_or_floor(maps.shortcut, area, spec.seed, offset=start_i, **kwargs)
+    robust, failed_r = budget_or_floor(maps.robust, area, spec.seed + 1, offset=start_i, **kwargs)
+    random_mask = random_floor(maps.shortcut, area, spec.seed + 2, offset=start_i, **kwargs)
     odds, prob = delta_d(
-        model, views, y, shortcut, random_mask, ROAD["iters"], ROAD["noise"], spec.seed,
+        model, views, y, shortcut, random_mask, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
     )
     necessity = robust_necessity(
-        model, views, y, robust, random_mask, ROAD["iters"], ROAD["noise"], spec.seed + 3,
+        model, views, y, robust, random_mask, ROAD["iters"], ROAD["noise"], spec.seed + 3, offset=start_i,
     )
     if grid is not None:
-        units = top_fraction_mask(maps.shortcut, area, spec.seed)
+        units = top_fraction_mask(maps.shortcut, area, spec.seed, offset=start_i)
     else:
         units = _units_from_pixels(shortcut, grid_h, grid_w)
     closure = transplant_closure(model, views, y, units, grid_h, grid_w)
     rolled = torch.roll(shortcut, shifts=max(height // grid_h, 1), dims=-1)
     odds_rolled, _prob_rolled = delta_d(
-        model, views, y, rolled, random_mask, ROAD["iters"], ROAD["noise"], spec.seed,
+        model, views, y, rolled, random_mask, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
     )
     foreground = None if sample.foreground is None else sample.foreground[start_i:start_i + shortcut.shape[0]].to(shortcut.device)
     rows = []
