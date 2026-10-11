@@ -104,9 +104,31 @@ def pool_sum(pixel: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
     return out.scatter_add(1, flat, pixel.reshape(batch, -1))
 
 
-def delete(x: torch.Tensor, unit_mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
-    """``x ⊖ M = (1 - M̃) x + M̃ b(x)`` with hard ``M̃``."""
-    pixel = upsample_units(unit_mask, grid_h, grid_w, x.shape[-2], x.shape[-1])
+def boundary_offset(height: int, width: int, grid_h: int, grid_w: int) -> tuple[int, int]:
+    """``s``: the largest pixel offset of the boundary-robust payoff, half a unit side, floored."""
+    return int(unit_side(height, grid_h) // 2), int(unit_side(width, grid_w) // 2)
+
+
+def shift_pixels(pixel: torch.Tensor, dy: int, dx: int) -> torch.Tensor:
+    """Move a ``(B, 1, H, W)`` mask by ``(dy, dx)`` pixels. Vacated pixels are 0; nothing wraps."""
+    dy, dx = int(dy), int(dx)
+    if dy == 0 and dx == 0:
+        return pixel
+    if abs(dy) >= pixel.shape[-2] or abs(dx) >= pixel.shape[-1]:
+        raise ValueError("offset is larger than the image")
+    # Negative padding crops, so this pads one side and crops the other.
+    return F.pad(pixel, (dx, -dx, dy, -dy))
+
+
+def delete(
+    x: torch.Tensor,
+    unit_mask: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    offset: tuple[int, int] = (0, 0),
+) -> torch.Tensor:
+    """``x ⊖ M = (1 - M̃) x + M̃ b(x)`` with hard ``M̃``, moved by ``offset`` pixels."""
+    pixel = shift_pixels(upsample_units(unit_mask, grid_h, grid_w, x.shape[-2], x.shape[-1]), *offset)
     base = deletion_baseline(x, grid_h, grid_w)
     return (1.0 - pixel) * x + pixel * base
 
@@ -125,8 +147,14 @@ def transplant(
     return (1.0 - pixel) * x_id + pixel * x_env
 
 
-def keep(x: torch.Tensor, unit_mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
-    """Keep ``M`` and replace the rest with ``b(x)``."""
-    pixel = upsample_units(unit_mask, grid_h, grid_w, x.shape[-2], x.shape[-1])
+def keep(
+    x: torch.Tensor,
+    unit_mask: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    offset: tuple[int, int] = (0, 0),
+) -> torch.Tensor:
+    """Keep ``M``, moved by ``offset`` pixels, and replace the rest with ``b(x)``."""
+    pixel = shift_pixels(upsample_units(unit_mask, grid_h, grid_w, x.shape[-2], x.shape[-1]), *offset)
     base = deletion_baseline(x, grid_h, grid_w)
     return pixel * x + (1.0 - pixel) * base
