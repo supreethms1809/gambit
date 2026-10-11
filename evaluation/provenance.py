@@ -7,11 +7,14 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-CODE_ROOTS = ("cdea", "core", "base_evidence")
+# Everything that can change a score: the method, the core, the evidence
+# providers, the baselines and their vendored code, the scorer and runner, and
+# the model builders. A record counts only while this hash matches the tree.
+CODE_ROOTS = ("cdea", "core", "base_evidence", "baselines", "third_party", "evaluation", "models")
 
 
 def method_code_hash() -> str:
-    """sha256 of the method, the core, and the evidence providers."""
+    """sha256 of every source file under ``CODE_ROOTS``."""
     digest = hashlib.sha256()
     for folder in CODE_ROOTS:
         for path in sorted((REPO / folder).rglob("*.py")):
