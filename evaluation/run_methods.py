@@ -167,7 +167,7 @@ def evidence_provider(backend: str, backbone: str, knobs: Knobs):
 
 
 def default_backend(backbone: str) -> str:
-    """Grad-CAM degenerates on LayerNorm'd ViT tokens, so ViT uses IG (EVAL_PLAN 4.2)."""
+    """ViT uses IG for CDEA's initialisation and base evidence (EVAL_PLAN 4.2)."""
     return "ig" if backbone.startswith("vit") else "gradcam"
 
 

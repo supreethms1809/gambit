@@ -123,8 +123,36 @@ def test_gradcam_target_layer_sees_through_the_wrapper():
 
     vit = vit_b_16(weights=None)
     wrapped = maybe_wrap(vit, CONVENTION_IMAGENET)
-    assert _find_target_layer(wrapped) is vit.encoder.layers[-1]
+    assert _find_target_layer(wrapped) is vit.encoder.layers[-1].ln_1
     assert _find_target_layer(wrapped) is not vit.conv_proj
+
+
+def _vit_with_live_head():
+    """torchvision zero-initialises the ViT head, which zeroes every gradient."""
+    from torchvision.models import vit_b_16
+
+    torch.manual_seed(0)
+    vit = vit_b_16(weights=None)
+    torch.nn.init.normal_(vit.heads.head.weight, std=0.02)
+    return vit
+
+
+def test_vit_last_block_output_has_no_patch_gradient():
+    """Why the target layer is not the last block: its patch tokens never reach the head."""
+    vit = _vit_with_live_head().eval()
+    seen = {}
+
+    def keep(_module, _inputs, output):
+        output.retain_grad()
+        seen["tokens"] = output
+
+    handle = vit.encoder.layers[-1].register_forward_hook(keep)
+    logits = vit(torch.rand(1, 3, 224, 224))
+    handle.remove()
+    (logits[:, 3] - logits[:, 5]).sum().backward()
+    grad = seen["tokens"].grad
+    assert grad[:, 0].abs().max() > 0
+    assert grad[:, 1:].abs().max() == 0
 
 
 def test_margin_gradcam_runs_on_a_wrapped_vit():
@@ -133,14 +161,29 @@ def test_margin_gradcam_runs_on_a_wrapped_vit():
     from baselines.hypotheses import shared_hypotheses
     from baselines.margin import margin_gradcam
 
-    torch.manual_seed(0)
-    model = maybe_wrap(vit_b_16(weights=None), CONVENTION_IMAGENET).eval()
+    model = maybe_wrap(_vit_with_live_head(), CONVENTION_IMAGENET).eval()
     x = torch.rand(2, 3, 224, 224)
     with torch.no_grad():
         hypotheses = shared_hypotheses(model(x), 2)
     heat = margin_gradcam(model, x, hypotheses)
     assert heat.shape == (2, 224, 224)
     assert torch.isfinite(heat).all()
+    # An all-zero map ranks every pixel equally, so its top-a mask is a tie-break.
+    for image in heat:
+        assert image.std() > 0
+
+
+def test_gradcam_regions_provider_is_not_zero_on_a_vit():
+    from base_evidence.gradcam_regions import GradCAMRegionsProvider
+    from baselines.hypotheses import shared_hypotheses
+
+    model = maybe_wrap(_vit_with_live_head(), CONVENTION_IMAGENET).eval()
+    x = torch.rand(2, 3, 224, 224)
+    with torch.no_grad():
+        hypotheses = shared_hypotheses(model(x), 2)
+    field = GradCAMRegionsProvider(14, 14).explain(x, model, hypotheses)
+    assert field.shape == (2, 2, 196)
+    assert (field.flatten(2).std(dim=-1) > 0).all()
 
 
 def test_gradientshap_noise_does_not_trip_the_wrapper_range_check():

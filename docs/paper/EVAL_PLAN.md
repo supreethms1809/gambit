@@ -140,7 +140,7 @@ Notes on these definitions:
   - **Chunking:** it seeds distractors by image index, so it runs on the whole sample (`_whole_sample`).
 - **Chefer.** The authors' `transformer_attribution` on the torchvision ViT, through the `from_torchvision` bridge (logit-equivalence tested).
 - **Random floor.** Each side, and each member of H, gets its own independent seeded mask.
-- **ViT backends.** CDEA's initialisation and base evidence use IG on ViT, because Grad-CAM's field degenerates on LayerNorm'd tokens.
+- **ViT backends.** CDEA's initialisation and base evidence use IG on ViT. Grad-CAM on ViT hooks `ln_1` of the last encoder block: the head reads only the CLS token, so at the last block's output the patch tokens get zero gradient and the CAM is zero.
 
 ## 5. Metrics
 

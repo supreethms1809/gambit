@@ -3,7 +3,7 @@
 Supports both CNN backbones (ResNet, MobileNet, EfficientNet) and Vision Transformers
 (torchvision VisionTransformer). Target layer is auto-detected:
   - CNN: last Conv2d layer in the model
-  - ViT: last encoder block (model.encoder.layers[-1])
+  - ViT: the first LayerNorm of the last encoder block (model.encoder.layers[-1].ln_1)
 Pass ``target_layer`` explicitly to override for any architecture.
 """
 from __future__ import annotations
@@ -21,7 +21,12 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
     """Return the appropriate GradCAM target layer for CNN or ViT models.
 
     - CNN (ResNet, MobileNet, EfficientNet): last Conv2d layer.
-    - ViT (torchvision VisionTransformer): last transformer encoder block.
+    - ViT (torchvision VisionTransformer): ``ln_1`` of the last encoder block.
+      The head reads only the CLS token after the last block, so the logits have
+      exactly zero gradient with respect to that block's patch-token outputs and a
+      CAM there is zero everywhere. ``ln_1`` feeds the last attention, through which
+      the patch tokens reach CLS. pytorch-grad-cam uses the same layer for ViTs
+      (``blocks[-1].norm1``).
     Raises ValueError if neither is found and no target_layer is provided.
     """
     from models.wrapper import unwrap
@@ -32,7 +37,7 @@ def _find_target_layer(model: nn.Module) -> nn.Module:
     try:
         from torchvision.models import VisionTransformer
         if isinstance(model, VisionTransformer):
-            return model.encoder.layers[-1]
+            return model.encoder.layers[-1].ln_1
     except (ImportError, AttributeError):
         pass
     # ResNet: the layer4 block output, after the residual add and the ReLU.
@@ -179,18 +184,15 @@ class GradCAMRegionsProvider:
         # masks from a degenerate start and produce plausible-looking output. Warn
         # loudly instead.
         #
-        # The known cause is ViT: Grad-CAM assumes post-ReLU, non-negative activations,
-        # so weights*A is a positive importance score. Transformer token embeddings are
-        # LayerNorm'd and roughly zero-mean, so the CAM is symmetric about zero and the
-        # final relu can annihilate it. Use Integrated Gradients on transformers — it
-        # needs no layer hooks and makes no sign assumption.
+        # One known cause is a ViT hooked at the output of its last encoder block:
+        # the head reads only CLS, so the patch tokens there get zero gradient.
+        # ``_find_target_layer`` hooks ``ln_1`` of that block instead.
         if bool(mask.any()) and float(E.sum()) == 0.0:
             warnings.warn(
                 "GradCAMRegionsProvider produced an all-zero evidence field for every "
                 f"hypothesis (target layer: {type(layer).__name__}). Downstream results "
-                "built on this are meaningless. If this is a transformer, Grad-CAM's "
-                "non-negative-activation assumption does not hold — use "
-                "IntegratedGradientsRegionsProvider instead.",
+                "built on this are meaningless. On a ViT, hook a layer whose patch tokens "
+                "still reach the CLS token, such as the last block's ln_1.",
                 RuntimeWarning,
                 stacklevel=2,
             )
