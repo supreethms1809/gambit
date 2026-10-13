@@ -69,3 +69,51 @@ def deletion_payoffs(
         deleted_s = shared_log_odds(logits_deleted[:, -1], ids)
         shared_payoff = full_s - deleted_s
     return unique_payoff, shared_payoff
+
+
+# ---------------------------------------------------------------------------
+# Decomposition game (FORMULATION_DECOMPOSITION.md section 3). Logit units.
+# Players are ordered U_k, U_l, S. The pair is k = rank 0, l = rank 1.
+# ---------------------------------------------------------------------------
+
+SMOOTH_EPS = 1e-3
+
+
+def smooth_abs(t: torch.Tensor, eps: float = SMOOTH_EPS) -> torch.Tensor:
+    """``|t|_s = sqrt(t^2 + eps^2)``. At most ``eps`` above ``|t|``."""
+    return torch.sqrt(t * t + float(eps) ** 2)
+
+
+def smooth_min(a: torch.Tensor, b: torch.Tensor, eps: float = SMOOTH_EPS) -> torch.Tensor:
+    """``(a + b) / 2 - |a - b|_s / 2``. At most ``eps / 2`` below ``min(a, b)``."""
+    return 0.5 * (a + b) - 0.5 * smooth_abs(a - b, eps)
+
+
+def class_drops(logits_full: torch.Tensor, logits_deleted: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+    """``d_j(A_p) = z_j(x) - z_j(x deleted by A_p)``.
+
+    ``logits_full`` is ``(B, C)``, ``logits_deleted`` is ``(B, P, C)`` and
+    ``ids`` is ``(B, J)``. Returns ``(B, P, J)``.
+    """
+    ids = ids.long()
+    full = logits_full.gather(1, ids).unsqueeze(1)
+    deleted = logits_deleted.gather(2, ids.unsqueeze(1).expand(-1, logits_deleted.shape[1], -1))
+    return full - deleted
+
+
+def decomposition_payoffs(drops: torch.Tensor, null: torch.Tensor | None = None) -> torch.Tensor:
+    """``(u_k, u_l, u_S)`` from the ``(B, 3, 2)`` drops of players U_k, U_l, S on classes k, l.
+
+    With ``null`` ``(B, 2)``, each drop becomes the excess drop ``d - nu``.
+      u_k = d~_k(A_k) - |d~_l(A_k)|_s
+      u_l = d~_l(A_l) - |d~_k(A_l)|_s
+      u_S = min_s(d~_k(A_S), d~_l(A_S))
+    Returns ``(B, 3)``.
+    """
+    if drops.ndim != 3 or drops.shape[1:] != (3, 2):
+        raise ValueError("drops must be (batch, 3 players, 2 classes)")
+    excess = drops if null is None else drops - null.unsqueeze(1)
+    u_k = excess[:, 0, 0] - smooth_abs(excess[:, 0, 1])
+    u_l = excess[:, 1, 1] - smooth_abs(excess[:, 1, 0])
+    u_s = smooth_min(excess[:, 2, 0], excess[:, 2, 1])
+    return torch.stack([u_k, u_l, u_s], dim=1)

@@ -1,0 +1,176 @@
+"""Decomposition game. FORMULATION_DECOMPOSITION.md sections 3.1 to 3.6.
+
+Three players on one pair (k = rank 0, l = rank 1): U_k, unique to k; U_l,
+unique to l; S, shared. Each owns a·R units, units are exclusive, and the rest
+goes to the unallocated row. The welfare u_k + u_l + u_S is maximised with the
+plan machinery of ``allocate()``: Sinkhorn, binary draws with a straight-through
+gradient, boundary offsets, Adam, and a per-image sum loss. Model parameters
+stay frozen and the module stays in eval mode.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+from core.eval_mode import eval_mode
+from core.grid import boundary_offset
+from core.types import HypothesisSet
+from cdea._plan import (
+    SINKHORN_ITERS,
+    _draw,
+    _independent_masks,
+    _offsets,
+    _player_logits,
+    _project,
+    _row_targets,
+)
+from cdea.allocation import DRAW_SEED, EPS, _prior
+from cdea.null import N_NULL, NULL_SEED, null_drops
+from cdea.payoffs import class_drops, decomposition_payoffs
+from cdea.sinkhorn import sinkhorn
+
+PLAYERS = 3   # U_k, U_l, S
+
+
+@dataclass
+class Decomposition:
+    unique_k: torch.Tensor               # (B, R)
+    unique_l: torch.Tensor               # (B, R)
+    shared: torch.Tensor                 # (B, R)
+    transport: torch.Tensor              # (B, 4, R) with the unallocated row; (B, 3, R) when independent
+    row_target: torch.Tensor
+    null: torch.Tensor                   # (B, 2) blur null of k and l; zeros when the null is off
+    initial: torch.Tensor                # (B, 3, R) the projected plan at step 0
+    prior_split: Optional[torch.Tensor]  # (B, 3, R) the min-split of the evidence, or None (uniform init)
+
+
+@dataclass
+class DecomposeConfig:
+    steps: int = 100
+    lr: float = 0.1
+    init: str = "minsplit"               # minsplit | mean (DA5) | uniform (DA4)
+    backend: str = "gradcam"             # gradcam on ResNet-50, ig on ViT
+    ig_steps: int = 16
+    projection: str = "sinkhorn"
+    binary_masks: bool = True            # False is ablation DA6
+    boundary_shift: bool = True          # False is ablation DA7
+    draw_seed: int = DRAW_SEED
+    null: bool = True                    # False is ablation DA8
+    n_null: int = N_NULL
+    null_seed: int = NULL_SEED
+    independent: bool = False            # True is ablation DA1
+
+
+def min_split_rows(evidence: torch.Tensor) -> torch.Tensor:
+    """``(B, 2, R)`` sum-normalised evidence of k and l to ``(E_k - m, E_l - m, m)``, ``m = min``."""
+    shared = torch.minimum(evidence[:, 0], evidence[:, 1])
+    return torch.stack([evidence[:, 0] - shared, evidence[:, 1] - shared, shared], dim=1)
+
+
+def _initial_theta(evidence: Optional[torch.Tensor], init: str, units: int, x: torch.Tensor):
+    if init not in {"minsplit", "mean", "uniform"}:
+        raise ValueError(f"unknown init {init!r}")
+    fill = math.log(1.0 / float(units))
+    empty = x.new_full((x.shape[0], 1, units), fill)
+    if init == "uniform":
+        theta = x.new_full((x.shape[0], PLAYERS + 1, units), fill)
+        return theta.detach().requires_grad_(True), None
+    if init == "minsplit":
+        split = min_split_rows(evidence)
+        rows = torch.log(split + EPS)
+    else:
+        split = None
+        rows = torch.log(torch.cat([evidence, evidence.mean(dim=1, keepdim=True)], dim=1) + EPS)
+    theta = torch.cat([rows, empty], dim=1)
+    return theta.detach().requires_grad_(True), split
+
+
+def _plan(theta, row_target, area: float, cfg: DecomposeConfig, dual: list | None = None) -> torch.Tensor:
+    if cfg.independent:
+        return _independent_masks(theta[:, :-1], area, cfg.projection)
+    return _project(theta, row_target, cfg.projection, dual)[:, :-1]
+
+
+def decompose(
+    model: nn.Module,
+    x: torch.Tensor,
+    hypotheses: HypothesisSet,
+    grid_h: int,
+    grid_w: int,
+    area: float,
+    cfg: Optional[DecomposeConfig] = None,
+) -> Decomposition:
+    """Solve one area for the pair (rank 0, rank 1). ``x`` is on the model's device."""
+    cfg = cfg or DecomposeConfig()
+    if not 0.0 < float(area) <= 1.0:
+        raise ValueError("area must be in (0, 1]")
+    parameter = next(model.parameters())
+    if x.device != parameter.device:
+        raise RuntimeError("x and the model are on different devices; pass both explicitly")
+    if hypotheses.ids.shape[1] < 2:
+        raise ValueError("the decomposition needs a pair of hypotheses")
+    pair = HypothesisSet(ids=hypotheses.ids[:, :2], mask=hypotheses.mask[:, :2])
+    ids = pair.ids.long()
+    units = grid_h * grid_w
+
+    with eval_mode(model):
+        evidence = _prior(model, x, pair, grid_h, grid_w, cfg) if cfg.init != "uniform" else None
+        flags = [p.requires_grad for p in model.parameters()]
+        for p in model.parameters():
+            p.requires_grad_(False)
+        try:
+            with torch.no_grad():
+                reference = model(x.detach())
+            if cfg.null:
+                null = null_drops(model, x.detach(), ids, grid_h, grid_w, float(area), cfg.n_null, cfg.null_seed)
+            else:
+                null = reference.new_zeros(x.shape[0], 2)
+            theta, split = _initial_theta(evidence, cfg.init, units, x)
+            opt = torch.optim.Adam([theta], lr=float(cfg.lr))
+            row_target = _row_targets(PLAYERS, units, float(area), x.device, x.dtype)
+            dual: list = [None]
+            with torch.no_grad():
+                initial = _plan(theta.detach(), row_target, float(area), cfg, [None])
+            generator = torch.Generator(device="cpu").manual_seed(int(cfg.draw_seed))
+            limit = boundary_offset(x.shape[-2], x.shape[-1], grid_h, grid_w)
+            joint = not cfg.independent and cfg.projection == "sinkhorn"
+            for _ in range(int(cfg.steps)):
+                opt.zero_grad(set_to_none=True)
+                offsets = _offsets(generator, PLAYERS, limit) if cfg.boundary_shift else None
+                masks = _plan(theta, row_target, float(area), cfg, dual)
+                if cfg.binary_masks:
+                    shape = (units,) if joint else (PLAYERS, units)
+                    masks = _draw(masks, torch.rand(shape, generator=generator), joint)
+                edited = _player_logits(model, x.detach(), masks, grid_h, grid_w, False, offsets)
+                payoff = decomposition_payoffs(class_drops(reference, edited, ids), null)
+                loss = -payoff.sum()
+                loss.backward()
+                opt.step()
+            with torch.no_grad():
+                if joint:
+                    transport = sinkhorn(theta.detach(), row_target, iters=SINKHORN_ITERS, dual=dual)
+                    player_masks = transport[:, :-1]
+                    target = row_target
+                else:
+                    player_masks = _plan(theta.detach(), row_target, float(area), cfg, dual)
+                    transport = player_masks
+                    target = row_target[:PLAYERS]
+        finally:
+            for p, flag in zip(model.parameters(), flags):
+                p.requires_grad_(flag)
+
+    return Decomposition(
+        unique_k=player_masks[:, 0].detach(),
+        unique_l=player_masks[:, 1].detach(),
+        shared=player_masks[:, 2].detach(),
+        transport=transport.detach(),
+        row_target=target.detach(),
+        null=null.detach(),
+        initial=initial.detach(),
+        prior_split=None if split is None else split.detach(),
+    )
