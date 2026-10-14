@@ -6,6 +6,23 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
 
 ## Running
 
+- **Planted-pair ResNet-50 training: done 2026-10-14 01:08 UTC.** All 5 seeds trained. Best val balanced accuracy 0.986–0.987.
+- **Planted-pair ViT-B/16 training, started 01:13 UTC.** `launch_paper_training.py --seeds 0,1,2,3,4 --datasets planted_pair --models vit_b_16 --jobs 3`. Log `results/paper/logs/train_planted_pair_vit_b_16.log`.
+- **Planted-pair val cells, ResNet-50, started 01:13 UTC.** Seeds 0–4 run one after another, n = 200, every method and ablation, areas 2.5/5/10%, at hash `a5deb9fe`. Records go to `results/paper/decomp_dev/`. Loop log `results/paper/logs/decomp_dev/planted_pair_resnet50_loop.log`.
+
+- **Decomposition dev cells, started 2026-10-14 ~00:20 UTC (user decision).** These run *before* the win conditions in `EVAL_PLAN.md` 13.4 were signed off, which departs from the handoff's "pre-declare before any run". They are development runs: they select CDEA's steps and lr and the best min-split row on dev val, and no win condition is read from them.
+  - Setup: CIFAR-10 and HAM10000, ResNet-50, seed 0, val, n = 64, areas 2.5/5/10%, ROAD and blur.
+  - Methods: every method, ablations DA1–DA9, and the 4-config grid. They use the existing seed-0 probes.
+  - Code: branch `feat/cdea-decomposition` at `0e529b1`, method hash `a5deb9fe`.
+  - Output: records in `results/paper/decomp_dev/`, logs in `results/paper/logs/decomp_dev/`.
+  - Read with `scripts/decomp_readout.py --records results/paper/decomp_dev`, from the worktree.
+
+- **Planted-pair training, started 2026-10-14 (user approved, ResNet-50 first).** `scripts/launch_paper_training.py --seeds 0,1,2,3,4 --datasets planted_pair --models resnet50 --jobs 5`, run from the worktree `../gambit-decomp` (branch `feat/cdea-decomposition`, `8642eb4`). It uses the planted-patch recipe: fine-tune, lr 1e-4, 15 epochs. Checkpoints go to `results/paper/checkpoints/`. The launcher log is `results/paper/logs/train_planted_pair_resnet50.log`, with per-seed logs `results/paper/logs/train/planted_pair_resnet50_ft_lr0.0001_seed*.log`. ViT-B/16 follows once ResNet-50 is done.
+- **Seed-0 chain stopped, 2026-10-14 (user decision).** The launcher (PID 873953) and its four running cells were killed: CUB-200 R50, Oxford Pets R50, ImageNet-9 R50 and ColoredMNIST ViT. 10 of 24 units had finished, and their done markers are in `results/paper/cells/_markers/val/`: imagenet ViT/R50, cifar10, cifar100, ham10000, planted_patch ViT/R50, waterbirds ViT/R50, imagenet9 ViT. The rest are not run. Rerunning the chain skips the finished units while the hash is `9d84e7f2`.
+
+- **Seed-0 chain, restarted 2026-10-12.** `scripts/launch_paper_chain.py --seeds 0 --jobs 4` on the GH200, from `27f4065` (branch `fix/vit-gradcam-layer`), method hash `9d84e7f2`. Launcher PID 873953. All 24 units rerun from scratch, eval only, with the existing checkpoints.
+- **Why it restarted.** Grad-CAM on ViT hooked the last encoder block's output, where the patch tokens get zero gradient because the head reads only CLS. Margin Grad-CAM on ViT was zero everywhere (CD 0.00 on ImageNet ViT-B/16). The fix hooks that block's `ln_1`. Only the ViT margin Grad-CAM rows were wrong, but the fix changes the method hash, so the whole seed was rerun (user decision). The first run (hash `9ca0d89a`, launcher PID 247230, 8 units finished) is in `results/paper/superseded/seed0_9ca0d89a/`, as is the readout built from it. Keep it out of any table.
+- **Seed-0 chain, first run, started 2026-10-11, superseded.** `scripts/launch_paper_chain.py --seeds 0 --jobs 4` on the GH200. PID 247230. Log `results/paper/logs/chain_seed0.log`. Per-cell logs are `results/paper/logs/train/chain_<dataset>_<backbone>_seed0.log`. Val split, existing checkpoints, two big and two small at a time. Seed 1 is not in this command.
 - **Seed-0 cells.** CIFAR-10 and HAM10000 val cells (ResNet-50, n = 64) are in `results/paper/cells/`. Their CDEA rows were merged in after the Sinkhorn catch-up (`d271283`). Seed 1 is not trained.
 - **CDEA was not reproducible before `d010f02`.**
   - Two runs at the same method hash (`540acbe0`: `results/paper/cdea_rerun/` and `results/paper/cdea_stages/`) shared no identical row.
@@ -77,6 +94,24 @@ The default is unchanged until the user confirms adoption.
 - **Decision, 2026-10-11.** Evaluation-paper route (`G1.md`). There is no further formulation change.
 - **Labels.** Records under `results/paper/cdea_offset_seeds/` use the earlier `A10_boundary_shift*` labels.
 
+## Decomposition game, 2026-10-14
+
+The handoff `handoff10-13-26.md` was adopted with its recommendations. It is built on branch `feat/cdea-decomposition`, in the worktree `../gambit-decomp`, and is not merged, so the seed-0 chain's hash is untouched. Its PROGRESS entry and `FORMULATION_DECOMPOSITION.md` are on that branch. The fractional-mask test below is held.
+
+## Reopened, 2026-10-13: fractional-mask test, declared before it runs (held 2026-10-14)
+
+- By user decision, the method question is reopened for one test: fractional masks (A12) against binary CDEA. It runs on seed 1, val, ResNet-50, all 8 contrastive datasets, n = 200. The rule, the decision and the commands are in `G1.md`, "Reopened, 2026-10-13".
+- The read-out is `scripts/fractional_readout.py`.
+- **Not launched.** Before launch, the user signs off on how D2 is treated, and the section and script are committed.
+
+## Checkpoints, 2026-10-11
+
+The formulation in `cdea/` does not change the classifier. `train_model` is the same routine as at `cf07ac2`: Adam, cosine schedule, cross-entropy, best val balanced accuracy, 15 epochs. Contrastive datasets stay frozen linear probes at lr 1e-3. Shift datasets stay full fine-tunes at lr 1e-4. ColoredMNIST's color draw and the planted-patch geometry are the ones those checkpoints were trained on. Input convention is still `imagenet`.
+
+Seed 0 on this machine is complete: 22 checkpoints, both backbones, for the seven contrastive probes and the four shift fine-tunes. ImageNet uses the torchvision weights. Those files are reused. Seed 1 has the 14 contrastive probes only; its shift checkpoints are not trained.
+
+Retrain a cell only when that cell's training is the thing that failed. `--force-train` does that for the cells named on the command. It does not walk the rest of the seed.
+
 ## Next session: full run on the GH200
 
 **Before merging to `main`, 2026-10-11.**
@@ -93,9 +128,12 @@ The default is unchanged until the user confirms adoption.
 
 **On the GH200.**
 1. Pull `main`, then run `PYTHONPATH=. python -m pytest tests/`. `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism there.
-2. Launch with `scripts/launch_paper_eval.py`; its docstring has the usage.
+2. Launch seed 0 with `scripts/launch_paper_chain.py --seeds 0 --jobs 4`.
+   - Each cell trains its checkpoint only when the file is missing, then runs that checkpoint's games before the next dataset. Seed 0's checkpoints are already on disk, so this seed is the games.
+   - Stanford Dogs trains once, then runs contrastive and shift. ImageNet skips training.
+   - Four cells at a time, and the cap holds for the whole seed: two big (shift, either backbone, and contrastive ViT) and two small (contrastive ResNet). A failed cell starts nothing further. `--image-batch` trades memory for `--jobs` and does not change scores.
    - Done markers carry the code and knobs hashes, so cells written by older code run again.
-   - `--image-batch` trades memory for `--jobs` and does not change scores.
+   - Seed 1 starts only after seed 0 exits 0, and only if the command names it (`--seeds 0,1`). Shift seed 1 would train on that pass. Do not add seeds 1–4 until seed 0's games have finished and the user says to continue.
 
 The test split stays locked until `eval-plan-frozen`.
 
