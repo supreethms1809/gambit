@@ -7,7 +7,7 @@ import gzip
 
 import numpy as np
 
-from scripts.decomp_readout import _paired, _value, main
+from scripts.decomp_readout import _paired, _value, load, main, select_minsplit
 
 FIELDS = ["game", "dataset", "backbone", "seed", "split", "image_index", "method", "area", "operator",
           "pur_k", "pur_l", "sv", "cd", "bal", "sep", "fast", "method_code_hash", "knobs_hash",
@@ -66,3 +66,42 @@ def test_planted_cell_prints_rr_and_s_spill(tmp_path, capsys):
     assert "cdea_decomp - gradcam_minsplit" in out
     assert "RR 0.90 | 0.90" in out
     assert "S on A_k 0.10 | 0.10" in out and "S on A_l 0.20 | 0.20" in out
+
+
+def natural(scores: dict[str, float], n: int = 6, **values) -> list[dict]:
+    """``scores[method]`` sets that method's SV; PUR_k + PUR_l stays 2."""
+    return [record(method, i, sv=sv, **values) for method, sv in scores.items() for i in range(n)]
+
+
+def test_min_split_row_is_chosen_on_val_even_when_reading_test(tmp_path, capsys):
+    write_cell(tmp_path, "val", "cifar10", natural({"cdea_decomp": 1.0, "gradcam_minsplit": 0.0, "ig_minsplit": 0.5}))
+    write_cell(tmp_path, "test", "cifar10", natural({"cdea_decomp": 1.0, "gradcam_minsplit": 0.9, "ig_minsplit": 0.1}))
+    main(["--records", str(tmp_path), "--split", "test"])
+    out = capsys.readouterr().out
+    assert "cifar10 resnet50 by PUR + SV@0.05, ROAD: ig_minsplit" in out
+    assert "cdea_decomp - ig_minsplit (best min-split, chosen on val)" in out
+    assert "cdea_decomp - gradcam_minsplit" not in out
+
+
+def test_planted_min_split_row_is_chosen_by_rr_on_confirmed_images(tmp_path):
+    rows = []
+    for i in range(6):
+        rows.append(planted("gradcam_minsplit", i, 0.2, pur_k=9.0))
+        rows.append(planted("ig_minsplit", i, 0.6))
+        rows.append(planted("occlusion_minsplit", i, 0.1))
+    for i in range(6, 12):
+        rows.append(planted("occlusion_minsplit", i, 1.0, confirmed=False))
+        rows.append(planted("ig_minsplit", i, 0.0, confirmed=False))
+    write_cell(tmp_path, "val", "planted_pair", rows)
+    best, scores = select_minsplit(load(tmp_path, "val", None))[("planted_pair", "resnet50")]
+    assert best == "ig_minsplit"
+    assert np.isclose(scores["ig_minsplit"], 0.6)
+
+
+def test_fast_rows_and_partial_seeds_never_choose(tmp_path):
+    write_cell(tmp_path, "val", "cifar10", natural({"gradcam_minsplit": 0.0, "ig_minsplit": 5.0}, fast=1))
+    write_cell(tmp_path, "val", "ham10000", natural({"gradcam_minsplit": 0.0, "ig_minsplit": 5.0}))
+    write_cell(tmp_path, "val", "ham10000", natural({"gradcam_minsplit": 0.0}), seed=1)
+    selection = select_minsplit(load(tmp_path, "val", None))
+    assert ("cifar10", "resnet50") not in selection
+    assert selection[("ham10000", "resnet50")][0] == "gradcam_minsplit"
