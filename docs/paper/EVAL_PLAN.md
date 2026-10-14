@@ -84,7 +84,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 
 - **ResNet-50 is primary.** Families C and T use it. ViT-B/16 is the second-backbone robustness check.
 - **Contrastive datasets.** An ImageNet linear probe: frozen backbone with BN in eval mode, Adam, cosine schedule, lr 1e-3, 15 epochs. Selection is by val balanced accuracy. Seeds 0–4.
-- **Two-cue classifiers.** The planted-patch CIFAR-10 classifiers: a full fine-tune at lr 1e-4, trained with one class-tied hue patch and one class-neutral checker per image (`instantiations/shift/planted_patch.py`).
+- **Two-cue classifiers.** The planted-patch CIFAR-10 classifiers: a full fine-tune at lr 1e-4, trained with one class-tied hue patch and one class-neutral checker per image (`evaluation/planted_cues.py`).
   - Seeds 0–4 are needed.
   - Seed 0 exists from the shift training.
   - Seeds 1–4 are a family T prerequisite (section 12).
