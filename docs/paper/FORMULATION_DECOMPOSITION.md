@@ -1,6 +1,6 @@
 # CDEA decomposition formulation
 
-**Status.** This is the method. Implemented in `cdea/decompose.py`, `cdea/null.py` and `cdea/_plan.py`, and merged to `main` on 2026-10-14. Development runs on val are in progress (`PROGRESS.md`). The test split has not been read. The evaluation is `EVAL_PLAN.md` section 13; its win conditions need the user's sign-off before the tag `decomp-declared`.
+**Status.** This is the method. Implemented in `cdea/decompose.py`, `cdea/null.py` and `cdea/_plan.py`, and merged to `main` on 2026-10-14. Development runs on val are in progress (`PROGRESS.md`). The test split has not been read. The evaluation is `EVAL_PLAN.md` section 13. Its win conditions were signed off on 2026-10-14 (tag `decomp-declared`).
 
 The contrast game (`FORMULATION.md`) stays in the code unchanged and becomes ablation DA2.
 
@@ -189,7 +189,7 @@ Records hold the raw 3×2 matrix, the scorer's null, every score, and the patch 
 | 5 | Trapped support | No recommendation was given. Taken: keep ε = 1e-6, and report D9 and the outside-prior share. It adds no constant, and the 2026-10-13 diagnostic found trapping minor (CIFAR-10) to absent (ImageNet) |
 | 6 | Masks | Binary draws by default. DA6 (fractional) is reported |
 | 7 | Planted pairs | No recommendation was given. Three pairs are implemented (cat/dog, automobile/truck, deer/horse), with grid placement. Training was approved on 2026-10-14 (`PROGRESS.md`) |
-| 8 | Win conditions and non-inferiority margin | No recommendation was given. Drafted in `EVAL_PLAN.md` section 13, **for sign-off** |
+| 8 | Win conditions and non-inferiority margin | No recommendation was given. Drafted in `EVAL_PLAN.md` section 13, and signed off by the user on 2026-10-14 as drafted |
 | 9 | The old CDEA and CD | The old CDEA is ablation DA2. CD is reported as SPEC_k + SPEC_l. Neither is the headline |
 
 ## 9. Implementation choices, and properties found while implementing

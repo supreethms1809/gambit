@@ -28,4 +28,4 @@ The method is the decomposition game (`FORMULATION_DECOMPOSITION.md`). It splits
 - The robustness checks: the blur operator, the other areas, ViT-B/16, and every image beside the role-confirmed images.
 - Deletion and insertion AUC, compactness and stability. They are exploratory and labelled as such.
 
-This draft does not contain results. `docs/paper/EVAL_PLAN.md` is not frozen, and its section 13.4 is not signed off.
+This draft does not contain results. `docs/paper/EVAL_PLAN.md` is not frozen. Its section 13.4 was signed off on 2026-10-14.
