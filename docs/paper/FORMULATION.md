@@ -1,22 +1,10 @@
 # CDEA formulation
 
-**Status.** Implemented in `cdea/`. Since 2026-10-14 the proposed method is the decomposition game (`FORMULATION_DECOMPOSITION.md`); this contrast game is its ablation DA2. It replaces the earlier formulation (tag `framing-v1`). Ablation A8 scores precomputed maps from that tag. `EVAL_PLAN.md` evaluates this formulation. `EQUATION_AUDIT.md` maps each equation to the code.
+**Status.** Implemented in `cdea/`. This is the contrast game. Since 2026-10-14 it is ablation DA2 of the decomposition game (`FORMULATION_DECOMPOSITION.md`), which is the method. The decomposition reuses this file's setting (section 2), deletion (section 4.1), constraints (section 5) and optimisation machinery (section 7). Ablation A8 scores precomputed maps from the earlier formulation (tag `framing-v1`).
 
-## 1. Why the earlier formulation (tag `framing-v1`) is replaced
+## 1. Design rules
 
-The earlier-formulation val read: seed 0, all 8 contrastive datasets, both backbones, n = 64 per cell, read 2026-10-09.
-
-- **Result.** The earlier formulation (tag `framing-v1`) trailed the better margin-attribution variant on CD@5% in all 16 cells. The 95% interval was below zero in 13 of them.
-- **Measurement caveat.** 15 of those 16 CDEA rows carry the chunk-scale bug fixed in PR #28. The diagnosis below does not rest on those rows alone.
-
-| Cause | Measurement |
-|---|---|
-| The sufficiency term rewards evidence the classes share | Removing CDEA's foil mask drops z_k by about as much as removing per-class Grad-CAM's does. CIFAR-100 ResNet-50: CDEA 5.68, per-class Grad-CAM 4.52, margin Grad-CAM 3.63. ImageNet: 2.03, 2.04, 0.45. These numbers come from the seed-0 records. |
-| The masks cannot leave their initial support | The hard projection `(logits − τ).clamp(0, 1)` uses a detached τ, so it gives zero gradient to any unit pinned at 0. 96% of the final rank-0 support, and 81% of the rank-1 support, lay inside the support of the initial evidence. Measured on 16 Oxford Pets images with the ImageNet ResNet-50, 50 steps, on `main`, without chunking. |
-| The split between shared and unique evidence is defined only by penalties | The earlier formulation (tag `framing-v1`) has seven loss weights: λ_suff, λ_margin, λ_sparse, λ_overlap, λ_mass, λ_shared_sparse and λ_partition. Each was added to close a degenerate route. No single quantity defines "shared" or "unique". |
-| A mask depends on how many images share the batch | The loss is a batch mean, and Adam's ε makes its scale visible. |
-
-this formulation follows four design rules:
+This formulation and the decomposition game follow four rules:
 1. Each quantity has one definition, derived from the question.
 2. Constraints replace penalties.
 3. There are no loss weights.
@@ -75,7 +63,7 @@ Each payoff of section 4 becomes its expectation over offsets:
 
 **Optimisation.** One offset per player per step, drawn from a generator with a fixed seed that does not see the batch. Every image in a step uses the same offsets, so an image's allocation still does not depend on n or on chunking. Cost per step is unchanged.
 
-**Status.** Adopted by user decision on 2026-10-11. The payoffs CDEA optimises are the section-4 payoffs in this boundary-robust form. It was the one formulation change tested after the seed-0 read. `G1.md` records it as a declared departure from the stop rule, with its read-out fixed before it ran. It met that read-out with each of three offset seeds while the plan was still fractional. With the binary draws of section 7, it no longer does (`G1.md`). The fixed-boundary payoff is ablation A10, and the draw seed is ablation A11.
+**Status.** Adopted by user decision on 2026-10-11. The contrast game optimises the section-4 payoffs in this boundary-robust form. The decomposition game deletes with the same offsets (`FORMULATION_DECOMPOSITION.md` section 3.1). The fixed-boundary payoff is ablation A10, and the draw seed is ablation A11.
 
 ## 5. Constraints
 
@@ -130,7 +118,7 @@ The word "game" means what it means here and nothing more: players with their ow
 | Boundary offset s (section 4.1) | ⌊½ unit side⌋ | Fixed |
 | Draw seed (offsets of section 4.1 and binary draws of section 7) | 0 | Fixed. Seeds 1 and 2 are ablation A11 |
 
-The default for the G1 gate is: Grad-CAM initialisation on ResNet-50, T = 100, η = 0.1, with the boundary-robust payoff of section 4.1.
+The default configuration is: Grad-CAM initialisation on ResNet-50, T = 100, η = 0.1, with the boundary-robust payoff of section 4.1.
 
 ## 9. Relation to the baselines
 
@@ -148,18 +136,9 @@ The default for the G1 gate is: Grad-CAM initialisation on ResNet-50, T = 100, �
 - **CVE and SC-CVE.** They replace query cells with distractor cells in feature space, which is a counterfactual edit rather than a deletion. Their maps are one-sided.
 - **SCOUT.** Not run. The reason is in `BASELINES.md`.
 
-## 10. What earlier terms became
+## 10. Relation to the earlier formulation
 
-| earlier term | this formulation |
-|---|---|
-| λ_suff · z_k under keep | Removed. It answers "why k", not "rather than", and it is the measured source of the leak of shared evidence |
-| λ_margin · keep margin against the strongest foil | Payoff u_k: the deletion log-odds within H |
-| λ_overlap, λ_partition | The unit marginal (exclusivity) |
-| λ_sparse, λ_mass, the hard 1-cell budget | The budget marginal at the scored area |
-| Shared mask + λ_shared_sparse | Shared player S, with payoff from s_H |
-| Hard top-mass projection | Sinkhorn projection (A6 keeps the old projection as an ablation) |
-| Presets (cooperative / mixed / competitive), interaction modules | Retired. They were weight presets, and this formulation has no weights |
-| Batch-mean loss | Per-image sum |
+The earlier formulation (tag `framing-v1`) had seven loss weights, each added to close a degenerate route. This formulation replaces them with the payoffs of section 4 and the constraints of section 5. Ablation A8 scores the earlier formulation's maps, and ablation A6 keeps its hard top-mass projection.
 
 ## 11. Degenerate routes
 
@@ -175,15 +154,11 @@ The final allocation entropy is reported, to show how sharp the allocations are.
 
 ## 12. What this formulation supports
 
-- **Supports:**
-  - necessity of the contrast (claim C1);
-  - alignment of that evidence with annotated discriminative structure and planted cues (C2, C3), tested against methods that do not optimise those metrics;
-  - a decomposition into shared and unique evidence whose parts are defined by the chain rule and checked on the model (C4).
-- **Does not support:**
-  - sufficiency (not optimised; measured);
-  - localisation;
-  - equilibrium or convergence properties;
-  - usefulness to people.
+As ablation DA2, the contrast game is reported, not tested:
+- CD (its claim C1) is reported as SPEC_k + SPEC_l for every method (`EVAL_PLAN.md` 13.1);
+- its claims C2–C5 are descriptive rows (`EVAL_PLAN.md` section 1).
+
+It does not support sufficiency (not optimised; measured), localisation, equilibrium or convergence properties, or usefulness to people.
 
 ## Inherited defaults
 
@@ -205,4 +180,3 @@ Decided before the code. Nothing in this list is inherited silently from the ear
 
 - **Code:** `cdea/payoffs.py`, `cdea/sinkhorn.py`, `cdea/allocation.py`, `cdea/first_order.py`. Records go to `results/paper/cells/`. Ablation A8 reads precomputed maps.
 - **Tests:** `tests/test_method.py` covers the list above.
-- **Docs:** `EQUATION_AUDIT.md` maps each equation to that code.

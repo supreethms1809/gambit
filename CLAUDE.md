@@ -6,7 +6,7 @@ Guidance for Claude Code in this repository.
 
 **GAMBIT** — Game theoretic Allocation for Model Based Interpretability and Trust.
 
-CDEA allocates evidence across competing hypotheses. The method lives in `cdea/` and is specified by `docs/paper/FORMULATION.md`. Write that package from the formulation. Do not copy the earlier method. It lives only on tag `framing-v1`.
+CDEA splits one pair's evidence into unique to k, unique to l, and shared. The method lives in `cdea/`. It is specified by `docs/paper/FORMULATION_DECOMPOSITION.md`. The contrast game, its ablation DA2, is `docs/paper/FORMULATION.md`. The evaluation is `docs/paper/EVAL_PLAN.md`, headed by section 13. Write that package from the formulations. Do not copy the earlier method. It lives only on tag `framing-v1`.
 
 ## Environment
 
@@ -26,7 +26,7 @@ Records go to `results/paper/cells/`. A record counts only when its `method_code
 
 ## Layout
 
-`cdea/` is the method (`payoffs`, `sinkhorn`, `allocation`, `first_order`, `shift`). It imports `torch`, `core`, and `base_evidence` only. Shift payoffs are specified by `docs/paper/SHIFT_FORMULATION.md`.
+`cdea/` is the method (`decompose`, `null`, `_plan`, `payoffs`, `sinkhorn`, `allocation`, `first_order`, `shift`). It imports `torch`, `core`, and `base_evidence` only. Shift payoffs are specified by `docs/paper/SHIFT_FORMULATION.md`.
 
 `core/` holds types, hypotheses, eval mode, device, reporting, and `grid.py` (the hard unit indicator and the one deletion baseline).
 
