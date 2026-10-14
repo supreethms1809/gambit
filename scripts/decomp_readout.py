@@ -3,8 +3,11 @@
 For each cell, area and operator: every method's mean scores, and the paired
 difference of CDEA (or another label) against the best min-split row and
 against occlusion_assign, with 95% bootstrap intervals over images. On planted
-pairs it adds the patch masses: S on C, U_k on A_k, U_l on A_l, over all kept
-images and over images whose three roles were confirmed by intervention.
+pairs it adds RR (EVAL_PLAN.md 13.2: each player's recall of its own patch,
+averaged over U_k, U_l and S) and the patch masses, including S on A_k and S on
+A_l (S spilling onto the unique patches). Both are shown over every kept image
+and over images whose three roles were confirmed by intervention, which is
+RR's primary set.
 
 This prints numbers. The win conditions are in EVAL_PLAN.md section 13 and
 are applied there, not here.
@@ -32,14 +35,25 @@ from analysis.stats import bootstrap_mean_ci  # noqa: E402
 
 SCORES = ("pur", "sv", "cd", "bal", "sep")
 MINSPLIT = ("gradcam_minsplit", "ig_minsplit", "occlusion_minsplit", "rise_minsplit", "extremal_minsplit")
-PATCH_MASS = (("prec_s_c", "S on C"), ("prec_uk_ak", "U_k on A_k"), ("prec_ul_al", "U_l on A_l"))
+PLANTED = "planted_pair"
+OWN_RECALL = ("rec_uk_ak", "rec_ul_al", "rec_s_c")
+ROLES = ("ak", "al", "c")
+PATCH_MASS = (("prec_s_c", "S on C"), ("prec_uk_ak", "U_k on A_k"), ("prec_ul_al", "U_l on A_l"),
+              ("prec_s_ak", "S on A_k"), ("prec_s_al", "S on A_l"))
 
 
 def _value(row: dict, key: str) -> float:
     if key == "pur":
         return float(row["pur_k"]) + float(row["pur_l"])
+    if key == "rr":
+        return float(np.mean([_value(row, name) for name in OWN_RECALL]))
     raw = row.get(key, "")
     return float(raw) if raw not in ("", None) else float("nan")
+
+
+def _confirmed(row: dict) -> bool:
+    """All three planted roles confirmed by ``verify_roles``."""
+    return all(row.get(f"role_{t}") == "1" for t in ROLES)
 
 
 def load(root: Path, split: str, expect_hash: str | None) -> dict:
@@ -54,10 +68,18 @@ def load(root: Path, split: str, expect_hash: str | None) -> dict:
     return cells
 
 
-def _paired(a: dict, b: dict, key: str) -> np.ndarray:
+def _paired(a: dict, b: dict, key: str, confirmed_only: bool = False) -> np.ndarray:
     common = sorted(set(a) & set(b))
+    if confirmed_only:
+        common = [i for i in common if _confirmed(a[i])]
     diff = np.array([_value(a[i], key) - _value(b[i], key) for i in common], dtype=float)
     return diff[np.isfinite(diff)]
+
+
+def _mean(rows, key: str) -> str:
+    values = np.array([_value(r, key) for r in rows], dtype=float)
+    values = values[np.isfinite(values)]
+    return f"{values.mean():.2f}" if values.size else "n/a"
 
 
 def _fmt(values: np.ndarray) -> str:
@@ -67,8 +89,18 @@ def _fmt(values: np.ndarray) -> str:
     return f"{values.mean():+.2f} [{low:+.2f}, {high:+.2f}] n={values.size}"
 
 
+def _compare(methods: dict, cdea: str, other: str, title: str, planted: bool) -> None:
+    print(f"  {cdea} - {other} ({title}):")
+    if planted:
+        print(f"    rr   {_fmt(_paired(methods[cdea], methods[other], 'rr', confirmed_only=True))}  roles confirmed")
+        print(f"    rr   {_fmt(_paired(methods[cdea], methods[other], 'rr'))}  every image")
+    for score in ("pur", "sv"):
+        print(f"    {score:4s} {_fmt(_paired(methods[cdea], methods[other], score))}")
+
+
 def report(cells: dict, cdea: str) -> None:
     for (dataset, backbone, seed, area, operator), methods in sorted(cells.items()):
+        planted = dataset == PLANTED
         print(f"\n{dataset} {backbone} seed{seed}  area {area:g}  {operator}")
         print(f"  {'method':34s}" + "".join(f"{s:>8s}" for s in SCORES) + "     n")
         for method, rows in sorted(methods.items()):
@@ -83,26 +115,16 @@ def report(cells: dict, cdea: str) -> None:
         present = [m for m in MINSPLIT if m in methods]
         if present:
             best = max(present, key=lambda m: np.nanmean([_value(r, "pur") for r in methods[m].values()]))
-            print(f"  {cdea} - {best} (best min-split on PUR_k + PUR_l):")
-            for score in ("pur", "sv"):
-                print(f"    {score:4s} {_fmt(_paired(methods[cdea], methods[best], score))}")
+            _compare(methods, cdea, best, "best min-split on PUR_k + PUR_l", planted)
         if "occlusion_assign" in methods:
-            print(f"  {cdea} - occlusion_assign:")
-            for score in ("pur", "sv"):
-                print(f"    {score:4s} {_fmt(_paired(methods[cdea], methods['occlusion_assign'], score))}")
-        first = next(iter(methods[cdea].values()))
-        if "prec_s_c" in first:
-            print("  planted patch mass (all kept images | images with all three roles confirmed):")
+            _compare(methods, cdea, "occlusion_assign", "additive per-cell assignment", planted)
+        if planted:
+            print("  RR and patch mass (every kept image | images with all three roles confirmed):")
             for method, rows in sorted(methods.items()):
-                parts = []
-                for key, label in PATCH_MASS:
-                    every = np.array([_value(r, key) for r in rows.values()], dtype=float)
-                    confirmed = np.array([_value(r, key) for r in rows.values()
-                                          if all(r.get(f"role_{t}") == "1" for t in ("ak", "al", "c"))], dtype=float)
-                    every, confirmed = every[np.isfinite(every)], confirmed[np.isfinite(confirmed)]
-                    tail = f"{confirmed.mean():.2f}" if confirmed.size else "n/a"
-                    head = f"{every.mean():.2f}" if every.size else "n/a"
-                    parts.append(f"{label} {head} | {tail}")
+                every = list(rows.values())
+                confirmed = [r for r in every if _confirmed(r)]
+                parts = [f"{label} {_mean(every, key)} | {_mean(confirmed, key)}"
+                         for key, label in (("rr", "RR"),) + PATCH_MASS]
                 print(f"    {method:32s} " + "   ".join(parts))
 
 
