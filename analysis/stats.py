@@ -1,16 +1,26 @@
-"""Dataset-level confirmatory statistics.
+"""Confirmatory statistics.
 
-The unit is a dataset. Wilcoxon and Holm are the family test. The bootstrap
-interval is over datasets. Per-image tests stay in ``evaluation.metrics.paired``
-and are descriptive.
+Family C: the unit is a dataset. Wilcoxon and Holm are the family test. The
+bootstrap interval is over datasets.
+
+Families T and D-T: the unit is the image, with seeds pooled. The statistic is
+the mean over seeds of each seed's mean paired difference. The test flips signs
+within each seed. The interval resamples seeds, then images within each seed.
+
+The per-image tests in ``evaluation.metrics.paired`` stay descriptive.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
+
+PerSeed = Mapping[int, Sequence[float]] | Sequence[Sequence[float]]
+
+# Resamples drawn per block, to bound memory on large seeds.
+_BLOCK = 1000
 
 
 def _average_ranks(values: np.ndarray) -> np.ndarray:
@@ -148,5 +158,120 @@ def family_summary(
         )
         p_values.append(test["p"])
     for row, adjusted in zip(rows, holm_adjust(p_values)):
+        row["p_holm"] = adjusted
+    return rows
+
+
+def _seed_samples(differences: PerSeed) -> list[np.ndarray]:
+    """Per-seed arrays of paired differences. A mapping is read in seed order."""
+    if isinstance(differences, Mapping):
+        groups = [differences[key] for key in sorted(differences)]
+    else:
+        groups = list(differences)
+    if not groups:
+        raise ValueError("differences need at least one seed")
+    samples = []
+    for group in groups:
+        sample = np.asarray(group, dtype=np.float64)
+        if sample.ndim != 1 or sample.size < 1:
+            raise ValueError("each seed needs a non-empty one-dimensional list")
+        if not np.isfinite(sample).all():
+            raise ValueError("differences must be finite")
+        samples.append(sample)
+    return samples
+
+
+def sign_flip_test(differences: PerSeed, n_perm: int = 10_000, seed: int = 0) -> dict[str, float]:
+    """Two-sided sign-flip permutation test, flipping within each seed.
+
+    The statistic is the mean over seeds of each seed's mean difference, so
+    every seed counts equally. Each permutation flips every image's sign at
+    random and recomputes the statistic with the same seeds. The p-value is
+    (1 + the permutations at least as extreme) / (1 + n_perm).
+    """
+    samples = _seed_samples(differences)
+    if n_perm < 1:
+        raise ValueError("n_perm must be >= 1")
+    n_perm = int(n_perm)
+    observed = sum(float(sample.mean()) for sample in samples) / len(samples)
+    generator = np.random.default_rng(int(seed))
+    null = np.zeros(n_perm, dtype=np.float64)
+    for sample in samples:
+        total = float(sample.sum())
+        for start in range(0, n_perm, _BLOCK):
+            stop = min(start + _BLOCK, n_perm)
+            flips = generator.random((stop - start, sample.size)) < 0.5
+            flipped = np.where(flips, sample, 0.0).sum(axis=1)
+            null[start:stop] += (total - 2.0 * flipped) / sample.size
+    null /= len(samples)
+    # Ties within rounding count as extreme.
+    slack = 1e-9 * max(float(np.abs(sample).max()) for sample in samples)
+    extreme = int(np.count_nonzero(np.abs(null) >= abs(observed) - slack))
+    return {
+        "statistic": observed,
+        "p": (1.0 + extreme) / (1.0 + n_perm),
+        "n": float(sum(sample.size for sample in samples)),
+        "seeds": float(len(samples)),
+    }
+
+
+def two_level_bootstrap_ci(
+    differences: PerSeed,
+    n_boot: int = 10_000,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> tuple[float, float]:
+    """Percentile interval for the mean over seeds of each seed's mean.
+
+    Each resample draws the seeds with replacement, then draws the images of
+    each drawn seed with replacement. A seed drawn twice is resampled twice.
+    """
+    samples = _seed_samples(differences)
+    if n_boot < 1:
+        raise ValueError("n_boot must be >= 1")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    generator = np.random.default_rng(int(seed))
+    picks = generator.integers(0, len(samples), size=(int(n_boot), len(samples)))
+    slot_means = np.empty(picks.shape, dtype=np.float64)
+    for index, sample in enumerate(samples):
+        rows, cols = np.nonzero(picks == index)
+        for start in range(0, rows.size, _BLOCK):
+            stop = min(start + _BLOCK, rows.size)
+            draws = generator.integers(0, sample.size, size=(stop - start, sample.size))
+            slot_means[rows[start:stop], cols[start:stop]] = sample[draws].mean(axis=1)
+    statistics = slot_means.mean(axis=1)
+    low, high = np.quantile(statistics, [alpha / 2.0, 1.0 - alpha / 2.0], method="linear")
+    return float(low), float(high)
+
+
+def seed_pooled_summary(
+    comparisons: dict[str, PerSeed],
+    seed: int = 0,
+    n_perm: int = 10_000,
+    n_boot: int = 10_000,
+) -> list[dict[str, float | str]]:
+    """Mean, two-level interval, and Holm-adjusted sign-flip p (families T, D-T).
+
+    Each value holds one comparison's per-image paired differences by seed.
+    """
+    if not comparisons:
+        raise ValueError("a family needs at least one comparison")
+    rows: list[dict[str, float | str]] = []
+    for name, differences in comparisons.items():
+        test = sign_flip_test(differences, n_perm=n_perm, seed=seed)
+        low, high = two_level_bootstrap_ci(differences, n_boot=n_boot, seed=seed)
+        rows.append(
+            {
+                "name": name,
+                "n": test["n"],
+                "seeds": test["seeds"],
+                "mean": test["statistic"],
+                "ci_low": low,
+                "ci_high": high,
+                "p": test["p"],
+            }
+        )
+    for row, adjusted in zip(rows, holm_adjust([float(row["p"]) for row in rows])):
         row["p_holm"] = adjusted
     return rows
