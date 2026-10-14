@@ -469,7 +469,7 @@ Reported with intervals, untested:
   - the statistic is the mean over seeds of the per-seed mean paired difference;
   - the test is a sign-flip permutation within seed (10,000 permutations, seed 0);
   - the interval is a two-level bootstrap (10,000 resamples, seed 0).
-  - **Not implemented yet.** Section 7 defines this test and section 10 lists it as new code in `analysis/stats.py`, but no code in the repo runs it. `analysis/stats.py` has the Wilcoxon, Holm and one-level bootstrap only, which cover family D-C. The test is written and tested before any confirmatory planted run, and families T and D-T use the same code.
+  - **Implemented** in `analysis/stats.py` (`sign_flip_test`, `two_level_bootstrap_ci`, `seed_pooled_summary`) and tested in `tests/test_stats.py`. Families T and D-T use the same code. `scripts/decomp_readout.py` does not call it yet.
 
   **D1 holds** if p < 0.05 and the mean is above 0.
 - **Family D-C** (natural, ResNet-50). Each dataset is the unit, averaged over seeds. Two-sided exact Wilcoxon over the 8 datasets, with Holm over 2 comparisons: CDEA − the best min-split row on PUR, and the same on SV.
