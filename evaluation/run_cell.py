@@ -564,7 +564,8 @@ DECOMP_PATCHES = ("ak", "al", "c")
 
 
 def _decomp_runs(spec: CellSpec) -> list[tuple[str, Optional[str]]]:
-    return [(m, None) for m in spec.methods] + [("cdea_decomp", a) for a in spec.ablations]
+    runs = [(m, None) for m in spec.methods] + [("cdea_decomp", a) for a in spec.ablations]
+    return runs + [("cdea_decomp", c) for c in spec.candidates]
 
 
 def _decomp_area_dependent(method: str, ablation: Optional[str]) -> bool:
@@ -574,11 +575,13 @@ def _decomp_area_dependent(method: str, ablation: Optional[str]) -> bool:
 
 
 def _decomp_maps(spec, model, x, h, method, ablation, area, knobs, device):
-    from evaluation.run_methods import DECOMP_ABLATIONS, DecompConfig, decomposition_method
+    from evaluation.run_methods import DECOMP_ABLATIONS, DECOMP_CANDIDATES, DecompConfig, decomposition_method
 
     fn = decomposition_method(method)
     kwargs = {}
-    if ablation is not None:
+    if ablation in DECOMP_CANDIDATES:
+        kwargs["cfg"] = DECOMP_CANDIDATES[ablation]
+    elif ablation is not None:
         kwargs["cfg"] = DECOMP_ABLATIONS[ablation](DecompConfig())
     if _decomp_area_dependent(method, ablation):
         kwargs["area"] = area
@@ -610,7 +613,7 @@ def run_decomposition(spec: CellSpec, device) -> Path:
     knob_hash = knobs_hash(spec.knobs)
 
     for method, ablation in _decomp_runs(spec):
-        label = method if ablation is None else f"{method}:{ablation}"
+        label = method if ablation is None else (ablation if "@" in ablation else f"{method}:{ablation}")
         areas = spec.areas if _decomp_area_dependent(method, ablation) else (None,)
         ranges = _ranges(n, 0 if method in DECOMP_WHOLE_SAMPLE else spec.image_batch)
         for area_for_map in areas:

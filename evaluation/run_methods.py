@@ -972,6 +972,13 @@ def random_decomp(model, x, h, backbone, knobs, device, seed: int = 0) -> Decomp
     return DecompMaps(k=per[:, 0], l=per[:, 1], shared=per[:, 2], grid=(gh, gw))
 
 
+# Val selection grid for decomposition CDEA (EVAL_PLAN.md section 13.3).
+DECOMP_CANDIDATES: dict[str, DecompConfig] = {
+    f"cdea_decomp@lr{lr:g}_t{steps}": DecompConfig(lr=lr, steps=steps)
+    for steps in (50, 100) for lr in (0.05, 0.2)
+}
+
+
 DECOMP_CORE = ("cdea_decomp", "gradcam_minsplit", "ig_minsplit", "occlusion_minsplit", "occlusion_assign",
                "margin_gradcam_ref", "random_decomp")
 DECOMP_EXTENDED = ("rise_minsplit", "extremal_minsplit")

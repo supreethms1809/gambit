@@ -29,6 +29,7 @@ from evaluation.run_methods import (  # noqa: E402
     CONTRASTIVE_CORE,
     CONTRASTIVE_EXTENDED,
     DECOMP_ABLATIONS,
+    DECOMP_CANDIDATES,
     DECOMP_CORE,
     DECOMP_EXTENDED,
     FAST,
@@ -92,13 +93,14 @@ def spec_from_args(args):
     elif args.game == "decomposition":
         methods = _list(args.methods, DECOMP_CORE + DECOMP_EXTENDED, DECOMP_CORE)
         ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
-        candidates = []
+        candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
     else:
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
     operators = tuple(o.strip() for o in args.operators.split(","))
-    candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
+    if args.game != "decomposition":
+        candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.backbone != "resnet50":
         for resnet_only in ("cve", "sc_cve"):
             if resnet_only in methods:
