@@ -378,7 +378,7 @@ Confounds are stated per row: forward passes, number of masks, and K.
     - the scorers for SC, DPC, TCS, K×K and SV;
     - the two-cue builder;
     - the stratified permutation test and the two-level bootstrap in `analysis/stats.py`.
-  - Run instructions are in `docs/paper/SPARK_RUNBOOK.md`.
+  - The order of the runs and their commands are in `docs/paper/PROGRESS.md`.
 
 ## 11. Gates this plan depends on
 - **G0.** The entry rule in `docs/paper/G0.md`. Every Core baseline has:
