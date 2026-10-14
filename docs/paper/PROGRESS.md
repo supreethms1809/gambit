@@ -23,7 +23,7 @@ On the GH200:
 
 ## Current state, 2026-10-14
 
-- **Code.** `main` at `62aecf6`, method hash `a5deb9fe`.
+- **Code.** `main`'s code is as of `62aecf6`, method hash `a5deb9fe`; later commits on 2026-10-14 changed docs only.
   - On `main`: the decomposition method, its runner (`paper_run.py --game decomposition`) and the planted-pair dataset with `verify_roles`.
   - Also on `main`: `scripts/decomp_readout.py` (RR, val-only selection, the candidate ranking and family D-T statistics) and D2/D8/D9 in `scripts/check_degenerate.py`.
 - **Tags.** `framing-v1` and `decomp-declared` (on `80caf2a`) exist. `eval-plan-frozen`, `g0-baselines` and `final-runs` do not.
