@@ -8,7 +8,7 @@ Final runs are not complete. The final-runs tag was not created. No grid was lau
 
 The contrastive manifest names eight datasets, including ImageNet-S. ImageNet-S is still blocked on ImageNet-1k. The shift manifest is the six datasets from S21. The ablation manifest is A1–A8 plus the paired and unpaired mass-target rows. None of those cells has a done marker.
 
-`docs/paper/EVAL_PLAN.md` is a draft, and its section 13 is not declared (tag `decomp-declared`). The test split was not read. `--final` stays refused.
+`docs/paper/EVAL_PLAN.md` is a draft. Its section 13 is declared (tag `decomp-declared`), but the plan is not frozen. The test split was not read. `--final` stays refused.
 
 ## What a finished record has to satisfy
 

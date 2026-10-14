@@ -46,7 +46,7 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
   - the planted-pair dataset and its role check.
   - The toys pass, including the interaction toy: the joint search finds redundant evidence that single-cell occlusion misses.
 - **Worktree.** Built in `../gambit-decomp` and merged to `main` on 2026-10-14. The merge changes the method hash, so the seed-0 chain records (`9d84e7f2`) no longer match `main`.
-- **Still needs the user.** Sign off the win conditions (`EVAL_PLAN.md` 13.4), then tag `decomp-declared`. Planted-pair training was approved and the dev runs were started before sign-off (see Running).
+- **Signed off, 2026-10-14.** The user signed off the win conditions (`EVAL_PLAN.md` 13.4) as drafted. The merge that records it is tagged `decomp-declared`. Planted-pair training was approved and the dev runs were started before sign-off (see Running).
 - **Fractional-mask test on seed 1** (`G1.md`, reopened 2026-10-13): held, by the same decision. It was never launched.
 
 ## G1 declared read-out, 2026-10-11 (seed 0 only)
