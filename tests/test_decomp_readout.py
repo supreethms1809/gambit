@@ -7,7 +7,7 @@ import gzip
 
 import numpy as np
 
-from scripts.decomp_readout import _paired, _value, load, main, select_minsplit
+from scripts.decomp_readout import _paired, _value, load, main, rank_candidates, select_minsplit
 
 FIELDS = ["game", "dataset", "backbone", "seed", "split", "image_index", "method", "area", "operator",
           "pur_k", "pur_l", "sv", "cd", "bal", "sep", "fast", "method_code_hash", "knobs_hash",
@@ -105,3 +105,18 @@ def test_fast_rows_and_partial_seeds_never_choose(tmp_path):
     selection = select_minsplit(load(tmp_path, "val", None))
     assert ("cifar10", "resnet50") not in selection
     assert selection[("ham10000", "resnet50")][0] == "gradcam_minsplit"
+
+
+def test_candidates_rank_by_pur_plus_sv_with_each_dev_dataset_counted_once(tmp_path, capsys):
+    t50, t100, partial = "cdea_decomp@lr0.05_t50", "cdea_decomp@lr0.2_t100", "cdea_decomp@lr0.2_t50"
+    # Pooled over images t50 would win (3.64 vs 3.0); averaged over datasets t100 wins (3.0 vs 2.0).
+    write_cell(tmp_path, "val", "cifar10", natural({t50: -2.0, t100: 1.0, partial: 9.0}))
+    write_cell(tmp_path, "val", "ham10000", natural({t100: 1.0}) + natural({t50: 2.0}, n=60))
+    ranked = rank_candidates(load(tmp_path, "val", None))
+    assert [label for label, _, _ in ranked[:2]] == [t100, t50]
+    assert np.isclose(ranked[0][1], 3.0) and np.isclose(ranked[1][1], 2.0)
+    assert {label for label, score, _ in ranked if score is None} == {partial, "cdea_decomp@lr0.05_t100"}
+    main(["--records", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert f"chosen: {t100}" in out
+    assert "not ranked, missing ham10000" in out

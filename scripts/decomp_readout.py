@@ -2,16 +2,19 @@
 
 For each cell, area and operator: every method's mean scores, and the paired
 difference of CDEA (or another label) against the best min-split row and
-against occlusion_assign, with 95% bootstrap intervals over images.
-
-The best min-split row is chosen on val records only (EVAL_PLAN.md 13.3),
-whatever ``--split`` is: per dataset and backbone by mean PUR + SV at 5% under
-ROAD, and on planted pairs by RR at 2.5% on role-confirmed images. On planted
+against occlusion_assign, with 95% bootstrap intervals over images. On planted
 pairs it adds RR (EVAL_PLAN.md 13.2: each player's recall of its own patch,
 averaged over U_k, U_l and S) and the patch masses, including S on A_k and S on
 A_l (S spilling onto the unique patches). Both are shown over every kept image
 and over images whose three roles were confirmed by intervention, which is
 RR's primary set.
+
+Both choices of EVAL_PLAN.md 13.3 read val records only, whatever ``--split``
+is, and fast-knob rows inform neither:
+- the best min-split row, per dataset and backbone, by mean PUR + SV at 5%
+  under ROAD, and on planted pairs by RR at 2.5% on role-confirmed images;
+- CDEA's setting, over the ``cdea_decomp@...`` candidates, by mean PUR + SV at
+  5% under ROAD averaged over CIFAR-10 and HAM10000 (ResNet-50, seed 0).
 
 This prints numbers. The win conditions are in EVAL_PLAN.md section 13 and
 are applied there, not here.
@@ -43,6 +46,9 @@ PLANTED = "planted_pair"
 SELECT_OPERATOR = "road"
 SELECT_AREA = 0.05       # natural images: PUR + SV
 RR_AREA = 0.025          # planted pairs: RR, role-confirmed images
+DEV = ("cifar10", "ham10000")
+DEV_BACKBONE = "resnet50"
+DEV_SEED = 0
 OWN_RECALL = ("rec_uk_ak", "rec_ul_al", "rec_s_c")
 ROLES = ("ak", "al", "c")
 PATCH_MASS = (("prec_s_c", "S on C"), ("prec_uk_ak", "U_k on A_k"), ("prec_ul_al", "U_l on A_l"),
@@ -134,6 +140,42 @@ def print_selection(selection: dict) -> None:
         print(f"  {dataset} {backbone} by {rule}: {best}    ({ranked})")
 
 
+def rank_candidates(val_cells: dict) -> list[tuple[str, float | None, dict[str, float]]]:
+    """``[(label, score, {dataset: mean})]``, best first; ``score`` is None when a dev dataset is missing.
+
+    The score is the mean over the dev datasets of each dataset's mean PUR + SV,
+    so each dataset counts once whatever its n.
+    """
+    from evaluation.run_methods import DECOMP_CANDIDATES
+
+    cells = {(d, b, s, o): methods for (d, b, s, a, o), methods in val_cells.items() if math.isclose(a, SELECT_AREA)}
+    ranked = []
+    for label in DECOMP_CANDIDATES:
+        per = {}
+        for dataset in DEV:
+            rows = cells.get((dataset, DEV_BACKBONE, DEV_SEED, SELECT_OPERATOR), {}).get(label, {})
+            values = _selection_values(rows, "pur+sv")
+            if values.size:
+                per[dataset] = float(values.mean())
+        score = float(np.mean([per[d] for d in DEV])) if len(per) == len(DEV) else None
+        ranked.append((label, score, per))
+    return sorted(ranked, key=lambda item: (item[1] is None, -(item[1] or 0.0)))
+
+
+def print_candidates(ranked: list) -> None:
+    print(f"CDEA setting: mean PUR + SV@{SELECT_AREA:g}, ROAD, over {' and '.join(DEV)} "
+          f"({DEV_BACKBONE}, seed {DEV_SEED}, val):")
+    for label, score, per in ranked:
+        detail = "  ".join(f"{d} {per[d]:.3f}" for d in DEV if d in per)
+        if score is None:
+            missing = ", ".join(d for d in DEV if d not in per)
+            print(f"  {label:28s}  not ranked, missing {missing}    {detail}")
+        else:
+            print(f"  {label:28s} {score:7.3f}    {detail}")
+    if ranked and ranked[0][1] is not None:
+        print(f"  chosen: {ranked[0][0]}")
+
+
 def _fmt(values: np.ndarray) -> str:
     if values.size == 0:
         return "n/a"
@@ -194,6 +236,7 @@ def main(argv=None) -> None:
     if not cells:
         raise SystemExit("no decomposition records found")
     val = cells if args.split == "val" else load(Path(args.records), "val", args.expect_hash)
+    print_candidates(rank_candidates(val))
     selection = select_minsplit(val)
     print_selection(selection)
     report(cells, args.cdea, selection)
