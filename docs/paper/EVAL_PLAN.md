@@ -446,7 +446,7 @@ Reported with intervals, untested:
 ### 13.3 Data, models and selection
 
 - **Planted pairs** (family D-T).
-  - Models: the planted-pair checkpoints on ResNet-50, seeds 0–4, with ViT-B/16 as the robustness row. Not trained; training needs approval.
+  - Models: the planted-pair checkpoints on ResNet-50, seeds 0–4, with ViT-B/16 as the robustness row. Trained on 2026-10-14 after user approval, with the planted-patch recipe (`PROGRESS.md`). ResNet-50 is done, with best val balanced accuracy 0.986–0.987. ViT-B/16 training started the same day.
   - Development uses val. Confirmatory runs use test after the freeze.
   - n is 200 kept images per seed.
 - **Natural images** (family D-C). The 8 contrastive datasets, ResNet-50, the existing checkpoints and samples (section 2), seeds as in family C. Test after the freeze.
