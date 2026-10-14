@@ -439,20 +439,27 @@ Reported with intervals, untested:
 ### 13.2 Metrics
 
 - **RR@a, role recovery.** For each player, the share of its own planted patch that its scored mask covers (recall), averaged over U_k, U_l and S.
-  - **Primary area: 2.5%.** That is 1.2 cells, and a patch is 1 cell, so recall can reach 1 while precision stays near the patch.
+  - **Primary area: 2.5%.** That is 1.2 cells on ResNet-50, where a patch is 1 cell (on ViT-B/16 a patch is 4 of 196 cells). Precision is capped at 0.816 by area alone.
+  - **Ceiling.** Scored masks are cut from the bilinearly upsampled map, so a map with all its mass on the patch still misses part of it. At 2.5% its RR is 0.959 on ResNet-50 and 0.988 on ViT-B/16 (measured through `budget_or_floor`). At 5% and 10% it is 1. The ceiling is the same for every method, so paired differences are unaffected, but δ on RR (13.4) is read against 0.959, not 1.
   - **Images.** The primary set is the images whose three roles are all confirmed by `verify_roles`. Exclusions are counted per seed.
 - **PUR and SV.** Defined in `FORMULATION_DECOMPOSITION.md` section 5. Both use the scorer's own null (ROAD, the same cell scores as CDEA's null).
 
 ### 13.3 Data, models and selection
 
 - **Planted pairs** (family D-T).
-  - Models: the planted-pair checkpoints on ResNet-50, seeds 0–4, with ViT-B/16 as the robustness row. Not trained; training needs approval.
+  - Models: the planted-pair checkpoints on ResNet-50, seeds 0–4, with ViT-B/16 as the robustness row. Trained on 2026-10-14 after user approval, with the planted-patch recipe (`PROGRESS.md`). ResNet-50 is done, with best val balanced accuracy 0.986–0.987. ViT-B/16 training started the same day.
   - Development uses val. Confirmatory runs use test after the freeze.
   - n is 200 kept images per seed.
 - **Natural images** (family D-C). The 8 contrastive datasets, ResNet-50, the existing checkpoints and samples (section 2), seeds as in family C. Test after the freeze.
 - **Selection.**
   - **CDEA:** only steps and lr, on the existing grid (T ∈ {50, 100}, η ∈ {0.05, 0.2}). The setting is chosen on dev val (CIFAR-10 and HAM10000, seed 0, n = 64) by mean PUR + SV at 5% under ROAD, and one setting serves every dataset.
-  - **Best min-split row:** chosen per dataset on that dataset's val by the same quantity, and per backbone on planted val by RR.
+    - The score is the mean of the two datasets' means, so each dataset counts once whatever its n. A candidate missing either dataset is not ranked.
+    - The default `cdea_decomp` (lr 0.1) is not on the grid. The paper rows use the chosen `cdea_decomp@lr…_t…` label.
+  - **Best min-split row:** chosen per dataset and backbone on that dataset's val by the same quantity, and per backbone on planted val by RR@2.5% on the role-confirmed images.
+    - A method's score is the mean over val seeds of its per-seed mean, and only a method present in every val seed competes.
+    - Planted selection reads the ROAD rows. RR depends only on the mask, so the operator does not change it.
+  - Fast-knob records never inform a choice.
+  - Both choices are printed by `scripts/decomp_readout.py`, which reads val records for them whatever split it is reporting.
   - Nothing is chosen on planted test images.
 
 ### 13.4 Tests and win conditions (DRAFT, for sign-off)
@@ -462,6 +469,7 @@ Reported with intervals, untested:
   - the statistic is the mean over seeds of the per-seed mean paired difference;
   - the test is a sign-flip permutation within seed (10,000 permutations, seed 0);
   - the interval is a two-level bootstrap (10,000 resamples, seed 0).
+  - **Not implemented yet.** Section 7 defines this test and section 10 lists it as new code in `analysis/stats.py`, but no code in the repo runs it. `analysis/stats.py` has the Wilcoxon, Holm and one-level bootstrap only, which cover family D-C. The test is written and tested before any confirmatory planted run, and families T and D-T use the same code.
 
   **D1 holds** if p < 0.05 and the mean is above 0.
 - **Family D-C** (natural, ResNet-50). Each dataset is the unit, averaged over seeds. Two-sided exact Wilcoxon over the 8 datasets, with Holm over 2 comparisons: CDEA − the best min-split row on PUR, and the same on SV.
@@ -469,7 +477,8 @@ Reported with intervals, untested:
   **D2 holds** if both reject with a positive median.
   - Power, stated in advance: the exact p for 8/8 wins is 0.0078. Under Holm the first rejection needs T ≤ 2 (p ≤ 0.023 against 0.025), and the second T ≤ 3.
 - **Joint search against occlusion_assign** (both families, the same tests). The non-inferiority margin is δ = 0.05 on RR (5 points of patch coverage). On PUR and SV it is δ = 0.25 logits.
-  - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0. The paper presents the joint search as the method.
+  - **Planted ResNet-50 cannot show CDEA ahead.** A patch there is one cell. occlusion_assign scores each cell by deleting it alone (blur), and `verify_roles` confirms a role by deleting its patch alone (ROAD). On the role-confirmed images occlusion_assign should therefore sit near the RR ceiling (13.2) by construction. On family D-T this comparison is read for non-inferiority only. On planted ViT-B/16 (robustness) a patch is 4 cells, and single-cell deletion can miss it.
+  - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0 on family D-C, and not entirely below −δ on family D-T. The paper presents the joint search as the method.
   - **Otherwise, framing rule:** the contribution is the definition, the scores and the ground truth, and the method is the assignment. CDEA is reported as the joint-search variant. It is called "worse" if the interval lies entirely below −δ.
 - **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route of `G1.md`.
 
