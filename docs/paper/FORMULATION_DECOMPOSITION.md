@@ -1,6 +1,6 @@
 # CDEA decomposition formulation
 
-**Status.** Implemented on branch `feat/cdea-decomposition` (2026-10-14), from `docs/paper/handoff10-13-26.md`. Nothing has been run on paper data. The evaluation is `EVAL_PLAN.md` section 13; its win conditions need the user's sign-off before the tag `decomp-declared`.
+**Status.** This is the method. Implemented in `cdea/decompose.py`, `cdea/null.py` and `cdea/_plan.py`, and merged to `main` on 2026-10-14. Development runs on val are in progress (`PROGRESS.md`). The test split has not been read. The evaluation is `EVAL_PLAN.md` section 13; its win conditions need the user's sign-off before the tag `decomp-declared`.
 
 The contrast game (`FORMULATION.md`) stays in the code unchanged and becomes ablation DA2.
 
@@ -11,7 +11,7 @@ The goal is the original one. Per-class evidence overlaps. The method splits it 
 The contrast game answers a different question:
 - Its payoffs are log-odds differences, so they mix "evidence for k" with "evidence against l".
 - Its shared player measures "evidence for the shortlist against the other classes", not "evidence common to the members".
-- The seed-0 diagnostic (`OPT_DIAGNOSTIC_2026-10-13.md`) showed:
+- A seed-0 val diagnostic of its optimiser (2026-10-13) showed:
   - its objective does not track CD;
   - CD itself is answered better by a direct search on the margin.
 
@@ -188,20 +188,20 @@ Records hold the raw 3×2 matrix, the scorer's null, every score, and the patch 
 | 4 | Budget | Fixed per player, at matched area. A pooled budget is phase 2 |
 | 5 | Trapped support | No recommendation was given. Taken: keep ε = 1e-6, and report D9 and the outside-prior share. It adds no constant, and the 2026-10-13 diagnostic found trapping minor (CIFAR-10) to absent (ImageNet) |
 | 6 | Masks | Binary draws by default. DA6 (fractional) is reported |
-| 7 | Planted pairs | No recommendation was given. The handoff's examples are implemented (cat/dog, automobile/truck, deer/horse), with grid placement. **Training is not approved yet** |
+| 7 | Planted pairs | No recommendation was given. Three pairs are implemented (cat/dog, automobile/truck, deer/horse), with grid placement. Training was approved on 2026-10-14 (`PROGRESS.md`) |
 | 8 | Win conditions and non-inferiority margin | No recommendation was given. Drafted in `EVAL_PLAN.md` section 13, **for sign-off** |
 | 9 | The old CDEA and CD | The old CDEA is ablation DA2. CD is reported as SPEC_k + SPEC_l. Neither is the headline |
 
-## 9. Departures from the handoff, and properties found while implementing
+## 9. Implementation choices, and properties found while implementing
 
-- **Null masks.** The handoff said `hard_top_mass` on seeded uniform scores. That projection gives a diffuse fractional mask, (s − τ) clamped to [0, 1] spread over many cells. The null uses `top_mass` instead: whole top cells, with the last one fractional, which is the shape of a hard plan.
-- **The scorer's null.** The handoff said `random_floor`. That function ranks a constant field, so its tie-break scatters single pixels. The scorer instead ranks the null cell scores through the shared adapter, so its masks look like the scored masks.
+- **Null masks.** The null uses `top_mass` on seeded uniform scores: whole top cells, with the last one fractional, which is the shape of a hard plan. `hard_top_mass` is not used, because it gives a diffuse fractional mask, (s − τ) clamped to [0, 1] spread over many cells.
+- **The scorer's null.** The scorer ranks the null cell scores through the shared adapter, so its masks look like the scored masks. `random_floor` is not used, because it ranks a constant field and its tie-break scatters single pixels.
 - **The helper move.** `_row_targets`, `_independent_masks` and `_player_logits` moved to `cdea/_plan.py` along with the four named helpers. `allocate()` is unchanged (`tests/test_plan_refactor.py`).
 - **The null on a model without deletion artefacts.**
   - ν then also removes the expected evidence that a random mask hits.
   - On a 4-cell toy with three evidence cells, this made the unique and shared cells tie. With 16 cells the toys behave as specified.
   - On real models, ν is mostly the common-mode drop it is meant to remove, but the readout reports DA8 (no null) beside the default.
-- **Method code hash.** `method_code_hash` covers every file under `CODE_ROOTS`, so this branch changes it. Once merged, the seed-0 chain's records (hash `9d84e7f2`) no longer match the tree. Comparing them needs the branch-point hash given explicitly (`--expect-hash`), or a rerun.
+- **Method code hash.** `method_code_hash` covers every file under `CODE_ROOTS`, so the merge changed it. The seed-0 chain's records (hash `9d84e7f2`) no longer match the tree. Comparing them needs the branch-point hash given explicitly (`--expect-hash`), or a rerun.
 
 ## 10. Tests
 
