@@ -36,6 +36,32 @@ def test_run_parallel_caps_concurrency_and_returns_exit_codes(tmp_path):
     assert "hello b" in (tmp_path / "logs" / "b.log").read_text()
 
 
+def test_admit_lets_a_later_small_job_past_a_capped_big_job(tmp_path):
+    jobs = [_job(tmp_path, name, seconds=0.3) for name in ("big1", "big2", "small1")]
+
+    def admit(running, job):
+        bigs = sum(1 for name in running if name.startswith("big"))
+        return bigs < 1 or not job.name.startswith("big")
+
+    codes = run_parallel(jobs, 2, poll_seconds=0.05, admit=admit)
+    assert codes == {"big1": 0, "big2": 0, "small1": 0}
+    big2_start = float((tmp_path / "big2.start").read_text())
+    small_start = float((tmp_path / "small1.start").read_text())
+    big1_end = float((tmp_path / "big1.end").read_text())
+    assert small_start < big1_end
+    assert big2_start >= big1_end - 0.05
+
+
+def test_run_parallel_stops_starting_after_a_failure(tmp_path):
+    jobs = [_job(tmp_path, "a", seconds=0.2), _job(tmp_path, "b", code=1, seconds=0.2),
+            _job(tmp_path, "c", seconds=0.2)]
+    codes = run_parallel(jobs, 1, poll_seconds=0.05, stop_on_failure=True)
+    assert codes["a"] == 0
+    assert codes["b"] == 1
+    assert "c" not in codes
+    assert not (tmp_path / "c.start").is_file()
+
+
 def test_run_parallel_refuses_zero_jobs(tmp_path):
     with pytest.raises(ValueError):
         run_parallel([_job(tmp_path, "a")], 0)

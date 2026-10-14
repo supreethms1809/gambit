@@ -7,6 +7,10 @@ Checkpoint selection is val balanced accuracy. The test split is not read.
 
     PYTHONPATH=. python scripts/launch_paper_training.py
 
+The paper run does not use this script on its own. ``scripts/launch_paper_chain.py``
+trains one checkpoint and runs that checkpoint's games before the next dataset.
+This script remains the trainer that chain calls.
+
 One seed at a time, eight cells of it in parallel on one GPU:
 
     PYTHONPATH=. python scripts/launch_paper_training.py --seeds 0 --jobs 8
@@ -100,8 +104,11 @@ def select_cells(cells: list[dict], seeds=None, datasets=None, models=None) -> l
                                        c["model_name"] != "vit_b_16"))
 
 
-def train_cell(cell: dict, epochs: int, ckpt_dir: Path, log_dir: Path) -> bool:
-    """Train one cell and write its done or failed marker. Returns success."""
+def train_cell(cell: dict, epochs: int, ckpt_dir: Path, log_dir: Path, force: bool = False) -> bool:
+    """Train one cell and write its done or failed marker. Returns success.
+
+    An existing checkpoint is reused. ``force`` retrains that one cell.
+    """
     name = cell_id(cell)
     try:
         path = get_or_train(
@@ -115,6 +122,7 @@ def train_cell(cell: dict, epochs: int, ckpt_dir: Path, log_dir: Path) -> bool:
             batch_size=cell["batch_size"],
             seed=cell["seed"],
             balanced=cell["balanced"],
+            force=force,
         )
         if not Path(path).is_file():
             raise RuntimeError(f"no checkpoint written for {name}")

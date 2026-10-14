@@ -96,13 +96,29 @@ def _wait_for_memory(min_free_gb: float, poll_seconds: float, timeout_seconds: f
         waited += poll_seconds
 
 
+def _admitted(waiting, running, admit):
+    """Index of the earliest waiting job that may start, or None."""
+    if admit is None:
+        return 0 if waiting else None
+    names = list(running)
+    for index, job in enumerate(waiting):
+        if admit(names, job):
+            return index
+    return None
+
+
 def run_parallel(jobs: Sequence[Job], max_jobs: int, *, poll_seconds: float = 2.0,
                  cwd: Optional[Path] = None, min_free_gb: float = 0.0,
-                 mem_timeout_s: float = 1800.0) -> dict[str, int]:
+                 mem_timeout_s: float = 1800.0, stop_on_failure: bool = False,
+                 admit=None) -> dict[str, int]:
     """Start ``jobs`` in order, keeping at most ``max_jobs`` alive. Returns exit codes by name.
 
     With ``min_free_gb`` set, each start waits until that much device memory is
-    free, so a new hog never launches on top of a full card.
+    free, so a new hog never launches on top of a full card. With
+    ``stop_on_failure``, a non-zero exit starts nothing further; jobs already
+    running are allowed to finish, and jobs never started are absent from the
+    returned codes. ``admit(running_names, job)`` can refuse the head of the
+    queue and let a later job take the free slot.
     """
     if max_jobs < 1:
         raise ValueError("max_jobs must be at least 1")
@@ -111,9 +127,13 @@ def run_parallel(jobs: Sequence[Job], max_jobs: int, *, poll_seconds: float = 2.
     codes: dict[str, int] = {}
     try:
         while waiting or running:
-            while waiting and len(running) < max_jobs:
+            halted = stop_on_failure and any(code != 0 for code in codes.values())
+            while waiting and len(running) < max_jobs and not halted:
+                choice = _admitted(waiting, running, admit)
+                if choice is None:
+                    break
                 _wait_for_memory(min_free_gb, poll_seconds, mem_timeout_s)
-                job = waiting.pop(0)
+                job = waiting.pop(choice)
                 Path(job.log).parent.mkdir(parents=True, exist_ok=True)
                 handle = open(job.log, "w", encoding="utf-8")
                 env = {**os.environ, **job.env}
@@ -131,7 +151,11 @@ def run_parallel(jobs: Sequence[Job], max_jobs: int, *, poll_seconds: float = 2.
                 codes[name] = code
                 print(f"{'done ' if code == 0 else 'FAIL '} {name} (exit {code}); "
                       f"{len(codes)} finished, {len(running)} running, {len(waiting)} waiting", flush=True)
-            if running:
+            if halted and not running:
+                waiting.clear()
+            elif waiting and not running and _admitted(waiting, running, admit) is None:
+                raise RuntimeError("admit refused every waiting job")
+            elif running:
                 time.sleep(poll_seconds)
     except KeyboardInterrupt:
         for proc, _ in running.values():
