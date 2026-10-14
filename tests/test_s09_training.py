@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from evaluation.accuracy import top1_and_balanced, worst_group_accuracy
-from scripts.launch_paper_training import CONTRASTIVE, SHIFT, paper_cells
+from scripts.launch_paper_training import CONTRASTIVE, DECOMP, SHIFT, paper_cells
 from scripts.train_backbone import _backbone_to_eval, _build_model, _freeze_backbone, train_model
 
 
@@ -27,12 +27,12 @@ def test_worst_group_is_the_minimum():
 
 def test_paper_grid_is_five_seeds_and_skips_imagenet_s():
     cells = paper_cells()
-    assert len(cells) == (len(CONTRASTIVE) + len(SHIFT)) * 2 * 5
+    assert len(cells) == (len(CONTRASTIVE) + len(SHIFT) + len(DECOMP)) * 2 * 5
     assert {c["seed"] for c in cells} == {0, 1, 2, 3, 4}
     names = {c["dataset"] for c in cells}
     assert "mnist" not in names
     assert "pets" not in names
-    assert names == set(CONTRASTIVE) | set(SHIFT)
+    assert names == set(CONTRASTIVE) | set(SHIFT) | set(DECOMP)
     probes = [c for c in cells if c["dataset"] == "cifar10"]
     assert all(c["freeze_backbone"] and c["lr"] == 1e-3 for c in probes)
     planted = [c for c in cells if c["dataset"] == "planted_patch"]
