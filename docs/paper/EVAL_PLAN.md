@@ -439,7 +439,8 @@ Reported with intervals, untested:
 ### 13.2 Metrics
 
 - **RR@a, role recovery.** For each player, the share of its own planted patch that its scored mask covers (recall), averaged over U_k, U_l and S.
-  - **Primary area: 2.5%.** That is 1.2 cells, and a patch is 1 cell, so recall can reach 1 while precision stays near the patch.
+  - **Primary area: 2.5%.** That is 1.2 cells on ResNet-50, where a patch is 1 cell (on ViT-B/16 a patch is 4 of 196 cells). Precision is capped at 0.816 by area alone.
+  - **Ceiling.** Scored masks are cut from the bilinearly upsampled map, so a map with all its mass on the patch still misses part of it. At 2.5% its RR is 0.959 on ResNet-50 and 0.988 on ViT-B/16 (measured through `budget_or_floor`). At 5% and 10% it is 1. The ceiling is the same for every method, so paired differences are unaffected, but δ on RR (13.4) is read against 0.959, not 1.
   - **Images.** The primary set is the images whose three roles are all confirmed by `verify_roles`. Exclusions are counted per seed.
 - **PUR and SV.** Defined in `FORMULATION_DECOMPOSITION.md` section 5. Both use the scorer's own null (ROAD, the same cell scores as CDEA's null).
 
