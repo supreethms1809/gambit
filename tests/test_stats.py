@@ -19,6 +19,7 @@ from analysis.stats import (
     bootstrap_mean_ci,
     family_summary,
     holm_adjust,
+    seed_pooled_summary,
     sign_flip_test,
     two_level_bootstrap_ci,
     wilcoxon_signed_rank,
@@ -163,3 +164,20 @@ def test_two_level_bootstrap_is_deterministic(monkeypatch) -> None:
     assert two_level_bootstrap_ci([seeds[seed] for seed in range(5)], n_boot=2000) == first
     monkeypatch.setattr(stats, "_BLOCK", 7)
     assert two_level_bootstrap_ci(seeds, n_boot=2000) == first
+
+
+def test_seed_pooled_summary_rows_and_holm() -> None:
+    shifted = _shifted_seeds()
+    small = {seed: values * 0.15 for seed, values in shifted.items()}
+    rows = seed_pooled_summary({"dpc": shifted, "tcs": small}, n_perm=2000, n_boot=2000)
+    assert [row["name"] for row in rows] == ["dpc", "tcs"]
+    for row, seeds in zip(rows, (shifted, small)):
+        test = sign_flip_test(seeds, n_perm=2000)
+        assert row["mean"] == test["statistic"] and row["p"] == test["p"]
+        assert (row["ci_low"], row["ci_high"]) == two_level_bootstrap_ci(seeds, n_boot=2000)
+        assert row["n"] == float(sum(values.size for values in seeds.values()))
+        assert row["seeds"] == 5.0
+    assert [row["p_holm"] for row in rows] == holm_adjust([row["p"] for row in rows])
+
+    single = seed_pooled_summary({"rr": small}, n_perm=2000, n_boot=2000)
+    assert single[0]["p_holm"] == single[0]["p"]

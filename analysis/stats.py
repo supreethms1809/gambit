@@ -242,3 +242,35 @@ def two_level_bootstrap_ci(
     statistics = slot_means.mean(axis=1)
     low, high = np.quantile(statistics, [alpha / 2.0, 1.0 - alpha / 2.0], method="linear")
     return float(low), float(high)
+
+
+def seed_pooled_summary(
+    comparisons: dict[str, PerSeed],
+    seed: int = 0,
+    n_perm: int = 10_000,
+    n_boot: int = 10_000,
+) -> list[dict[str, float | str]]:
+    """Mean, two-level interval, and Holm-adjusted sign-flip p (families T, D-T).
+
+    Each value holds one comparison's per-image paired differences by seed.
+    """
+    if not comparisons:
+        raise ValueError("a family needs at least one comparison")
+    rows: list[dict[str, float | str]] = []
+    for name, differences in comparisons.items():
+        test = sign_flip_test(differences, n_perm=n_perm, seed=seed)
+        low, high = two_level_bootstrap_ci(differences, n_boot=n_boot, seed=seed)
+        rows.append(
+            {
+                "name": name,
+                "n": test["n"],
+                "seeds": test["seeds"],
+                "mean": test["statistic"],
+                "ci_low": low,
+                "ci_high": high,
+                "p": test["p"],
+            }
+        )
+    for row, adjusted in zip(rows, holm_adjust([float(row["p"]) for row in rows])):
+        row["p_holm"] = adjusted
+    return rows
