@@ -1,16 +1,26 @@
-"""Dataset-level confirmatory statistics.
+"""Confirmatory statistics.
 
-The unit is a dataset. Wilcoxon and Holm are the family test. The bootstrap
-interval is over datasets. Per-image tests stay in ``evaluation.metrics.paired``
-and are descriptive.
+Family C: the unit is a dataset. Wilcoxon and Holm are the family test. The
+bootstrap interval is over datasets.
+
+Families T and D-T: the unit is the image, with seeds pooled. The statistic is
+the mean over seeds of each seed's mean paired difference. The test flips signs
+within each seed. The interval resamples seeds, then images within each seed.
+
+The per-image tests in ``evaluation.metrics.paired`` stay descriptive.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
+
+PerSeed = Mapping[int, Sequence[float]] | Sequence[Sequence[float]]
+
+# Resamples drawn per block, to bound memory on large seeds.
+_BLOCK = 1000
 
 
 def _average_ranks(values: np.ndarray) -> np.ndarray:
@@ -150,3 +160,55 @@ def family_summary(
     for row, adjusted in zip(rows, holm_adjust(p_values)):
         row["p_holm"] = adjusted
     return rows
+
+
+def _seed_samples(differences: PerSeed) -> list[np.ndarray]:
+    """Per-seed arrays of paired differences. A mapping is read in seed order."""
+    if isinstance(differences, Mapping):
+        groups = [differences[key] for key in sorted(differences)]
+    else:
+        groups = list(differences)
+    if not groups:
+        raise ValueError("differences need at least one seed")
+    samples = []
+    for group in groups:
+        sample = np.asarray(group, dtype=np.float64)
+        if sample.ndim != 1 or sample.size < 1:
+            raise ValueError("each seed needs a non-empty one-dimensional list")
+        if not np.isfinite(sample).all():
+            raise ValueError("differences must be finite")
+        samples.append(sample)
+    return samples
+
+
+def sign_flip_test(differences: PerSeed, n_perm: int = 10_000, seed: int = 0) -> dict[str, float]:
+    """Two-sided sign-flip permutation test, flipping within each seed.
+
+    The statistic is the mean over seeds of each seed's mean difference, so
+    every seed counts equally. Each permutation flips every image's sign at
+    random and recomputes the statistic with the same seeds. The p-value is
+    (1 + the permutations at least as extreme) / (1 + n_perm).
+    """
+    samples = _seed_samples(differences)
+    if n_perm < 1:
+        raise ValueError("n_perm must be >= 1")
+    n_perm = int(n_perm)
+    observed = sum(float(sample.mean()) for sample in samples) / len(samples)
+    generator = np.random.default_rng(int(seed))
+    null = np.zeros(n_perm, dtype=np.float64)
+    for sample in samples:
+        total = float(sample.sum())
+        for start in range(0, n_perm, _BLOCK):
+            stop = min(start + _BLOCK, n_perm)
+            flips = generator.random((stop - start, sample.size)) < 0.5
+            null[start:stop] += (total - 2.0 * (flips @ sample)) / sample.size
+    null /= len(samples)
+    # Ties within rounding count as extreme.
+    slack = 1e-9 * max(float(np.abs(sample).max()) for sample in samples)
+    extreme = int(np.count_nonzero(np.abs(null) >= abs(observed) - slack))
+    return {
+        "statistic": observed,
+        "p": (1.0 + extreme) / (1.0 + n_perm),
+        "n": float(sum(sample.size for sample in samples)),
+        "seeds": float(len(samples)),
+    }
