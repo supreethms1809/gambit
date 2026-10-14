@@ -2,32 +2,32 @@
 
 **Status.** This plan is not frozen. The tag `eval-plan-frozen` was not created. The test split stays locked. No run reads the test split or passes `--final` until every item in "Freeze procedure" (section 12) is done and the tag exists. The selection rule in section 6 has not been applied. Sections marked **[set at freeze]** are filled from val runs only, never from test.
 
-**Scope.** This plan covers the contrastive paper. The shift game moved to a separate paper. Its sections are in `SHIFT_EVAL_PLAN.md` and were not reassessed.
+**Scope.** This plan covers the decomposition paper. The method is `FORMULATION_DECOMPOSITION.md`, and its claims and tests are section 13. The contrast game (`FORMULATION.md`) is ablation DA2. The shift game is a separate paper (`SHIFT_EVAL_PLAN.md`).
 
-**Revision 2026-10-09.** This rewrite replaces the Oct 7 version.
-
-The earlier-formulation val read motivated it: seed 0, all 8 datasets, both backbones. The earlier formulation (tag `framing-v1`) trailed the better margin-attribution variant in all 16 cells. The diagnosis is in `FORMULATION.md` section 1.
-
-What changed:
-- **The method.** CDEA is this formulation (`FORMULATION.md`). The earlier formulation (tag `framing-v1`) is ablation A8.
-- **The metrics.** The suite is rebuilt around the separate angles of "why k rather than l": necessity, sufficiency, ground truth, decomposition, and sanity. Every metric states which methods optimise it (section 5.0).
-  - The primary metric is unchanged: CD@5%.
-  - Two ground-truth metrics that no method optimises are new: discriminative-part contrast on CUB-200, and two-cue recovery.
-- **Family C's Extremal Perturbations comparator is the deletion variant,** which asks the same question as CD. The preservation variant becomes the comparator for sufficiency.
-- **Selection is per dataset,** on that dataset's val split, with at most 4 configurations per method. Before, it was on the two dev datasets only.
-- **A new secondary family T** (ground truth) is pre-registered.
-- **Gate G1 is replaced by G1,** which has a stop rule (section 11).
-- **Shift moved** to `SHIFT_EVAL_PLAN.md`.
-
-Disclosures:
-- The earlier-formulation val numbers on all 8 datasets were read before this formulation and this plan were written. The test split was not read.
-- 15 of the 16 earlier-formulation CDEA rows carried the chunk-scale bug (PR #28). The earlier formulation is tag `framing-v1`.
+**Disclosures.**
+- Before this plan was written, val was read for the earlier formulation (tag `framing-v1`, all 8 datasets, both backbones) and for the contrast game (seed 0). The earlier formulation is ablation A8.
+- Section 13 lists what was read before the decomposition game was declared.
+- The test split was not read.
 
 ---
 
 ## 1. Claims and how each is tested
 
-Every claim names its metric, what the metric compares against, and its test. Claims not listed here are not made (`FRAMING.md`).
+The paper's claims are the decomposition game's, in section 13.1:
+- D1 on planted pairs (family D-T);
+- D2 on natural images (family D-C);
+- the joint-search comparison, which decides the framing (13.4).
+
+Every claim names its metric, what the metric compares against, and its test. Claims not listed are not made (`FRAMING.md`).
+
+Sections 2–12 are shared with section 13:
+- data, models and methods (sections 2–4);
+- operators and metrics (section 5);
+- val selection (section 6);
+- the statistical machinery (section 7). Family D-C uses family C's Wilcoxon and Holm. Family D-T uses family T's sign-flip test and two-level bootstrap;
+- ablations, cost, execution, gates and the freeze (sections 8–12).
+
+**Contrast-game claims, descriptive.** The table below was written for the contrast game as the method, and the contrast game is now ablation DA2. Its claims are not tested. C1's CD is reported as SPEC_k + SPEC_l (13.1). C2–C5 and N1 are reported with intervals where their runs exist.
 
 | # | Claim | Metric | Compared against | Test |
 |---|---|---|---|---|
@@ -55,7 +55,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 | Brain tumor MRI | 3 | patient-grouped `Testing/` | patient-grouped 10% of `Training/` | trained, 5 seeds | **[set at freeze]** |
 | ImageNet-1k | 1000 | ImageNet val minus our val carve (40,000) | 10 per class from ImageNet val (10,000), seed 43 | torchvision pretrained, fixed | Spark |
 
-- **Dev datasets.** CIFAR-10 and HAM10000 are where the formulation was developed and where gate G1 is read (section 11). Hyperparameters are selected per dataset (section 6). Because this formulation was designed after reading earlier-formulation val on all 8 datasets, the result without the dev datasets is a robustness check, not a hold-out claim.
+- **Dev datasets.** CIFAR-10 and HAM10000 are where the formulations were developed and where CDEA's setting is selected (section 13.3). Hyperparameters are selected per dataset (section 6). Because this formulation was designed after reading earlier-formulation val on all 8 datasets, the result without the dev datasets is a robustness check, not a hold-out claim.
 - **ImageNet** uses the published torchvision `IMAGENET1K_V1` weights for both backbones, the same weights the other datasets' linear probes start from.
   - Neither was trained on our test images, but both were developed against ImageNet val. That is disclosed. It affects model accuracy, not the explanation comparison.
   - Because the weights are fixed, a "seed" on ImageNet is a test-sample draw only. Its seed variance therefore excludes model variance, and the model table says so.
@@ -276,6 +276,8 @@ The routes are redefined for this formulation in `FORMULATION.md` section 11. `s
 
 ## 7. Statistical protocol
 
+Families C and T were written for the contrast game's claims. Since section 13, C1–C5 are descriptive (section 1). Family D-C uses family C's machinery and family D-T uses family T's.
+
 - **Family C** (primary; ResNet-50, 8 datasets).
   - **Unit:** the dataset. Average over seeds inside each dataset, then compare methods across datasets. Every statistic is computed from raw per-image records by `analysis/stats.py`.
   - **Test:** two-sided exact Wilcoxon signed-rank, Holm over 3 comparisons:
@@ -386,23 +388,11 @@ Confounds are stated per row: forward passes, number of masks, and K.
   - a dossier entry.
 
   Deletion Extremal Perturbations and the analytic decomposition are new Core entries and need all four. Reproductions (B3) are reported in the appendix and do not gate, except CVE (section 7). The CVE reproduction runs through the Goyal port in the vendored SC-CVE code on CUB.
-- **G1** (replaces the earlier read-out in `docs/paper/G1.md`). The earlier formulation is tag `framing-v1`. The rule below is fixed before any number from this formulation is read.
-  - **Pilot.**
-    - CDEA at its default configuration (`FORMULATION.md` section 8), not a selected one.
-    - Dev val: CIFAR-10 and HAM10000. ResNet-50, seeds 0 and 1, n = 64 per cell.
-  - **Read-out.** For each dev dataset, the mean paired CD@5% difference against:
-    - the better margin-attribution variant on that dataset;
-    - deletion Extremal Perturbations at 5%.
-
-    Each comes with a 95% bootstrap interval over images, and the z_k and z_l drops are reported beside them.
-  - **Stop rule.**
-    - If CDEA is ahead of both comparators on both dev datasets (mean difference above 0), the paper continues as a method paper: selection (section 6), seeds 2–4, families C and T.
-    - Otherwise, the paper takes the evaluation-paper route (`G1.md`), with the earlier formulation (tag `framing-v1`) and CDEA reported as ablations, and **the formulation is not revised again**.
-  - **Prerequisites:** this formulation merged with its tests, deletion Extremal Perturbations merged, and the chunk-scale fix (PR #28) on `main`.
+- **Declaration.** Section 13.4 is signed off and tagged `decomp-declared` before any paper run of the decomposition game.
 
 ## 12. Freeze procedure
 The plan is frozen only after all of the following are recorded in this file and in `PROGRESS.md`:
-1. G0 passed (tag `g0-baselines`). The G1 decision logged (tag `g1-pilot`). The CVE reproduction recorded, or family C reduced to two comparisons as in section 7.
+1. G0 passed (tag `g0-baselines`). Section 13 declared (tag `decomp-declared`). The CVE reproduction recorded, or family C reduced to two comparisons as in section 7.
 2. The this formulation degenerate routes (6.1) checked on val. D1, D2, D4 and D5 closed for every selected CDEA configuration.
 3. Selected configurations and their hashes for every method, dataset and backbone (6.2). The family T comparators (6.3).
 4. The CUB part scorer and the two-cue builder committed with tests. The two-cue classifiers trained for seeds 0–4.
@@ -414,7 +404,7 @@ Then add a line reading `frozen: true` at the top of this file, commit, and tag 
 
 ## 13. Decomposition game (added 2026-10-14)
 
-**Status.** Added after the plan above, and the plan is not frozen. The method is `FORMULATION_DECOMPOSITION.md`. **The win conditions in 13.4 are a draft and need the user's sign-off.** After sign-off, this section is committed and tagged `decomp-declared` before any paper run of the game. If it is signed off, this section is the headline, and C1 (CD) becomes descriptive: it is reported as SPEC_k + SPEC_l.
+**Status.** This section is the paper's headline (section 1), and the plan is not frozen. The method is `FORMULATION_DECOMPOSITION.md`. **The win conditions in 13.4 are a draft and need the user's sign-off.** After sign-off, this section is committed and tagged `decomp-declared` before any paper run of the game. C1 (CD) is descriptive: it is reported as SPEC_k + SPEC_l.
 
 **Disclosures.**
 - The design follows the seed-0 val read of the contrast game and the 2026-10-13 optimisation diagnostic, all on val.
@@ -480,6 +470,6 @@ Reported with intervals, untested:
   - **Planted ResNet-50 cannot show CDEA ahead.** A patch there is one cell. occlusion_assign scores each cell by deleting it alone (blur), and `verify_roles` confirms a role by deleting its patch alone (ROAD). On the role-confirmed images occlusion_assign should therefore sit near the RR ceiling (13.2) by construction. On family D-T this comparison is read for non-inferiority only. On planted ViT-B/16 (robustness) a patch is 4 cells, and single-cell deletion can miss it.
   - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0 on family D-C, and not entirely below −δ on family D-T. The paper presents the joint search as the method.
   - **Otherwise, framing rule:** the contribution is the definition, the scores and the ground truth, and the method is the assignment. CDEA is reported as the joint-search variant. It is called "worse" if the interval lies entirely below −δ.
-- **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route of `G1.md`.
+- **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route. That route's contribution is the contrastive evaluation protocol. Its finding is that margin attribution matches or beats mask optimisation under it, together with the lesion-overlap negative result.
 
 ViT-B/16, blur, the other areas and the all-images set are robustness checks, reported as in section 7.
