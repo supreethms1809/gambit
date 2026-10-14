@@ -20,6 +20,7 @@ from analysis.stats import (
     family_summary,
     holm_adjust,
     sign_flip_test,
+    two_level_bootstrap_ci,
     wilcoxon_signed_rank,
 )
 
@@ -131,3 +132,34 @@ def test_sign_flip_stays_within_seeds() -> None:
     result = sign_flip_test({0: groups[0], 1: groups[1]})
     assert result["statistic"] == (3.5 - 5.0 / 7.0) / 2.0
     assert abs(result["p"] - within) < 0.02
+
+
+def test_two_level_bootstrap_all_zero_and_consistent_shift() -> None:
+    assert two_level_bootstrap_ci({0: np.zeros(10), 1: np.zeros(7)}, n_boot=200) == (0.0, 0.0)
+    seeds = _shifted_seeds()
+    low, high = two_level_bootstrap_ci(seeds)
+    assert 0.0 < low <= np.mean([values.mean() for values in seeds.values()]) <= high
+
+
+def test_two_level_bootstrap_weights_seeds_equally() -> None:
+    # Half the resamples draw both seeds and give (1 + 3) / 2 = 2, so the 45%
+    # and 55% quantiles are 2. Pooling images would give 65/55 instead.
+    assert two_level_bootstrap_ci({0: [1.0] * 50, 1: [3.0] * 5}, alpha=0.9) == (2.0, 2.0)
+    assert two_level_bootstrap_ci({0: [1.0] * 50, 1: [3.0] * 500}, alpha=0.9) == (2.0, 2.0)
+    assert two_level_bootstrap_ci({0: [1.0] * 50, 1: [3.0] * 5}) == (1.0, 3.0)
+
+
+def test_two_level_bootstrap_resamples_images_within_seeds() -> None:
+    # One seed: the image level alone gives means 0, 0.5 and 1.
+    assert two_level_bootstrap_ci([[0.0, 1.0]]) == (0.0, 1.0)
+
+
+def test_two_level_bootstrap_is_deterministic(monkeypatch) -> None:
+    seeds = {seed: values * 0.15 for seed, values in _shifted_seeds().items()}
+    first = two_level_bootstrap_ci(seeds, n_boot=2000)
+    assert first[0] < first[1]
+    assert two_level_bootstrap_ci(seeds, n_boot=2000) == first
+    assert two_level_bootstrap_ci(dict(reversed(list(seeds.items()))), n_boot=2000) == first
+    assert two_level_bootstrap_ci([seeds[seed] for seed in range(5)], n_boot=2000) == first
+    monkeypatch.setattr(stats, "_BLOCK", 7)
+    assert two_level_bootstrap_ci(seeds, n_boot=2000) == first

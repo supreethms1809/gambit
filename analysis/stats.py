@@ -212,3 +212,33 @@ def sign_flip_test(differences: PerSeed, n_perm: int = 10_000, seed: int = 0) ->
         "n": float(sum(sample.size for sample in samples)),
         "seeds": float(len(samples)),
     }
+
+
+def two_level_bootstrap_ci(
+    differences: PerSeed,
+    n_boot: int = 10_000,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> tuple[float, float]:
+    """Percentile interval for the mean over seeds of each seed's mean.
+
+    Each resample draws the seeds with replacement, then draws the images of
+    each drawn seed with replacement. A seed drawn twice is resampled twice.
+    """
+    samples = _seed_samples(differences)
+    if n_boot < 1:
+        raise ValueError("n_boot must be >= 1")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    generator = np.random.default_rng(int(seed))
+    picks = generator.integers(0, len(samples), size=(int(n_boot), len(samples)))
+    slot_means = np.empty(picks.shape, dtype=np.float64)
+    for index, sample in enumerate(samples):
+        rows, cols = np.nonzero(picks == index)
+        for start in range(0, rows.size, _BLOCK):
+            stop = min(start + _BLOCK, rows.size)
+            draws = generator.integers(0, sample.size, size=(stop - start, sample.size))
+            slot_means[rows[start:stop], cols[start:stop]] = sample[draws].mean(axis=1)
+    statistics = slot_means.mean(axis=1)
+    low, high = np.quantile(statistics, [alpha / 2.0, 1.0 - alpha / 2.0], method="linear")
+    return float(low), float(high)
