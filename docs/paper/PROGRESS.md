@@ -18,6 +18,23 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
   - The baseline rows are not rerun: no baseline calls the changed code.
   - Read with `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`.
 
+## Decomposition game, 2026-10-14 (branch `feat/cdea-decomposition`)
+
+- **Decision.** The user adopted the handoff `docs/paper/handoff10-13-26.md`, going with its recommendations. CDEA returns to splitting one pair's evidence into unique-to-k, unique-to-l and shared. The contrast game stays as ablation DA2.
+- **Specification.** `FORMULATION_DECOMPOSITION.md` (method, comparators, scores, planted pairs, decisions, and departures from the handoff). The evaluation is `EVAL_PLAN.md` section 13.
+- **Built.**
+  - `cdea/_plan.py` (the refactor; `allocate()` unchanged, checked by `tests/test_plan_refactor.py`), `cdea/null.py` and `cdea/decompose.py`;
+  - `baselines/decomposition.py`;
+  - the scores, the runner (`--game decomposition`), `scripts/decomp_readout.py` and D2/D8/D9 in `scripts/check_degenerate.py`;
+  - the planted-pair dataset and its role check.
+  - The toys pass, including the interaction toy: the joint search finds redundant evidence that single-cell occlusion misses.
+- **Worktree.** Built in `../gambit-decomp`, so the running seed-0 chain's method hash is untouched. This branch changes the hash, so the seed-0 records (`9d84e7f2`) no longer match a merged tree.
+- **Not done; needs the user.**
+  1. Sign off the win conditions (`EVAL_PLAN.md` 13.4), then tag `decomp-declared`.
+  2. Approve training of the planted-pair checkpoints (ResNet-50 first, then ViT-B/16).
+  3. Development runs (CIFAR-10 and HAM10000 val, n = 64) wait for 1. They also wait for the GPU: the seed-0 chain is running.
+- **Fractional-mask test on seed 1** (`G1.md`, reopened 2026-10-13): held, by the same decision. It was never launched.
+
 ## G1 declared read-out, 2026-10-11 (seed 0 only)
 
 `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`
