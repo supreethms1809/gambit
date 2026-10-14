@@ -31,9 +31,9 @@ New records go to `results/paper/cells/`. Each record carries `method_code_hash`
 
 Read `docs/paper/PROGRESS.md` first. The same protocol is in `.cursor/rules/paper-workflow.mdc`.
 
-Session start: `git pull`, read `PROGRESS.md` and the stage card, clean `git status`, run tests, check listed background jobs.
+Session start: `git pull`, read `PROGRESS.md` (Next session, Running, Plan), clean `git status`, run tests, check listed background jobs.
 
-Session end: tests pass, small commits, `PROGRESS.md` updated. `git add <specific paths>` only.
+Session end: tests pass, small commits, `PROGRESS.md` updated (Next session, Running with PIDs and logs, the plan's ticks, a dated log line). `git add <specific paths>` only.
 
 Do not run `--final` or read the test split before the `eval-plan-frozen` tag. Do not edit `EVAL_PLAN.md` after it is frozen. Do not type a result number by hand. Do not weaken a test to make it pass. Do not change a baseline algorithm. Do not merge your own baseline PR. Ask before downloading a dataset or a package.
 

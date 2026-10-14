@@ -19,10 +19,12 @@ Create that env from `requirements.txt`. Run everything from the repository root
 
 ```bash
 PYTHONPATH=. python -m pytest tests/
-PYTHONPATH=. python scripts/paper_run.py --game contrastive --dataset cifar10 --backbone resnet50 --seed 0 --split val --n 1 --methods core --fast
+PYTHONPATH=. python scripts/paper_run.py --game decomposition --dataset cifar10 --backbone resnet50 --seed 0 --split val --n 1 --methods core --fast
 ```
 
-Records go to `results/paper/cells/`. A record counts only when its `method_code_hash` and `knobs_hash` match the current tree. Fast knobs never satisfy a gate cell.
+Records go to `results/paper/cells/`. A record counts only when its `method_code_hash` and `knobs_hash` match the current tree. Fast knobs never satisfy a gate cell. Without paper checkpoints, add `--model-source smoke`.
+
+`docs/paper/PROGRESS.md` is the current state and the plan of the runs. Read it first.
 
 ## Layout
 
