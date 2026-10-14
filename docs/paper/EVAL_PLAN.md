@@ -461,6 +461,7 @@ Reported with intervals, untested:
   - the test is a sign-flip permutation within seed (10,000 permutations, seed 0);
   - the interval is a two-level bootstrap (10,000 resamples, seed 0).
   - **Implemented** in `analysis/stats.py` (`sign_flip_test`, `two_level_bootstrap_ci`, `seed_pooled_summary`) and tested in `tests/test_stats.py`. Families T and D-T use the same code. `scripts/decomp_readout.py` does not call it yet.
+  - *2026-10-14, after the sign-off:* `scripts/decomp_readout.py` now prints this family, for CDEA − the best min-split row and for CDEA − occlusion_assign, each tested on its own. The reason for this entry is that the read-out was wired after the declaration. No test or win condition changes.
 
   **D1 holds** if p < 0.05 and the mean is above 0.
 - **Family D-C** (natural, ResNet-50). Each dataset is the unit, averaged over seeds. Two-sided exact Wilcoxon over the 8 datasets, with Holm over 2 comparisons: CDEA − the best min-split row on PUR, and the same on SV.

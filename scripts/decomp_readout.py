@@ -16,6 +16,13 @@ is, and fast-knob rows inform neither:
 - CDEA's setting, over the ``cdea_decomp@...`` candidates, by mean PUR + SV at
   5% under ROAD averaged over CIFAR-10 and HAM10000 (ResNet-50, seed 0).
 
+It ends with family D-T (EVAL_PLAN.md 13.4) on planted pairs on ResNet-50: CDEA
+against the best min-split row and against occlusion_assign, on RR at 2.5% over
+role-confirmed images, from the reported split. Each seed's per-image
+differences stay apart, and ``analysis.stats.seed_pooled_summary`` gives the mean
+over seeds of each seed's mean, the two-level 95% interval and the sign-flip p.
+Fast-knob rows are left out.
+
 This prints numbers. The win conditions are in EVAL_PLAN.md section 13 and
 are applied there, not here.
 
@@ -38,7 +45,7 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from analysis.stats import bootstrap_mean_ci  # noqa: E402
+from analysis.stats import bootstrap_mean_ci, seed_pooled_summary  # noqa: E402
 
 SCORES = ("pur", "sv", "cd", "bal", "sep")
 MINSPLIT = ("gradcam_minsplit", "ig_minsplit", "occlusion_minsplit", "rise_minsplit", "extremal_minsplit")
@@ -49,6 +56,7 @@ RR_AREA = 0.025          # planted pairs: RR, role-confirmed images
 DEV = ("cifar10", "ham10000")
 DEV_BACKBONE = "resnet50"
 DEV_SEED = 0
+DT_BACKBONE = "resnet50"  # family D-T; ViT-B/16 is the robustness row
 OWN_RECALL = ("rec_uk_ak", "rec_ul_al", "rec_s_c")
 ROLES = ("ak", "al", "c")
 PATCH_MASS = (("prec_s_c", "S on C"), ("prec_uk_ak", "U_k on A_k"), ("prec_ul_al", "U_l on A_l"),
@@ -97,9 +105,13 @@ def _mean(rows, key: str) -> str:
     return f"{values.mean():.2f}" if values.size else "n/a"
 
 
+def _non_fast(rows: dict) -> dict:
+    return {i: r for i, r in rows.items() if r.get("fast", "0") != "1"}
+
+
 def _selection_values(rows: dict, key: str, confirmed_only: bool = False) -> np.ndarray:
     """Finite ``key`` values from rows that may inform a choice: fast-knob rows never do."""
-    kept = [r for r in rows.values() if r.get("fast", "0") != "1" and (not confirmed_only or _confirmed(r))]
+    kept = [r for r in _non_fast(rows).values() if not confirmed_only or _confirmed(r)]
     values = np.array([_value(r, key) for r in kept], dtype=float)
     return values[np.isfinite(values)]
 
@@ -225,6 +237,51 @@ def report(cells: dict, cdea: str, selection: dict) -> None:
                 print(f"    {method:32s} " + "   ".join(parts))
 
 
+def family_dt_differences(cells: dict, cdea: str, other: str) -> tuple[dict[int, np.ndarray], list[int]]:
+    """``({seed: RR differences cdea - other}, seeds with none)`` for family D-T (EVAL_PLAN.md 13.4).
+
+    Planted pairs on ResNet-50 at RR@2.5% under ROAD, role-confirmed images
+    paired by index within each seed, fast-knob rows left out.
+    """
+    per_seed, empty = {}, []
+    for (dataset, backbone, seed, area, operator), methods in sorted(cells.items()):
+        if (dataset, backbone, operator) != (PLANTED, DT_BACKBONE, SELECT_OPERATOR) or not math.isclose(area, RR_AREA):
+            continue
+        diff = _paired(_non_fast(methods.get(cdea, {})), _non_fast(methods.get(other, {})), "rr", confirmed_only=True)
+        if diff.size:
+            per_seed[seed] = diff
+        else:
+            empty.append(seed)
+    return per_seed, empty
+
+
+def print_family_dt(cells: dict, cdea: str, selection: dict) -> None:
+    print(f"\nFamily D-T: {PLANTED} {DT_BACKBONE}, RR@{RR_AREA:g} on role-confirmed images, "
+          "seeds pooled (EVAL_PLAN.md 13.4):")
+    if not any(d == PLANTED and b == DT_BACKBONE and o == SELECT_OPERATOR and math.isclose(a, RR_AREA)
+               for d, b, _, a, o in cells):
+        print(f"  no {PLANTED} {DT_BACKBONE} cells at area {RR_AREA:g} under ROAD")
+        return
+    comparisons = [("occlusion_assign", "additive per-cell assignment")]
+    best = selection.get((PLANTED, DT_BACKBONE), (None, {}))[0]
+    if best is None:
+        print("  best min-split: none chosen on val, so not compared")
+    else:
+        comparisons.insert(0, (best, "best min-split, chosen on val"))
+    for other, title in comparisons:
+        per_seed, empty = family_dt_differences(cells, cdea, other)
+        print(f"  {cdea} - {other} ({title}):")
+        if empty:
+            print(f"    no paired role-confirmed non-fast images in seed {', '.join(map(str, empty))}")
+        if not per_seed:
+            continue
+        # Each comparison is tested on its own (13.4), so no Holm across the two.
+        row = seed_pooled_summary({"rr": per_seed})[0]
+        print(f"    rr   mean {row['mean']:+.3f}  95% two-level [{row['ci_low']:+.3f}, {row['ci_high']:+.3f}]  "
+              f"sign-flip p {row['p']:.4f}")
+        print("    images " + "  ".join(f"seed{seed} {diff.size}" for seed, diff in per_seed.items()))
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--records", default=str(REPO / "results" / "paper" / "cells"))
@@ -240,6 +297,7 @@ def main(argv=None) -> None:
     selection = select_minsplit(val)
     print_selection(selection)
     report(cells, args.cdea, selection)
+    print_family_dt(cells, args.cdea, selection)
 
 
 if __name__ == "__main__":
