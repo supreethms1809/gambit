@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 
 import numpy as np
+import pytest
 
 import analysis.stats as stats
 from analysis.stats import (
@@ -24,6 +25,9 @@ from analysis.stats import (
     two_level_bootstrap_ci,
     wilcoxon_signed_rank,
 )
+
+# Fail on any warning. Accelerate's matmul raised spurious ones in sign_flip_test.
+pytestmark = pytest.mark.filterwarnings("error")
 
 
 def test_holm_matches_the_hand_worked_products() -> None:

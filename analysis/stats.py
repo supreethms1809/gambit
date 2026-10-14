@@ -201,7 +201,8 @@ def sign_flip_test(differences: PerSeed, n_perm: int = 10_000, seed: int = 0) ->
         for start in range(0, n_perm, _BLOCK):
             stop = min(start + _BLOCK, n_perm)
             flips = generator.random((stop - start, sample.size)) < 0.5
-            null[start:stop] += (total - 2.0 * (flips @ sample)) / sample.size
+            flipped = np.where(flips, sample, 0.0).sum(axis=1)
+            null[start:stop] += (total - 2.0 * flipped) / sample.size
     null /= len(samples)
     # Ties within rounding count as extreme.
     slack = 1e-9 * max(float(np.abs(sample).max()) for sample in samples)
