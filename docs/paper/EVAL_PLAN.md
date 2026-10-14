@@ -404,11 +404,12 @@ Then add a line reading `frozen: true` at the top of this file, commit, and tag 
 
 ## 13. Decomposition game (added 2026-10-14)
 
-**Status.** This section is the paper's headline (section 1), and the plan is not frozen. The method is `FORMULATION_DECOMPOSITION.md`. **The win conditions in 13.4 are a draft and need the user's sign-off.** After sign-off, this section is committed and tagged `decomp-declared` before any paper run of the game. C1 (CD) is descriptive: it is reported as SPEC_k + SPEC_l.
+**Status.** This section is the paper's headline (section 1), and the plan is not frozen. The method is `FORMULATION_DECOMPOSITION.md`. **The user signed off the win conditions in 13.4 on 2026-10-14, as drafted.** This section is committed and tagged `decomp-declared`. A later change to it is a new dated entry with its reason. C1 (CD) is descriptive: it is reported as SPEC_k + SPEC_l.
 
 **Disclosures.**
 - The design follows the seed-0 val read of the contrast game and the 2026-10-13 optimisation diagnostic, all on val.
 - No decomposition number from paper data was read before this section was written, except one: a fast-knob smoke cell (CIFAR-10 val, seed 0, n = 4, every method and ablation). It checked the code path. Its printed numbers come from fast knobs and informed no choice.
+- Development runs on val started before the sign-off: the CIFAR-10 and HAM10000 dev cells, and the planted-pair val cells (`PROGRESS.md`). They serve the selections of 13.3. No win condition is read from them.
 - The test split was not read.
 
 ### 13.1 Claims
@@ -452,7 +453,7 @@ Reported with intervals, untested:
   - Both choices are printed by `scripts/decomp_readout.py`, which reads val records for them whatever split it is reporting.
   - Nothing is chosen on planted test images.
 
-### 13.4 Tests and win conditions (DRAFT, for sign-off)
+### 13.4 Tests and win conditions (signed off 2026-10-14)
 
 - **Family D-T** (planted, ResNet-50). The comparison is CDEA − the best min-split row, on RR@2.5%. The machinery is family T's:
   - the image is the unit, with seeds pooled;
