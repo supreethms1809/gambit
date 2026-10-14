@@ -559,6 +559,214 @@ def _units_from_pixels(mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Te
     return (pooled.flatten(1) > 0.5).to(dtype=mask.dtype)
 
 
+DECOMP_PLAYERS = ("uk", "ul", "s")
+DECOMP_PATCHES = ("ak", "al", "c")
+
+
+def _decomp_runs(spec: CellSpec) -> list[tuple[str, Optional[str]]]:
+    return [(m, None) for m in spec.methods] + [("cdea_decomp", a) for a in spec.ablations]
+
+
+def _decomp_area_dependent(method: str, ablation: Optional[str]) -> bool:
+    from evaluation.run_methods import DECOMP_AREA_DEPENDENT
+
+    return method in DECOMP_AREA_DEPENDENT
+
+
+def _decomp_maps(spec, model, x, h, method, ablation, area, knobs, device):
+    from evaluation.run_methods import DECOMP_ABLATIONS, DecompConfig, decomposition_method
+
+    fn = decomposition_method(method)
+    kwargs = {}
+    if ablation is not None:
+        kwargs["cfg"] = DECOMP_ABLATIONS[ablation](DecompConfig())
+    if _decomp_area_dependent(method, ablation):
+        kwargs["area"] = area
+    if method in {"random_decomp", "rise_minsplit"}:
+        kwargs["seed"] = spec.seed
+    return fn(model, x, h, spec.backbone, knobs, device, **kwargs)
+
+
+def run_decomposition(spec: CellSpec, device) -> Path:
+    """Score every requested decomposition method. Records go to ``records.csv.gz`` under ``decomposition``."""
+    from baselines.adapter import budget_or_floor
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_data import decomposition_sample
+    from evaluation.run_methods import DECOMP_WHOLE_SAMPLE
+    from evaluation.run_models import load_cell_model
+
+    loaded = load_cell_model(spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
+                             checkpoint=spec.checkpoint, device=device)
+    if getattr(device, "type", str(device)) == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    model = loaded.model
+    sample = decomposition_sample(spec.dataset, spec.split, spec.n, spec.seed,
+                                  final=spec.final, config_hash=spec.config_hash, model=model, device=device)
+    n = int(sample.x.shape[0])
+    counter = PassCounter(model)
+    rows: list[dict] = []
+    status: dict[str, dict] = {}
+    code_hash = method_code_hash()
+    knob_hash = knobs_hash(spec.knobs)
+
+    for method, ablation in _decomp_runs(spec):
+        label = method if ablation is None else f"{method}:{ablation}"
+        areas = spec.areas if _decomp_area_dependent(method, ablation) else (None,)
+        ranges = _ranges(n, 0 if method in DECOMP_WHOLE_SAMPLE else spec.image_batch)
+        for area_for_map in areas:
+            counter.reset()
+            start = time.perf_counter()
+            failed = None
+            chunk_rows: list[dict] = []
+            try:
+                for start_i, end_i in ranges:
+                    x = sample.x[start_i:end_i].to(device)
+                    h = hypotheses_for(model, x, 2)
+                    h = type(h)(ids=h.ids.to(device), mask=h.mask.to(device))
+                    maps = _decomp_maps(spec, model, x, h, method, ablation, area_for_map, spec.knobs, device)
+                    for area in (spec.areas if area_for_map is None else (area_for_map,)):
+                        chunk_rows += _score_decomp(model, x, maps, h, area, spec, label, sample,
+                                                    budget_or_floor, start_i, code_hash, knob_hash)
+            except Exception as exc:
+                failed = exc
+            seconds = time.perf_counter() - start
+            if failed is not None:
+                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}",
+                                 "trace": traceback.format_exc(limit=4)}
+                continue
+            status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
+                             "backward_images": counter.backward,
+                             "device_mb_after": device_memory_mb(device)}
+            for row in chunk_rows:
+                row["seconds_per_image"] = seconds / n
+                row["forward_images"] = counter.forward
+                row["backward_images"] = counter.backward
+            rows += chunk_rows
+    counter.close()
+    summary = _summary(spec, loaded, status, rows, code_hash, knob_hash)
+    summary["sample"] = dict(sample.notes)
+    if sample.roles is not None:
+        summary["sample"]["roles_confirmed"] = [int(v) for v in sample.roles.sum(dim=0)]
+        summary["sample"]["all_roles_confirmed"] = int(sample.roles.all(dim=1).sum())
+    return _write(spec, rows, summary, device)
+
+
+def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor, offset,
+                  code_hash, knob_hash) -> list[dict]:
+    from core.grid import grid_of
+    from evaluation.scores import decomposition_scores, drop_matrix, mask_patch_confusion, null_drops_scored, null_pixel_masks
+
+    grid = grid_of(spec.backbone)
+    grid_kw = {}
+    if maps.grid is not None:
+        grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=x.shape[-2], width=x.shape[-1])
+    mask_seed = spec.seed * 1000 + int(round(area * 1000))
+    sources = (maps.k, maps.l, maps.shared)
+    masks, failed = [], []
+    for index, source in enumerate(sources):
+        if source is None:
+            masks.append(torch.full(x.shape[:1] + x.shape[-2:], float("nan"), device=x.device))
+            failed.append(torch.zeros(x.shape[0], dtype=torch.bool))
+            continue
+        m, f = budget_or_floor(source.detach().float().cpu(), area, mask_seed + index, offset=offset, **grid_kw)
+        masks.append(m.to(x.device))
+        failed.append(f)
+    stacked = torch.stack(masks, dim=1)
+    ids = h.ids[:, :2].long()
+    k, l = ids[:, 0], ids[:, 1]
+    full = _logits(model, x)
+    null_masks = null_pixel_masks(grid[0], grid[1], area, x.shape[-2], x.shape[-1])
+    stages = _decomp_stage_payoffs(model, x, maps, stacked, ids, area, grid) if "null_blur" in maps.extra else {}
+    patches = getattr(sample, "patches", None)
+    confusion = None
+    if patches is not None:
+        safe = torch.nan_to_num(stacked, nan=0.0)
+        confusion = mask_patch_confusion(safe, patches[offset:offset + x.shape[0]].to(x.device))
+    rows = []
+    for operator in spec.operators:
+        def remove_op(images, mask, operator=operator):
+            return remove(images, mask, operator, mask_seed, grid, offset)
+
+        present = [p for p in range(3) if sources[p] is not None]
+        drops = torch.full((x.shape[0], 3, 2), float("nan"), device=x.device)
+        drops[:, present] = drop_matrix(model, x, stacked[:, present], ids, remove=remove_op)
+        null = null_drops_scored(model, x, ids, null_masks, remove_op)
+        scores = decomposition_scores(drops, null)
+        for i in range(x.shape[0]):
+            row = {
+                "game": "decomposition", "dataset": spec.dataset, "backbone": spec.backbone,
+                "seed": spec.seed, "split": spec.split, "image_index": sample.index[offset + i],
+                "method": label, "area": area, "operator": operator,
+                "class_k": int(k[i]), "class_l": int(l[i]), "label": int(sample.labels[offset + i]),
+                "correct": int(int(k[i]) == int(sample.labels[offset + i])),
+                "z_k_full": float(_pick(full, k)[i]), "z_l_full": float(_pick(full, l)[i]),
+                "null_k": float(null[i, 0]), "null_l": float(null[i, 1]),
+                "failed_row": int(any(bool(f[i]) for f in failed)),
+                "fast": int(spec.knobs.fast), "model_source": spec.model_source,
+                "method_code_hash": code_hash, "knobs_hash": knob_hash,
+            }
+            for p, player in enumerate(DECOMP_PLAYERS):
+                row[f"d_{player}_k"] = float(drops[i, p, 0])
+                row[f"d_{player}_l"] = float(drops[i, p, 1])
+                row[f"area_{player}"] = float(stacked[i, p].float().mean())
+            row.update({name: float(value[i]) for name, value in scores.items()})
+            row.update({name: float(value[i]) for name, value in stages.items()})
+            if getattr(sample, "roles", None) is not None:
+                for t, target in enumerate(DECOMP_PATCHES):
+                    row[f"role_{target}"] = int(sample.roles[offset + i, t])
+            if confusion is not None:
+                precision, recall = confusion
+                for p, player in enumerate(DECOMP_PLAYERS):
+                    for t, target in enumerate(DECOMP_PATCHES + ("rest",)):
+                        row[f"prec_{player}_{target}"] = float(precision[i, p, t])
+                    for t, target in enumerate(DECOMP_PATCHES):
+                        row[f"rec_{player}_{target}"] = float(recall[i, p, t])
+            rows.append(row)
+    return rows
+
+
+def _decomp_stage_payoffs(model, x, maps, scored, ids, area, grid) -> dict[str, torch.Tensor]:
+    """D2, D9 and trapped-support inputs for a decomposition plan, under blur, with CDEA's blur null.
+
+    ``soft``: the payoff of the plan rows. ``hard``: of their top a·R cells.
+    ``scored_blur``: of the scored pixel masks. ``same_as_init``: 1 when every
+    player's top cells equal those of the step-0 plan (D9). ``outside_prior``:
+    the share of final top cells where the min-split prior was 0.
+    """
+    from cdea.first_order import top_mass
+    from cdea.payoffs import class_drops, decomposition_payoffs
+    from core.grid import delete
+
+    gh, gw = grid
+    budget = float(area) * gh * gw
+    null = maps.extra["null_blur"].to(device=x.device, dtype=x.dtype)
+    plan = torch.stack([maps.k, maps.l, maps.shared], dim=1).detach().to(device=x.device, dtype=x.dtype)
+    hard = torch.stack([top_mass(plan[:, p], budget) for p in range(3)], dim=1)
+    full = _logits(model, x)
+    out = {}
+    views = {
+        "soft": [delete(x, plan[:, p], gh, gw) for p in range(3)],
+        "hard": [delete(x, hard[:, p], gh, gw) for p in range(3)],
+        "scored_blur": [remove(x, scored[:, p], "blur", 0, grid) for p in range(3)],
+    }
+    for stage, edited in views.items():
+        logits = torch.stack([_logits(model, view) for view in edited], dim=1)
+        payoff = decomposition_payoffs(class_drops(full, logits, ids), null)
+        for p, player in enumerate(DECOMP_PLAYERS):
+            out[f"payoff_{stage}_{player}"] = payoff[:, p].detach().float().cpu()
+    top = max(1, int(round(budget)))
+    final_top = plan.topk(top, dim=-1).indices.sort(dim=-1).values
+    initial = maps.extra.get("initial")
+    if initial is not None:
+        init_top = initial.to(x.device).topk(top, dim=-1).indices.sort(dim=-1).values
+        out["same_as_init"] = (final_top == init_top).all(dim=-1).all(dim=-1).float().cpu()
+    prior = maps.extra.get("prior_split")
+    if prior is not None:
+        outside = prior.to(x.device).gather(-1, final_top) <= 1e-12
+        out["outside_prior"] = outside.float().mean(dim=(-1, -2)).cpu()
+    return out
+
+
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
 

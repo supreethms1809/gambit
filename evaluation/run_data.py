@@ -58,6 +58,79 @@ def contrastive_sample(
     return ContrastiveSample(x=torch.cat(xs)[:n], labels=torch.cat(ys)[:n].long(), index=index[:n])
 
 
+@dataclass
+class DecompositionSample(ContrastiveSample):
+    patches: Optional[torch.Tensor] = None   # (B, 3, H, W): A_k, A_l, C, ordered by the model's rank 0 and 1
+    roles: Optional[torch.Tensor] = None     # (B, 3) bool: patch role confirmed by intervention
+    notes: Any = field(default_factory=dict)
+
+
+def decomposition_sample(
+    dataset: str,
+    split: str,
+    n: int,
+    seed: int,
+    *,
+    final: bool = False,
+    config_hash: Optional[str] = None,
+    model=None,
+    device=None,
+) -> DecompositionSample:
+    """Natural datasets: the contrastive sample. ``planted_pair``: needs the model (section 6)."""
+    if dataset == "planted_pair":
+        if model is None:
+            raise ValueError("the planted-pair sample keeps images whose top 2 is the pair; pass the model")
+        return _planted_pair(split, n, seed, model, device, dict(final=final, config_hash=config_hash))
+    c = contrastive_sample(dataset, split, n, seed, final=final, config_hash=config_hash)
+    return DecompositionSample(x=c.x, labels=c.labels, index=c.index)
+
+
+def _planted_pair(split: str, n: int, seed: int, model, device, lock: dict) -> DecompositionSample:
+    """Seeded test-mode images whose model top 2 is the planted pair, in draw order, until ``n`` are kept.
+
+    Every tried image is counted in ``notes``; images whose patch roles fail
+    the intervention check stay in the sample with ``roles`` False.
+    """
+    from evaluation.planted_cues import PAIRS, PlantedPairCIFAR, verify_roles
+
+    ds = PlantedPairCIFAR(split=split, mode="test", image_size=IMAGE_SIZE, seed=0, **lock)
+    order = _draw(len(ds), len(ds), seed)
+    xs, labels, index, patches = [], [], [], []
+    tried = 0
+    for start in range(0, len(order), 32):
+        chunk = [ds[i] for i in order[start:start + 32]]
+        batch = torch.stack([it["image"] for it in chunk]).to(device)
+        with torch.no_grad():
+            top = model(batch).topk(2, dim=-1).indices.cpu()
+        for row, (i, it) in enumerate(zip(order[start:start + 32], chunk)):
+            tried += 1
+            pair = PAIRS[it["pair"]]
+            ranked = [int(c) for c in top[row]]
+            if set(ranked) != set(pair):
+                continue
+            slots = [pair.index(ranked[0]), pair.index(ranked[1]), 2]
+            xs.append(it["image"])
+            labels.append(it["label"])
+            index.append(i)
+            patches.append(it["masks"][slots])
+            if len(xs) == n:
+                break
+        if len(xs) == n:
+            break
+    x = torch.stack(xs)
+    patch_tensor = torch.stack(patches)
+    roles = []
+    for start in range(0, x.shape[0], 16):
+        part = x[start:start + 16].to(device)
+        with torch.no_grad():
+            ids = model(part).topk(2, dim=-1).indices
+        roles.append(verify_roles(model, part, patch_tensor[start:start + 16].to(device), ids, seed=seed))
+    return DecompositionSample(
+        x=x, labels=torch.tensor(labels).long(), index=index, patches=patch_tensor, roles=torch.cat(roles),
+        notes={"tried": tried, "kept": len(xs)},
+    )
+
+
 def root_indices(ds) -> list[int]:
     """Indices into the underlying dataset, through any nesting of Subsets."""
     from torch.utils.data import Subset

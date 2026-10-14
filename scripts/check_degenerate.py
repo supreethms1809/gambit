@@ -1,7 +1,12 @@
-"""D1–D5 checks on an allocation.
+"""D1–D5 checks on an allocation, and D2, D8, D9 for the decomposition game.
 
 D1 and D5 are properties of the plan. D2, D3 and D4 are properties of the
 scored cell and are reported from its records. D3 is not a gate.
+
+Decomposition cells (``.../decomposition/...``, FORMULATION_DECOMPOSITION.md
+section 8): D2 is gated for all three players. D8 (S found no shared evidence:
+SV <= 0 under blur) and D9 (the final masks are the min-split start), and the
+share of final cells outside the prior's support, are reported.
 """
 
 from __future__ import annotations
@@ -75,6 +80,43 @@ def stage_gaps(records: Path, method: str = "cdea", tol: float = 0.5) -> dict[fl
     return out
 
 
+DECOMP_PLAYERS = ("uk", "ul", "s")
+
+
+def decomposition_gaps(records: Path, method: str = "cdea_decomp", tol: float = 0.5) -> dict[float, dict]:
+    """Per area: mean soft-minus-hard and hard-minus-scored payoff per player, D2, D8, D9 and trapped support."""
+    path = Path(records)
+    if path.is_dir():
+        path = path / "records.csv.gz"
+    by_area: dict[float, dict[str, list[float]]] = {}
+    with gzip.open(path, "rt", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if row["method"] != method or not row.get("payoff_soft_uk"):
+                continue
+            slot = by_area.setdefault(float(row["area"]), {})
+            if row["operator"] == "blur":
+                slot.setdefault("d8", []).append(float(float(row["sv"]) <= 0))
+            if row["operator"] != "road":
+                continue
+            for player in DECOMP_PLAYERS:
+                soft = float(row[f"payoff_soft_{player}"])
+                hard = float(row[f"payoff_hard_{player}"])
+                scored = float(row[f"payoff_scored_blur_{player}"])
+                slot.setdefault(f"soft_minus_hard_{player}", []).append(soft - hard)
+                slot.setdefault(f"hard_minus_scored_{player}", []).append(hard - scored)
+            if row.get("same_as_init", "") != "":
+                slot.setdefault("d9", []).append(float(row["same_as_init"]))
+            if row.get("outside_prior", "") != "":
+                slot.setdefault("outside_prior", []).append(float(row["outside_prior"]))
+    out = {}
+    for area, slot in sorted(by_area.items()):
+        means = {key: sum(values) / len(values) for key, values in slot.items()}
+        means["n"] = len(slot["soft_minus_hard_uk"])
+        means["d2_pass"] = all(means[f"soft_minus_hard_{p}"] <= tol for p in DECOMP_PLAYERS)
+        out[area] = means
+    return out
+
+
 def d3_overshoot_share(share: torch.Tensor) -> float:
     """Reported: mean share of the shortcut payoff that comes from overshooting."""
     return float(share.detach().mean())
@@ -88,13 +130,17 @@ def d4_beats_translation(score: torch.Tensor, translated: torch.Tensor) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", default=None, help="a cell directory under results/paper/cells")
+    parser.add_argument("--method", default=None, help="the CDEA label (default: cdea, or cdea_decomp)")
     args = parser.parse_args()
     if not args.records:
         raise SystemExit(
             "D1 and D5 are checked on the allocation inside a cell. "
             "Pass --records results/paper/cells/<split>/contrastive/..."
         )
-    gaps = stage_gaps(Path(args.records))
+    if "decomposition" in Path(args.records).parts:
+        report_decomposition(Path(args.records), args.method or "cdea_decomp")
+        return
+    gaps = stage_gaps(Path(args.records), args.method or "cdea")
     if not gaps:
         raise SystemExit("no cdea rows with stage payoffs in these records")
     print("area   n  soft-hard k  soft-hard l  D2    hard-scored k  hard-scored l")
@@ -102,6 +148,20 @@ def main() -> None:
         verdict = "pass" if g["d2_pass"] else "FAIL"
         print(f"{area:<5} {g['n']:>3}  {g['soft_minus_hard_k']:>11.2f}  {g['soft_minus_hard_l']:>11.2f}  {verdict:<4}  "
               f"{g['hard_minus_scored_k']:>13.2f}  {g['hard_minus_scored_l']:>13.2f}")
+
+
+def report_decomposition(records: Path, method: str) -> None:
+    gaps = decomposition_gaps(records, method)
+    if not gaps:
+        raise SystemExit(f"no {method} rows with stage payoffs in these records")
+    print(f"{method}: D2 gates soft-hard <= 0.5 for every player. D8, D9 and outside-prior are reported.")
+    print("area   n  soft-hard uk   ul    s   D2    hard-scored uk   ul    s    D8    D9   outside")
+    for area, g in gaps.items():
+        verdict = "pass" if g["d2_pass"] else "FAIL"
+        gap = "  ".join(f"{g[f'soft_minus_hard_{p}']:5.2f}" for p in DECOMP_PLAYERS)
+        scored = "  ".join(f"{g[f'hard_minus_scored_{p}']:5.2f}" for p in DECOMP_PLAYERS)
+        print(f"{area:<5} {g['n']:>3}  {gap}  {verdict:<4}  {scored}  {g.get('d8', float('nan')):5.2f} "
+              f"{g.get('d9', float('nan')):5.2f}  {g.get('outside_prior', float('nan')):5.2f}")
 
 
 if __name__ == "__main__":

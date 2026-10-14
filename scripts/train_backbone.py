@@ -61,7 +61,7 @@ LEGACY_TEST_ROOTS = {
 PAPER_SPLIT_DATASETS = {
     "mnist", "cifar10", "pets", "stanford_dogs", "ham10000", "brain_tumor",
     "cifar100", "oxford_pets", "cub200",
-    "planted_patch", "colored_mnist", "imagenet9", "waterbirds",
+    "planted_patch", "planted_pair", "colored_mnist", "imagenet9", "waterbirds",
 }
 COLORED_MNIST_CORRELATION = 0.9
 SHIFT_DATA_SEED = 43
@@ -269,6 +269,11 @@ def get_train_loader(
         )
         return _dataloader(ds, batch_size, True, seed), 10
 
+    if dataset == "planted_pair":
+        from evaluation.planted_cues import PlantedPairClassifier
+        ds = PlantedPairClassifier(split="train", root=data_root, image_size=image_size, seed=0)
+        return _dataloader(ds, batch_size, True, seed), 10
+
     if dataset == "imagenet9":
         from evaluation.imagenet9_pairs import ImageNet9Classifier
         ds = ImageNet9Classifier(split="train", root=data_root / "imagenet9", image_size=image_size)
@@ -364,6 +369,10 @@ def get_val_loader(
         ds = PlantedPatchClassifier(
             split="val", root=data_root, image_size=image_size, patch_seed=0,
         )
+        return _dataloader(ds, batch_size, False, 0)
+    if dataset == "planted_pair":
+        from evaluation.planted_cues import PlantedPairClassifier
+        ds = PlantedPairClassifier(split="val", root=data_root, image_size=image_size, seed=0)
         return _dataloader(ds, batch_size, False, 0)
     if dataset == "imagenet9":
         from evaluation.imagenet9_pairs import ImageNet9Classifier
@@ -703,7 +712,7 @@ def main() -> None:
                         choices=["mnist", "cifar10", "cifar100", "pets", "oxford_pets",
                                  "stanford_dogs", "cub200", "ham10000", "brain_tumor",
                                  "colored_mnist", "colored_cifar10", "texture_mnist",
-                                 "planted_patch", "imagenet9", "waterbirds"])
+                                 "planted_patch", "planted_pair", "imagenet9", "waterbirds"])
     parser.add_argument("--model", dest="model_name", default="resnet18",
                         choices=["resnet18", "resnet34", "resnet50", "mobilenet_v2",
                                  "efficientnet_b0", "efficientnet_v2_s",
