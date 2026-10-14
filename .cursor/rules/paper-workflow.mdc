@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Paper workflow
 
-Read `docs/paper/PROGRESS.md` before editing. Specs are in `docs/paper/PLAN.md` and `docs/paper/FORMULATION.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
+Read `docs/paper/PROGRESS.md` before editing. The method is `docs/paper/FORMULATION_DECOMPOSITION.md` and the evaluation is `docs/paper/EVAL_PLAN.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
 
 `cdea/` is written from `FORMULATION.md`. Do not open the earlier method; it is on tag `framing-v1`. Records go to `results/paper/cells/`. Archive work, including the GH200 seed-1 chain, stays pinned at `cf07ac2` / tag `framing-v1`.
 
@@ -19,7 +19,7 @@ PYTHONPATH=. python -m pytest tests/
 ## Session start
 
 1. `git pull`
-2. Read `docs/paper/PROGRESS.md` and the stage card in `docs/paper/PLAN.md`.
+2. Read `docs/paper/PROGRESS.md`.
 3. `git status` must be clean before new work.
 4. Run the tests.
 5. Check background jobs listed in `PROGRESS.md`.

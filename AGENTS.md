@@ -29,7 +29,7 @@ New records go to `results/paper/cells/`. Each record carries `method_code_hash`
 
 ## Paper workflow
 
-Read `docs/paper/PROGRESS.md` first. The stage card is `docs/paper/PLAN.md`. The same protocol is in `.cursor/rules/paper-workflow.mdc`.
+Read `docs/paper/PROGRESS.md` first. The same protocol is in `.cursor/rules/paper-workflow.mdc`.
 
 Session start: `git pull`, read `PROGRESS.md` and the stage card, clean `git status`, run tests, check listed background jobs.
 

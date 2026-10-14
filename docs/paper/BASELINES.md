@@ -1,8 +1,19 @@
 # Baselines
 
-Dossier for the methods in the baseline protocol (`docs/paper/PLAN.md`, B1–B7).
-A comparison number is written by `evaluation/` when that run exists. This file
-records the pin, the conversion, and the check each method has to pass first.
+Dossier for the comparators. A comparison number is written by `evaluation/`
+when that run exists. This file records the pin, the conversion, and the check
+each method has to pass first.
+
+## Baseline protocol
+
+- **B1.** Name the reviewer question the baseline answers.
+- **B2.** Pin the source.
+- **B3.** Record the reproduction target before running it.
+- **B4.** Use one conversion, `baselines.adapter.adapt_scores`.
+- **B5.** A failure mode raises or writes a failed row.
+- **B6.** Cost is counted in forward and backward passes.
+- **B7.** A baseline PR is reviewed in a fresh session.
+- **B8.** A baseline's algorithm changes only through that review.
 
 ## Shared rules
 
