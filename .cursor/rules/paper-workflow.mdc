@@ -7,7 +7,7 @@ alwaysApply: true
 
 Read `docs/paper/PROGRESS.md` before editing. The method is `docs/paper/FORMULATION_DECOMPOSITION.md` and the evaluation is `docs/paper/EVAL_PLAN.md`. Baselines are in `docs/paper/BASELINES.md`. The revision checklist is `docs/paper/PAPER_LESSONS_AND_WRITING_GUIDE.md`.
 
-`cdea/` is written from `FORMULATION.md`. Do not open the earlier method; it is on tag `framing-v1`. Records go to `results/paper/cells/`. Archive work, including the GH200 seed-1 chain, stays pinned at `cf07ac2` / tag `framing-v1`.
+`cdea/` is written from `FORMULATION_DECOMPOSITION.md` and `FORMULATION.md` (the contrast game, ablation DA2). Do not open the earlier method; it is on tag `framing-v1`. Records go to `results/paper/cells/`. Archive work, including the GH200 seed-1 chain, stays pinned at `cf07ac2` / tag `framing-v1`.
 
 Environment, from the repo root:
 

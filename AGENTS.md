@@ -6,7 +6,7 @@ Guidance for Cursor agents in this repository.
 
 **GAMBIT** — Game theoretic Allocation for Model Based Interpretability and Trust.
 
-CDEA is specified by `docs/paper/FORMULATION.md` and implemented in `cdea/`. A session that writes `cdea/` does not open the earlier method. That method is on tag `framing-v1` only.
+CDEA is specified by `docs/paper/FORMULATION_DECOMPOSITION.md` and implemented in `cdea/`. The contrast game, its ablation DA2, is `docs/paper/FORMULATION.md`. A session that writes `cdea/` does not open the earlier method. That method is on tag `framing-v1` only.
 
 ## Environment
 

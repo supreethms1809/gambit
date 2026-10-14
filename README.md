@@ -2,7 +2,7 @@
 
 Game theoretic Allocation for Model Based Interpretability and Trust.
 
-CDEA allocates an image's evidence between competing hypotheses: the predicted class k and a rival l. It splits the evidence into unique-to-k, unique-to-l and shared, and scores the split by deleting it from the image. The method is in `cdea/` and is specified by `docs/paper/FORMULATION.md` and `docs/paper/FORMULATION_DECOMPOSITION.md`. The evaluation is specified by `docs/paper/EVAL_PLAN.md`.
+CDEA allocates an image's evidence between competing hypotheses: the predicted class k and a rival l. It splits the evidence into unique-to-k, unique-to-l and shared, and scores the split by deleting it from the image. The method is in `cdea/` and is specified by `docs/paper/FORMULATION_DECOMPOSITION.md`. The contrast game, its ablation DA2, is `docs/paper/FORMULATION.md`. The evaluation is specified by `docs/paper/EVAL_PLAN.md`, headed by section 13.
 
 ## Setup
 
