@@ -28,14 +28,14 @@ PYTHONPATH=. python -m pytest tests/
 
 1. Tests pass.
 2. Small commits, each pushed. `git add <specific paths>` only. Never `git add -A` or `git add .`.
-3. Update `PROGRESS.md`, including the Next session block, and push that too.
+3. Update `PROGRESS.md`: the Next session block, Running (with PIDs and logs), the plan's ticks and a dated log line. Push that too.
 
-If a stage overruns, stop at a commit boundary, split the stage in `PROGRESS.md`, and record where it stopped.
+If a plan step overruns, stop at a commit boundary, split the step in `PROGRESS.md`, and record where it stopped.
 
 ## Commits
 
 - One logical change per commit, with its test. `PYTHONPATH=. python -m pytest tests/` passes before every commit.
-- Push after every commit. Branch names: `paper/p0-hygiene`, `paper/p1-formulation`, `paper/p2-baselines`, `paper/p3-eval-plan`, `paper/p4-selection`, `paper/p5-final-runs`, `paper/p6-results`, `paper/p7-writing`.
+- Push after every commit. Branch names are `paper/<topic>`, for example `paper/decomp-readout`, with a PR into `main`.
 - Code and results never share a commit. A results commit names the code hash and the command.
 - A commit that changes numbers says which results it invalidates.
 
