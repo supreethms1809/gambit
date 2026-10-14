@@ -6,7 +6,7 @@ under ``--out``. A cell with a done marker is skipped, so the command can be
 restarted after an interruption. ``--datasets`` assigns units to this
 machine (EVAL_PLAN.md section 10: one dataset runs on one machine).
 
-Val now (selection, the shift-area pilot, G1):
+Val now (selection and the shift-area pilot):
 
     PYTHONPATH=. python scripts/launch_paper_eval.py --split val --datasets cifar10,ham10000
 

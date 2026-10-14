@@ -108,7 +108,7 @@ def clear_markers(cell: dict) -> None:
 
 
 def relaunch_cmds(seed: int, jobs: int) -> list[list[str]]:
-    """Launcher argv lists, contrastive dev first and shift second: the G1
+    """Launcher argv lists, contrastive dev first and shift second: the dev
     read-out must not wait behind the long shift cells."""
     env = dict(os.environ)
     env.setdefault("PYTHONPATH", str(REPO))

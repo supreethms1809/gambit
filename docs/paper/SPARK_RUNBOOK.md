@@ -46,11 +46,11 @@ ViT-B/16 cells cost about 20× ResNet-50 on MPS. The fast-knob ViT cells with ev
 
 ## 2. Val runs (before the freeze)
 
-These feed val selection (EVAL_PLAN 6.2), the shift-area pilot (6.3), and G1 (section 11).
+These feed val selection (EVAL_PLAN 6.2 and 13.3) and the shift-area pilot.
 Test stays locked.
 
 ```bash
-# the dev units, for selection and G1
+# the dev units, for selection
 PYTHONPATH=. python scripts/launch_paper_eval.py --split val --datasets cifar10,ham10000 --seeds 0
 # the shift-area pilot: every shift unit, seed 0
 PYTHONPATH=. python scripts/launch_paper_eval.py --split val --game shift --seeds 0

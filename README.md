@@ -56,7 +56,6 @@ PYTHONPATH=. python scripts/launch_paper_chain.py --seeds 0 --jobs 4
 ## Read-outs
 
 - `scripts/decomp_readout.py --records results/paper/cells --split val`: the decomposition game (`EVAL_PLAN.md` section 13).
-- `scripts/g1_readout.py`: gate G1 (`docs/paper/G1.md`).
 - `analysis/stats.py`:
   - family C: Wilcoxon, Holm and the bootstrap over datasets;
   - families T and D-T: the within-seed sign-flip test and the two-level bootstrap.
