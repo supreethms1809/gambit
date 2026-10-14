@@ -40,6 +40,9 @@ CONTRASTIVE = (
     "ham10000", "brain_tumor",
 )
 SHIFT = ("colored_mnist", "planted_patch", "imagenet9", "waterbirds")
+# Ground truth for the decomposition game (FORMULATION_DECOMPOSITION.md section 6),
+# trained with the planted-patch recipe.
+DECOMP = ("planted_pair",)
 MODELS = ("resnet50", "vit_b_16")
 SEEDS = (0, 1, 2, 3, 4)
 EPOCHS = 15
@@ -49,7 +52,7 @@ LOG_DIR = REPO / "results" / "paper" / "logs" / "train"
 # Longest training first, from the measured Spark wall times, so the parallel
 # queue does not end on one long cell. Only the order matters here.
 LONGEST_FIRST = (
-    "planted_patch", "waterbirds", "imagenet9", "colored_mnist",
+    "planted_patch", "planted_pair", "waterbirds", "imagenet9", "colored_mnist",
     "cifar10", "cifar100",
     "stanford_dogs", "ham10000", "cub200", "oxford_pets", "brain_tumor",
 )
@@ -69,7 +72,7 @@ def paper_cells() -> list[dict]:
                     "batch_size": 32 if model.startswith("resnet") else 16,
                     "balanced": None,
                 })
-    for dataset in SHIFT:
+    for dataset in SHIFT + DECOMP:
         for model in MODELS:
             for seed in SEEDS:
                 cells.append({

@@ -821,3 +821,180 @@ def candidate_applies(name: str, backbone: str) -> bool:
     if name.startswith("chefer"):
         return vit
     return True
+
+
+# ---------------------------------------------------------------------------
+# Decomposition game (FORMULATION_DECOMPOSITION.md). Every method returns three
+# maps for the pair (rank 0, rank 1): unique to k, unique to l, and shared.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DecompMaps:
+    k: torch.Tensor
+    l: torch.Tensor
+    shared: Optional[torch.Tensor]            # None: the method has no shared map (margin_gradcam_ref)
+    grid: Optional[tuple[int, int]]           # None: pixel maps
+    extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class DecompConfig:
+    """One decomposition-CDEA configuration. Defaults are FORMULATION_DECOMPOSITION.md section 3."""
+
+    backend: Optional[str] = None      # None: default_backend(backbone)
+    lr: float = 0.1
+    steps: Optional[int] = None        # None: Knobs.cdea_steps
+    init: str = "minsplit"             # minsplit | mean | uniform
+    binary_masks: bool = True
+    boundary_shift: bool = True
+    draw_seed: int = 0
+    null: bool = True
+    independent: bool = False
+    kind: str = "decompose"            # decompose | contrast (DA2) | gradient_assign (DA3)
+
+
+DECOMP_ABLATIONS: dict[str, Callable[[DecompConfig], DecompConfig]] = {
+    "DA1_independent": lambda c: replace(c, independent=True),
+    "DA2_contrast": lambda c: replace(c, kind="contrast"),
+    "DA3_gradient_assign": lambda c: replace(c, kind="gradient_assign"),
+    "DA4_uniform_init": lambda c: replace(c, init="uniform"),
+    "DA5_mean_init": lambda c: replace(c, init="mean"),
+    "DA6_fractional": lambda c: replace(c, binary_masks=False),
+    "DA7_fixed_boundary": lambda c: replace(c, boundary_shift=False),
+    "DA8_no_null": lambda c: replace(c, null=False),
+    "DA9_steps_25": lambda c: replace(c, steps=25),
+    "DA9_steps_50": lambda c: replace(c, steps=50),
+    "DA9_steps_200": lambda c: replace(c, steps=200),
+}
+
+
+def _decompose_config(cfg: DecompConfig, backbone: str, knobs: Knobs):
+    from cdea.decompose import DecomposeConfig
+
+    return DecomposeConfig(
+        steps=knobs.cdea_steps if cfg.steps is None else int(cfg.steps),
+        lr=float(cfg.lr),
+        init=cfg.init,
+        backend=cfg.backend or default_backend(backbone),
+        ig_steps=knobs.ig_steps,
+        binary_masks=cfg.binary_masks,
+        boundary_shift=cfg.boundary_shift,
+        draw_seed=cfg.draw_seed,
+        null=cfg.null,
+        independent=cfg.independent,
+    )
+
+
+def cdea_decomp(model, x, h, backbone, knobs, device, cfg: Optional[DecompConfig] = None,
+                area: float = 0.05) -> DecompMaps:
+    cfg = cfg or DecompConfig()
+    grid = grid_of(backbone)
+    if cfg.kind == "gradient_assign":
+        from baselines.decomposition import gradient_assign
+
+        plan = gradient_assign(model, x, h.ids, grid[0], grid[1], area)
+        return DecompMaps(k=plan[:, 0], l=plan[:, 1], shared=plan[:, 2], grid=grid)
+    if cfg.kind == "contrast":
+        # The contrast game on the pair, with its s_H shared player, scored on the decomposition matrix.
+        resolved = CdeaConfig(backend=cfg.backend or default_backend(backbone), lr=cfg.lr, steps=cfg.steps,
+                              pair_only=True, draw_seed=cfg.draw_seed)
+        pair = cdea_pair(model, x, h, backbone, knobs, device, resolved, area=area)
+        shared = pair.extra.get("shared")
+        if shared is None:
+            raise ValueError("the contrast game has no shared player when H covers every class")
+        return DecompMaps(k=pair.k, l=pair.l, shared=shared, grid=grid)
+    from cdea.decompose import decompose
+
+    out = decompose(model, x, h, grid[0], grid[1], float(area), _decompose_config(cfg, backbone, knobs))
+    extra = {"null_blur": out.null, "initial": out.initial, "prior_split": out.prior_split}
+    return DecompMaps(k=out.unique_k, l=out.unique_l, shared=out.shared, grid=grid, extra=extra)
+
+
+def _split(e_k, e_l, grid) -> DecompMaps:
+    from baselines.decomposition import min_split
+
+    u_k, u_l, shared = min_split(e_k, e_l)
+    return DecompMaps(k=u_k, l=u_l, shared=shared, grid=grid)
+
+
+def gradcam_minsplit(model, x, h, backbone, knobs, device) -> DecompMaps:
+    """Per-class Grad-CAM at the backbone grid (the repo provider, cross-checked against pytorch-grad-cam)."""
+    evidence = evidence_provider("gradcam", backbone, knobs).explain(x, model, h)
+    return _split(evidence[:, 0], evidence[:, 1], grid_of(backbone))
+
+
+def ig_minsplit(model, x, h, backbone, knobs, device) -> DecompMaps:
+    from baselines.decomposition import captum_ig
+
+    steps = max(2, knobs.ig_steps)
+    return _split(captum_ig(model, x, h.ids[:, 0], steps), captum_ig(model, x, h.ids[:, 1], steps), None)
+
+
+def occlusion_minsplit(model, x, h, backbone, knobs, device) -> DecompMaps:
+    from baselines.decomposition import captum_occlusion
+
+    grid = grid_of(backbone)
+    return _split(captum_occlusion(model, x, h.ids[:, 0], *grid), captum_occlusion(model, x, h.ids[:, 1], *grid), grid)
+
+
+def rise_minsplit(model, x, h, backbone, knobs, device, seed: int = 0) -> DecompMaps:
+    from baselines.rise import class_maps
+
+    kw = dict(n_masks=knobs.rise_masks, s=knobs.rise_cell, seed=seed)
+    maps = [torch.stack([class_maps(model, x[i:i + 1], int(h.ids[i, j]), **kw)[0] for i in range(x.shape[0])])
+            for j in (0, 1)]
+    return _split(maps[0], maps[1], None)
+
+
+def extremal_minsplit(model, x, h, backbone, knobs, device, area: float = 0.05) -> DecompMaps:
+    pair = extremal_class_pair(model, x, h, backbone, knobs, device, area=area)
+    return _split(pair.k, pair.l, None)
+
+
+def occlusion_assign_maps(model, x, h, backbone, knobs, device, area: float = 0.05) -> DecompMaps:
+    from baselines.decomposition import occlusion_assign
+
+    grid = grid_of(backbone)
+    plan = occlusion_assign(model, x, h.ids, grid[0], grid[1], area)
+    return DecompMaps(k=plan[:, 0], l=plan[:, 1], shared=plan[:, 2], grid=grid)
+
+
+def margin_gradcam_ref(model, x, h, backbone, knobs, device) -> DecompMaps:
+    """Reference row for U_k and U_l only: a construction, not a published decomposition."""
+    pair = margin_gradcam_pair(model, x, h, backbone, knobs, device)
+    return DecompMaps(k=pair.k, l=pair.l, shared=None, grid=None)
+
+
+def random_decomp(model, x, h, backbone, knobs, device, seed: int = 0) -> DecompMaps:
+    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    gh, gw = grid_of(backbone)
+    per = torch.rand(x.shape[0], 3, gh * gw, generator=g).to(x.device)
+    return DecompMaps(k=per[:, 0], l=per[:, 1], shared=per[:, 2], grid=(gh, gw))
+
+
+# Val selection grid for decomposition CDEA (EVAL_PLAN.md section 13.3).
+DECOMP_CANDIDATES: dict[str, DecompConfig] = {
+    f"cdea_decomp@lr{lr:g}_t{steps}": DecompConfig(lr=lr, steps=steps)
+    for steps in (50, 100) for lr in (0.05, 0.2)
+}
+
+
+DECOMP_CORE = ("cdea_decomp", "gradcam_minsplit", "ig_minsplit", "occlusion_minsplit", "occlusion_assign",
+               "margin_gradcam_ref", "random_decomp")
+DECOMP_EXTENDED = ("rise_minsplit", "extremal_minsplit")
+DECOMP_AREA_DEPENDENT = {"cdea_decomp", "occlusion_assign", "extremal_minsplit"}
+DECOMP_WHOLE_SAMPLE = ("random_decomp",)
+
+
+def decomposition_method(name: str):
+    return {
+        "cdea_decomp": cdea_decomp,
+        "gradcam_minsplit": gradcam_minsplit,
+        "ig_minsplit": ig_minsplit,
+        "occlusion_minsplit": occlusion_minsplit,
+        "occlusion_assign": occlusion_assign_maps,
+        "margin_gradcam_ref": margin_gradcam_ref,
+        "random_decomp": random_decomp,
+        "rise_minsplit": rise_minsplit,
+        "extremal_minsplit": extremal_minsplit,
+    }[name]

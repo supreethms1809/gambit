@@ -411,3 +411,66 @@ The plan is frozen only after all of the following are recorded in this file and
 7. The cross-platform cell and the run-to-run repeats done on val.
 
 Then add a line reading `frozen: true` at the top of this file, commit, and tag `eval-plan-frozen`. After the freeze, any change to this file is a new dated section with its reason. Results computed before that section are reported under the old plan.
+
+## 13. Decomposition game (added 2026-10-14)
+
+**Status.** Added after the plan above, and the plan is not frozen. The method is `FORMULATION_DECOMPOSITION.md`. **The win conditions in 13.4 are a draft and need the user's sign-off.** After sign-off, this section is committed and tagged `decomp-declared` before any paper run of the game. If it is signed off, this section is the headline, and C1 (CD) becomes descriptive: it is reported as SPEC_k + SPEC_l.
+
+**Disclosures.**
+- The design follows the seed-0 val read of the contrast game and the 2026-10-13 optimisation diagnostic, all on val.
+- No decomposition number from paper data was read before this section was written, except one: a fast-knob smoke cell (CIFAR-10 val, seed 0, n = 4, every method and ablation). It checked the code path. Its printed numbers come from fast knobs and informed no choice.
+- The test split was not read.
+
+### 13.1 Claims
+
+| # | Claim | Metric | Compared against | Test |
+|---|---|---|---|---|
+| D1 | On planted pairs, CDEA's three maps recover the planted roles (U_k on A_k, U_l on A_l, S on C) better than per-class attribution split by the min-split rule | RR@2.5% (13.2) | Construction, confirmed by intervention | Primary, family D-T |
+| D2 | On natural images, CDEA's unique maps are purer and its shared map is more valid than the min-split rows | PUR_k + PUR_l and SV at 5%, ROAD (co-primary) | The model's own logits | Primary, family D-C |
+| — | Joint search against additive per-cell scores | The same metrics, CDEA − occlusion_assign | | Decides the framing (13.4) |
+
+Reported with intervals, untested:
+- SPEC_k + SPEC_l (CD), BAL and SEP;
+- the blur operator, a ∈ {2.5%, 10%} (5% on planted), and ViT-B/16;
+- DA1–DA9, D8, D9, and the outside-prior share;
+- precision of the planted masses;
+- every image, alongside the role-confirmed images.
+
+### 13.2 Metrics
+
+- **RR@a, role recovery.** For each player, the share of its own planted patch that its scored mask covers (recall), averaged over U_k, U_l and S.
+  - **Primary area: 2.5%.** That is 1.2 cells, and a patch is 1 cell, so recall can reach 1 while precision stays near the patch.
+  - **Images.** The primary set is the images whose three roles are all confirmed by `verify_roles`. Exclusions are counted per seed.
+- **PUR and SV.** Defined in `FORMULATION_DECOMPOSITION.md` section 5. Both use the scorer's own null (ROAD, the same cell scores as CDEA's null).
+
+### 13.3 Data, models and selection
+
+- **Planted pairs** (family D-T).
+  - Models: the planted-pair checkpoints on ResNet-50, seeds 0–4, with ViT-B/16 as the robustness row. Not trained; training needs approval.
+  - Development uses val. Confirmatory runs use test after the freeze.
+  - n is 200 kept images per seed.
+- **Natural images** (family D-C). The 8 contrastive datasets, ResNet-50, the existing checkpoints and samples (section 2), seeds as in family C. Test after the freeze.
+- **Selection.**
+  - **CDEA:** only steps and lr, on the existing grid (T ∈ {50, 100}, η ∈ {0.05, 0.2}). The setting is chosen on dev val (CIFAR-10 and HAM10000, seed 0, n = 64) by mean PUR + SV at 5% under ROAD, and one setting serves every dataset.
+  - **Best min-split row:** chosen per dataset on that dataset's val by the same quantity, and per backbone on planted val by RR.
+  - Nothing is chosen on planted test images.
+
+### 13.4 Tests and win conditions (DRAFT, for sign-off)
+
+- **Family D-T** (planted, ResNet-50). The comparison is CDEA − the best min-split row, on RR@2.5%. The machinery is family T's:
+  - the image is the unit, with seeds pooled;
+  - the statistic is the mean over seeds of the per-seed mean paired difference;
+  - the test is a sign-flip permutation within seed (10,000 permutations, seed 0);
+  - the interval is a two-level bootstrap (10,000 resamples, seed 0).
+
+  **D1 holds** if p < 0.05 and the mean is above 0.
+- **Family D-C** (natural, ResNet-50). Each dataset is the unit, averaged over seeds. Two-sided exact Wilcoxon over the 8 datasets, with Holm over 2 comparisons: CDEA − the best min-split row on PUR, and the same on SV.
+
+  **D2 holds** if both reject with a positive median.
+  - Power, stated in advance: the exact p for 8/8 wins is 0.0078. Under Holm the first rejection needs T ≤ 2 (p ≤ 0.023 against 0.025), and the second T ≤ 3.
+- **Joint search against occlusion_assign** (both families, the same tests). The non-inferiority margin is δ = 0.05 on RR (5 points of patch coverage). On PUR and SV it is δ = 0.25 logits.
+  - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0. The paper presents the joint search as the method.
+  - **Otherwise, framing rule:** the contribution is the definition, the scores and the ground truth, and the method is the assignment. CDEA is reported as the joint-search variant. It is called "worse" if the interval lies entirely below −δ.
+- **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route of `G1.md`.
+
+ViT-B/16, blur, the other areas and the all-images set are robustness checks, reported as in section 7.

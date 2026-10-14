@@ -35,6 +35,20 @@ The seed-1 training chain on the GH200 stays pinned at `cf07ac2` (the archive co
   - The baseline rows are not rerun: no baseline calls the changed code.
   - Read with `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`.
 
+## Decomposition game, 2026-10-14 (merged to `main` 2026-10-14)
+
+- **Decision.** The user adopted the handoff `docs/paper/handoff10-13-26.md`, going with its recommendations. CDEA returns to splitting one pair's evidence into unique-to-k, unique-to-l and shared. The contrast game stays as ablation DA2.
+- **Specification.** `FORMULATION_DECOMPOSITION.md` (method, comparators, scores, planted pairs, decisions, and departures from the handoff). The evaluation is `EVAL_PLAN.md` section 13.
+- **Built.**
+  - `cdea/_plan.py` (the refactor; `allocate()` unchanged, checked by `tests/test_plan_refactor.py`), `cdea/null.py` and `cdea/decompose.py`;
+  - `baselines/decomposition.py`;
+  - the scores, the runner (`--game decomposition`), `scripts/decomp_readout.py` and D2/D8/D9 in `scripts/check_degenerate.py`;
+  - the planted-pair dataset and its role check.
+  - The toys pass, including the interaction toy: the joint search finds redundant evidence that single-cell occlusion misses.
+- **Worktree.** Built in `../gambit-decomp` and merged to `main` on 2026-10-14. The merge changes the method hash, so the seed-0 chain records (`9d84e7f2`) no longer match `main`.
+- **Still needs the user.** Sign off the win conditions (`EVAL_PLAN.md` 13.4), then tag `decomp-declared`. Planted-pair training was approved and the dev runs were started before sign-off (see Running).
+- **Fractional-mask test on seed 1** (`G1.md`, reopened 2026-10-13): held, by the same decision. It was never launched.
+
 ## G1 declared read-out, 2026-10-11 (seed 0 only)
 
 `scripts/g1_readout.py --records results/paper/cells results/paper/cdea_boundary --cdea cdea cdea:A10_boundary_shift --seeds 0`
@@ -96,7 +110,7 @@ The default is unchanged until the user confirms adoption.
 
 ## Decomposition game, 2026-10-14
 
-The handoff `handoff10-13-26.md` was adopted with its recommendations. It is built on branch `feat/cdea-decomposition`, in the worktree `../gambit-decomp`, and is not merged, so the seed-0 chain's hash is untouched. Its PROGRESS entry and `FORMULATION_DECOMPOSITION.md` are on that branch. The fractional-mask test below is held.
+The handoff `handoff10-13-26.md` was adopted with its recommendations. It was built on branch `feat/cdea-decomposition` and merged to `main` on 2026-10-14. Its entry is above; the specification is `FORMULATION_DECOMPOSITION.md`. The fractional-mask test below is held.
 
 ## Reopened, 2026-10-13: fractional-mask test, declared before it runs (held 2026-10-14)
 

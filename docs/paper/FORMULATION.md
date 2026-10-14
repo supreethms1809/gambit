@@ -1,6 +1,6 @@
 # CDEA formulation
 
-**Status.** Implemented in `cdea/`. It replaces the earlier formulation (tag `framing-v1`). Ablation A8 scores precomputed maps from that tag. `EVAL_PLAN.md` evaluates this formulation. `EQUATION_AUDIT.md` maps each equation to the code.
+**Status.** Implemented in `cdea/`. Since 2026-10-14 the proposed method is the decomposition game (`FORMULATION_DECOMPOSITION.md`); this contrast game is its ablation DA2. It replaces the earlier formulation (tag `framing-v1`). Ablation A8 scores precomputed maps from that tag. `EVAL_PLAN.md` evaluates this formulation. `EQUATION_AUDIT.md` maps each equation to the code.
 
 ## 1. Why the earlier formulation (tag `framing-v1`) is replaced
 

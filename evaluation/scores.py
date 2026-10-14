@@ -75,6 +75,42 @@ def contrastive_deletion(
         _restore(model, was_training)
 
 
+def drop_matrix(
+    model: nn.Module,
+    x: torch.Tensor,
+    masks: torch.Tensor,
+    class_ids: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+    offset: int = 0,
+    remove=None,
+) -> torch.Tensor:
+    """``(B, P, K)`` drop in class j's logit when mask p is removed.
+
+    Entry ``(p, j)`` is z_j(x) − z_j(x without M_p). ``masks`` is ``(B, P, H, W)``
+    and ``class_ids`` is ``(B, K)``. ``remove(x, mask)`` replaces ROAD removal.
+    """
+    if masks.ndim != 4 or class_ids.shape[0] != masks.shape[0]:
+        raise ValueError("masks must be (batch, players, H, W) and class ids (batch, classes)")
+    class_ids = class_ids.long()
+    if remove is None:
+        def remove(images, mask):
+            return _remove(images, mask, iters, noise, seed, offset)
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            base = model(x)
+            drops = []
+            for p in range(masks.shape[1]):
+                removed = model(remove(x, masks[:, p]))
+                drops.append((base - removed).gather(1, class_ids))
+            return torch.stack(drops, dim=1)
+    finally:
+        _restore(model, was_training)
+
+
 def deletion_matrix(
     model: nn.Module,
     x: torch.Tensor,
@@ -88,26 +124,11 @@ def deletion_matrix(
     """``(B, K, K)`` drop in class i's logit when mask j is removed.
 
     Entry ``(i, j)`` is z_i(x) − z_i(x without M_j). ``masks`` is ``(B, K, H, W)``
-    and ``class_ids`` is ``(B, K)``.
+    and ``class_ids`` is ``(B, K)``. The transpose of ``drop_matrix`` with P = K.
     """
     if masks.ndim != 4 or class_ids.shape[:2] != masks.shape[:2]:
         raise ValueError("masks and class ids must be (batch, hypotheses, ...)")
-    class_ids = class_ids.long()
-    was_training = model.training
-    model.eval()
-    try:
-        with torch.no_grad():
-            base = model(x)
-            drops = []
-            for j in range(masks.shape[1]):
-                removed = model(_remove(x, masks[:, j], iters, noise, seed, offset))
-                drop = base - removed
-                drops.append(drop.gather(1, class_ids))
-            # drops[j] is (B, K): drop in every class logit when mask j is removed.
-            # Stack on the last axis so index j is the removed mask.
-            return torch.stack(drops, dim=-1)
-    finally:
-        _restore(model, was_training)
+    return drop_matrix(model, x, masks, class_ids, iters, noise, seed, offset).transpose(-1, -2)
 
 
 def sufficiency_contrast(
@@ -460,3 +481,96 @@ def shortcut_patch_contrast(
 ) -> torch.Tensor:
     """Mass of the shortcut mask on the class-tied patch minus its mass on the checker."""
     return mass_in(shortcut, patch_a) - mass_in(shortcut, patch_b)
+
+
+# ---------------------------------------------------------------------------
+# Decomposition game (FORMULATION_DECOMPOSITION.md section 5). Players are
+# ordered U_k, U_l, S; classes k, l. Logit units.
+# ---------------------------------------------------------------------------
+
+def null_pixel_masks(
+    grid_h: int,
+    grid_w: int,
+    area: float,
+    height: int,
+    width: int,
+    n: int = 8,
+    seed: int = 0,
+) -> torch.Tensor:
+    """``(n, H, W)``: CDEA's seeded random cell scores (``cdea.null``) through the shared adapter at area a."""
+    from cdea.null import null_unit_scores
+    from evaluation.masks import to_budget_mask
+
+    scores = null_unit_scores(grid_h * grid_w, n, seed)
+    return to_budget_mask(scores, float(area), int(seed), grid_h=grid_h, grid_w=grid_w, height=height, width=width)
+
+
+def null_drops_scored(model: nn.Module, x: torch.Tensor, class_ids: torch.Tensor, null_masks: torch.Tensor,
+                      remove) -> torch.Tensor:
+    """``(B, K)`` mean drop of each class over the null masks, with the scorer's removal."""
+    masks = null_masks.to(device=x.device, dtype=x.dtype)
+    total = None
+    for mask in masks:
+        drops = drop_matrix(model, x, mask.expand(x.shape[0], 1, -1, -1), class_ids, remove=remove)[:, 0]
+        total = drops if total is None else total + drops
+    return total / float(masks.shape[0])
+
+
+def null_drops_road(model: nn.Module, x: torch.Tensor, class_ids: torch.Tensor, area: float,
+                    grid_h: int, grid_w: int, n: int = 8, null_seed: int = 0, iters: int = 24,
+                    noise: float = 0.01, seed: int = 0, offset: int = 0) -> torch.Tensor:
+    """``(B, K)`` ROAD null: the null masks of section 3.2 removed with the method masks' ROAD noise."""
+    masks = null_pixel_masks(grid_h, grid_w, area, x.shape[-2], x.shape[-1], n, null_seed)
+
+    def remove(images, mask):
+        return _remove(images, mask, iters, noise, seed, offset)
+
+    return null_drops_scored(model, x, class_ids, masks, remove)
+
+
+def decomposition_scores(drops: torch.Tensor, null: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Per-image scores from the raw ``(B, 3, 2)`` drops and the ``(B, 2)`` null of the same operator.
+
+    SPEC (raw) is the unique specificity, and SPEC_k + SPEC_l is CD. PUR, SV,
+    BAL and SEP use the excess drop d − ν. Exact absolute values and minima.
+    A NaN player (a method with no shared map) gives NaN scores for that player.
+    """
+    if drops.ndim != 3 or drops.shape[1:] != (3, 2):
+        raise ValueError("drops must be (batch, 3 players, 2 classes)")
+    e = drops - null.unsqueeze(1)
+    spec_k = drops[:, 0, 0] - drops[:, 0, 1]
+    spec_l = drops[:, 1, 1] - drops[:, 1, 0]
+    sv = torch.minimum(e[:, 2, 0], e[:, 2, 1])
+    return {
+        "spec_k": spec_k,
+        "spec_l": spec_l,
+        "cd": spec_k + spec_l,
+        "pur_k": e[:, 0, 0] - e[:, 0, 1].abs(),
+        "pur_l": e[:, 1, 1] - e[:, 1, 0].abs(),
+        "sv": sv,
+        "bal": (e[:, 2, 0] - e[:, 2, 1]).abs(),
+        "sep": sv - torch.maximum(e[:, 0].min(dim=-1).values, e[:, 1].min(dim=-1).values),
+    }
+
+
+def mask_patch_confusion(masks: torch.Tensor, patches: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Precision ``(B, 3, 4)`` and recall ``(B, 3, 3)`` of the masks on the planted patches.
+
+    ``masks`` are U_k, U_l, S and ``patches`` are A_k, A_l, C, all ``(B, 3, H, W)``.
+    Precision ``[p, t]`` is the share of mask p's mass on patch t, with t = 3 the
+    rest of the image. Recall ``[p, t]`` is the share of patch t that mask p covers.
+    """
+    if masks.shape != patches.shape or masks.shape[1] != 3:
+        raise ValueError("masks and patches must both be (batch, 3, H, W)")
+    m = masks.clamp_min(0.0)
+    t = patches.to(dtype=m.dtype)
+    inside = torch.einsum("bphw,bthw->bpt", m, t)
+    total = m.sum(dim=(-1, -2))
+    rest = (total - inside.sum(dim=-1)).clamp_min(0.0)
+    mass = torch.cat([inside, rest.unsqueeze(-1)], dim=-1)
+    precision = torch.where(total.unsqueeze(-1) > 0, mass / total.clamp_min(1e-8).unsqueeze(-1),
+                            torch.zeros_like(mass))
+    area = t.sum(dim=(-1, -2))
+    recall = torch.where(area.unsqueeze(1) > 0, inside / area.clamp_min(1e-8).unsqueeze(1),
+                         torch.zeros_like(inside))
+    return precision, recall

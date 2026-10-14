@@ -5,6 +5,10 @@ dataset × backbone × seed, scored as EVAL_PLAN.md defines, written as records.
     PYTHONPATH=. python scripts/paper_run.py --game contrastive --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 200 --methods all --ablations all
 
+    # decomposition (FORMULATION_DECOMPOSITION.md), three areas
+    PYTHONPATH=. python scripts/paper_run.py --game decomposition --dataset cifar10 \\
+        --backbone resnet50 --seed 0 --split val --n 64 --areas 0.025,0.05,0.1
+
 ``--split test`` is refused until EVAL_PLAN.md is frozen and ``--final`` and
 ``--config-hash`` are given; ``--final`` also refuses a dirty tree.
 """
@@ -24,6 +28,10 @@ from evaluation.run_methods import (  # noqa: E402
     CONTRASTIVE_CANDIDATES,
     CONTRASTIVE_CORE,
     CONTRASTIVE_EXTENDED,
+    DECOMP_ABLATIONS,
+    DECOMP_CANDIDATES,
+    DECOMP_CORE,
+    DECOMP_EXTENDED,
     FAST,
     SHIFT_ABLATIONS,
     SHIFT_CANDIDATES,
@@ -50,7 +58,7 @@ def _list(value: str, every: tuple, core: tuple = ()) -> list[str]:
 
 def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--game", choices=["contrastive", "shift"], required=True)
+    p.add_argument("--game", choices=["contrastive", "shift", "decomposition"], required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--seed", type=int, default=0)
@@ -82,12 +90,17 @@ def spec_from_args(args):
         methods = _list(args.methods, SHIFT_CORE + SHIFT_EXTENDED, SHIFT_CORE)
         ablations = _list(args.ablations, tuple(SHIFT_ABLATIONS))
         candidates = _list(args.candidates, tuple(SHIFT_CANDIDATES))
+    elif args.game == "decomposition":
+        methods = _list(args.methods, DECOMP_CORE + DECOMP_EXTENDED, DECOMP_CORE)
+        ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
+        candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
     else:
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
     operators = tuple(o.strip() for o in args.operators.split(","))
-    candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
+    if args.game != "decomposition":
+        candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.backbone != "resnet50":
         for resnet_only in ("cve", "sc_cve"):
             if resnet_only in methods:
@@ -107,7 +120,7 @@ def spec_from_args(args):
 def run(spec, device_name: str = "auto"):
     from core.device import get_device
     from core.reporting import refuse_final_if_dirty
-    from evaluation.run_cell import run_contrastive, run_shift
+    from evaluation.run_cell import run_contrastive, run_decomposition, run_shift
 
     refuse_final_if_dirty(spec.final)
     import torch
@@ -118,6 +131,8 @@ def run(spec, device_name: str = "auto"):
     make_deterministic(device)
     if spec.game == "shift":
         return run_shift(spec, device)
+    if spec.game == "decomposition":
+        return run_decomposition(spec, device)
     return run_contrastive(spec, device)
 
 
