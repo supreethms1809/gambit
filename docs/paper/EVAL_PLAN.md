@@ -470,7 +470,8 @@ Reported with intervals, untested:
   **D2 holds** if both reject with a positive median.
   - Power, stated in advance: the exact p for 8/8 wins is 0.0078. Under Holm the first rejection needs T ≤ 2 (p ≤ 0.023 against 0.025), and the second T ≤ 3.
 - **Joint search against occlusion_assign** (both families, the same tests). The non-inferiority margin is δ = 0.05 on RR (5 points of patch coverage). On PUR and SV it is δ = 0.25 logits.
-  - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0. The paper presents the joint search as the method.
+  - **Planted ResNet-50 cannot show CDEA ahead.** A patch there is one cell. occlusion_assign scores each cell by deleting it alone (blur), and `verify_roles` confirms a role by deleting its patch alone (ROAD). On the role-confirmed images occlusion_assign should therefore sit near the RR ceiling (13.2) by construction. On family D-T this comparison is read for non-inferiority only. On planted ViT-B/16 (robustness) a patch is 4 cells, and single-cell deletion can miss it.
+  - **CDEA ahead:** the interval of CDEA − occlusion_assign is above 0 on family D-C, and not entirely below −δ on family D-T. The paper presents the joint search as the method.
   - **Otherwise, framing rule:** the contribution is the definition, the scores and the ground truth, and the method is the assignment. CDEA is reported as the joint-search variant. It is called "worse" if the interval lies entirely below −δ.
 - **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route of `G1.md`.
 
