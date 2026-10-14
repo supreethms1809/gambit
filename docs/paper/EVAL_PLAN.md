@@ -453,7 +453,13 @@ Reported with intervals, untested:
 - **Natural images** (family D-C). The 8 contrastive datasets, ResNet-50, the existing checkpoints and samples (section 2), seeds as in family C. Test after the freeze.
 - **Selection.**
   - **CDEA:** only steps and lr, on the existing grid (T ∈ {50, 100}, η ∈ {0.05, 0.2}). The setting is chosen on dev val (CIFAR-10 and HAM10000, seed 0, n = 64) by mean PUR + SV at 5% under ROAD, and one setting serves every dataset.
-  - **Best min-split row:** chosen per dataset on that dataset's val by the same quantity, and per backbone on planted val by RR.
+    - The score is the mean of the two datasets' means, so each dataset counts once whatever its n. A candidate missing either dataset is not ranked.
+    - The default `cdea_decomp` (lr 0.1) is not on the grid. The paper rows use the chosen `cdea_decomp@lr…_t…` label.
+  - **Best min-split row:** chosen per dataset and backbone on that dataset's val by the same quantity, and per backbone on planted val by RR@2.5% on the role-confirmed images.
+    - A method's score is the mean over val seeds of its per-seed mean, and only a method present in every val seed competes.
+    - Planted selection reads the ROAD rows. RR depends only on the mask, so the operator does not change it.
+  - Fast-knob records never inform a choice.
+  - Both choices are printed by `scripts/decomp_readout.py`, which reads val records for them whatever split it is reporting.
   - Nothing is chosen on planted test images.
 
 ### 13.4 Tests and win conditions (DRAFT, for sign-off)
