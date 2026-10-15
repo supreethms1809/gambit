@@ -5,14 +5,14 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+import models.wrapper
 from models.wrapper import (
     CONVENTION_IMAGENET,
     CONVENTION_RAW,
+    INPUT_CONVENTION,
     NormalizedModel,
     choose_input_convention,
     maybe_wrap,
-    read_input_convention,
-    write_input_convention,
 )
 from models.build import paper_checkpoint_name
 
@@ -23,11 +23,13 @@ def test_tie_keeps_raw_and_a_higher_imagenet_score_wins():
     assert choose_input_convention(0.5, 0.51) == CONVENTION_IMAGENET
 
 
-def test_convention_file_roundtrip(tmp_path):
-    path = tmp_path / "input_convention.txt"
-    assert read_input_convention(path) == CONVENTION_RAW
-    write_input_convention(CONVENTION_IMAGENET, path)
-    assert read_input_convention(path) == CONVENTION_IMAGENET
+def test_the_convention_is_built_in_and_names_the_paper_checkpoints():
+    from evaluation.run_models import paper_checkpoint_path
+
+    assert INPUT_CONVENTION == CONVENTION_IMAGENET
+    assert not hasattr(models.wrapper, "read_input_convention")
+    expected = paper_checkpoint_name("cifar10", "resnet50", True, True, 15, 1e-3, 0, CONVENTION_IMAGENET)
+    assert paper_checkpoint_path("cifar10", "resnet50", 0).name == expected
 
 
 def test_raw_checkpoint_name_is_unchanged_and_imagenet_is_separate():

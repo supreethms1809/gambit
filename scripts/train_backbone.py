@@ -628,14 +628,14 @@ def get_or_train(
         ckpt_dir = REPO / "scripts" / "out" / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    from models.wrapper import NormalizedModel, maybe_wrap, read_input_convention
+    from models.wrapper import INPUT_CONVENTION, NormalizedModel, maybe_wrap
 
     # The learning rate belongs in the name: it is the difference between a working
     # fine-tune and one that converges to chance, and without it a re-run at a
     # corrected lr silently returns the broken checkpoint from the cache.
     # ImageNet normalisation is a separate cache key so a raw checkpoint is not
     # reused after the convention changes.
-    convention = read_input_convention()
+    convention = INPUT_CONVENTION
     ckpt_name = paper_checkpoint_name(
         dataset, model_name, pretrained, freeze_backbone, num_epochs, lr, seed, convention,
     )

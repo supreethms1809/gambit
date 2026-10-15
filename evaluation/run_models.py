@@ -44,12 +44,12 @@ def _bare(backbone: str, num_classes: int, pretrained: bool) -> nn.Module:
 
 def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
                           ckpt_dir: Optional[Path] = None, num_epochs: int = 15) -> Path:
-    """Where ``get_or_train`` writes this cell under the recorded input convention.
+    """Where ``get_or_train`` writes this cell under the paper's input convention.
 
     ``ckpt_dir`` and ``num_epochs`` locate smoke checkpoints; paper cells use the defaults.
     """
     from models.build import FINE_TUNED, paper_checkpoint_name
-    from models.wrapper import read_input_convention
+    from models.wrapper import INPUT_CONVENTION
 
     fine_tune = dataset in FINE_TUNED
     name = paper_checkpoint_name(
@@ -60,7 +60,7 @@ def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
         num_epochs=num_epochs,
         lr=1e-4 if fine_tune else 1e-3,
         seed=seed,
-        convention=read_input_convention(),
+        convention=INPUT_CONVENTION,
     )
     return Path(ckpt_dir or PAPER_CKPT_DIR) / name
 

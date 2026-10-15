@@ -6,7 +6,10 @@ Pixels stay in [0, 1]. ``NormalizedModel`` applies ImageNet mean and std
 inside the forward. Train and val use the paper splits. The test split is
 not read. Augmentation is off so both conventions see the same images.
 
-The winner is val balanced accuracy. A tie keeps raw.
+The winner is val balanced accuracy. A tie keeps raw. The probe reports the
+winner and checks it against the built-in ``models.wrapper.INPUT_CONVENTION``.
+It does not change the convention: that is a code change, and it renames
+every paper checkpoint.
 
     PYTHONPATH=. python scripts/probe_input_convention.py
 """
@@ -30,9 +33,9 @@ from evaluation.accuracy import top1_and_balanced
 from models.wrapper import (
     CONVENTION_IMAGENET,
     CONVENTION_RAW,
+    INPUT_CONVENTION,
     choose_input_convention,
     maybe_wrap,
-    write_input_convention,
 )
 from scripts.train_backbone import (
     REPO as TRAIN_REPO,
@@ -145,7 +148,6 @@ def main() -> None:
         scores[CONVENTION_RAW]["val_balanced_acc"],
         scores[CONVENTION_IMAGENET]["val_balanced_acc"],
     )
-    write_input_convention(winner)
     payload = {
         "dataset": "cifar10",
         "model": "resnet50",
@@ -159,10 +161,14 @@ def main() -> None:
         "raw": scores[CONVENTION_RAW],
         "imagenet": scores[CONVENTION_IMAGENET],
         "winner": winner,
+        "built_in": INPUT_CONVENTION,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"input convention: {winner}", flush=True)
+    print(f"input convention: {winner} (built in: {INPUT_CONVENTION})", flush=True)
+    if winner != INPUT_CONVENTION:
+        print("The winner differs from models.wrapper.INPUT_CONVENTION. Changing it renames every "
+              "paper checkpoint; that is a decision, not this script's.", flush=True)
     print(f"wrote {OUT}", flush=True)
 
 
