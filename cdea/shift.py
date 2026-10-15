@@ -2,9 +2,8 @@
 
 Two players, robust and shortcut, plus an empty row. The robust payoff is the
 worst-environment deletion drop. The shortcut payoff is the gap a transplant
-closes. Both are in nats. The loss is their negated sum. The contrastive
-solver is not modified: this loop calls the same Sinkhorn and the same row
-targets.
+closes. Both are in nats. The loss is their negated sum. Reuses the Sinkhorn
+plan, binary draws, and boundary offsets of ``cdea._plan``.
 """
 
 from __future__ import annotations
@@ -17,12 +16,18 @@ import torch
 import torch.nn as nn
 
 from core.eval_mode import eval_mode
-from core.grid import delete, deletion_baseline, pool_sum, transplant
+from core.grid import boundary_offset, delete, deletion_baseline, pool_sum, transplant
 from core.types import HypothesisSet
-from cdea.sinkhorn import hard_top_mass, sinkhorn
-
-EPS = 1e-6
-SINKHORN_ITERS = 20
+from cdea._plan import (
+    SINKHORN_ITERS,
+    _draw,
+    _independent_masks,
+    _offsets,
+    _project,
+    _row_targets,
+)
+from cdea.allocation import DRAW_SEED, EPS
+from cdea.sinkhorn import sinkhorn
 
 
 @dataclass
@@ -37,6 +42,9 @@ class ShiftConfig:
     backend: str = "gradcam"
     ig_steps: int = 16
     kind: str = "allocate"
+    boundary_shift: bool = True
+    binary_masks: bool = True
+    draw_seed: int = DRAW_SEED
 
 
 @dataclass
@@ -47,6 +55,8 @@ class ShiftAllocation:
     row_target: torch.Tensor
     robust_payoff: torch.Tensor
     shortcut_payoff: torch.Tensor
+    initial: Optional[torch.Tensor] = None
+    overshoot: Optional[torch.Tensor] = None
 
 
 def log_odds(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -70,12 +80,13 @@ def robust_payoff(
     grid_w: int,
     reduction: str = "min",
     reference: Optional[list[torch.Tensor]] = None,
+    offset: tuple[int, int] = (0, 0),
 ) -> torch.Tensor:
     """``min_e [m(x_e) - m(x_e ⊖ A)]``, or the mean when ``reduction`` is ``mean``."""
     drops = []
     for index, x in enumerate(xs):
         full = reference[index] if reference is not None else log_odds(model(x), y)
-        edited = log_odds(model(delete(x, mask, grid_h, grid_w)), y)
+        edited = log_odds(model(delete(x, mask, grid_h, grid_w, offset=offset)), y)
         drops.append(full - edited)
     stacked = torch.stack(drops, dim=0)
     if reduction == "mean":
@@ -93,6 +104,7 @@ def transplant_payoff(
     grid_h: int,
     grid_w: int,
     reference: Optional[list[torch.Tensor]] = None,
+    offset: tuple[int, int] = (0, 0),
 ) -> torch.Tensor:
     """Mean over environments other than id of the gap a transplant closes.
 
@@ -105,7 +117,7 @@ def transplant_payoff(
     closed = []
     for index, x_e in enumerate(xs[1:], start=1):
         m_e = reference[index] if reference is not None else log_odds(model(x_e), y)
-        mixed = transplant(x_id, x_e, mask, grid_h, grid_w)
+        mixed = transplant(x_id, x_e, mask, grid_h, grid_w, offset=offset)
         m_mix = log_odds(model(mixed), y)
         closed.append((m_id - m_e).abs() - (m_mix - m_e).abs())
     return torch.stack(closed, dim=0).mean(dim=0)
@@ -119,6 +131,7 @@ def deletion_shortcut_payoff(
     grid_h: int,
     grid_w: int,
     reference: Optional[list[torch.Tensor]] = None,
+    offset: tuple[int, int] = (0, 0),
 ) -> torch.Tensor:
     """Ablation: close the gap by deleting the same units in every environment."""
     x_id = xs[0]
@@ -126,8 +139,8 @@ def deletion_shortcut_payoff(
     closed = []
     for index, x_e in enumerate(xs[1:], start=1):
         m_e = reference[index] if reference is not None else log_odds(model(x_e), y)
-        m_id_d = log_odds(model(delete(x_id, mask, grid_h, grid_w)), y)
-        m_e_d = log_odds(model(delete(x_e, mask, grid_h, grid_w)), y)
+        m_id_d = log_odds(model(delete(x_id, mask, grid_h, grid_w, offset=offset)), y)
+        m_e_d = log_odds(model(delete(x_e, mask, grid_h, grid_w, offset=offset)), y)
         closed.append((m_id - m_e).abs() - (m_id_d - m_e_d).abs())
     return torch.stack(closed, dim=0).mean(dim=0)
 
@@ -146,6 +159,54 @@ def overshoot_share(
     crossed = (m_mix - m_env) * gap < 0
     overshoot = torch.where(crossed, residual, torch.zeros_like(residual))
     return overshoot / gap.abs().clamp_min(1e-8)
+
+
+def mean_overshoot_share(
+    model: nn.Module,
+    xs: list[torch.Tensor],
+    y: torch.Tensor,
+    mask: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    reference: Optional[list[torch.Tensor]] = None,
+) -> torch.Tensor:
+    """Mean over environments other than id of ``overshoot_share`` under transplant."""
+    x_id = xs[0]
+    m_id = reference[0] if reference is not None else log_odds(model(x_id), y)
+    shares = []
+    for index, x_e in enumerate(xs[1:], start=1):
+        m_e = reference[index] if reference is not None else log_odds(model(x_e), y)
+        m_mix = log_odds(model(transplant(x_id, x_e, mask, grid_h, grid_w)), y)
+        shares.append(overshoot_share(m_id, m_mix, m_e))
+    return torch.stack(shares, dim=0).mean(dim=0)
+
+
+def shift_cell_drops(
+    model: nn.Module,
+    xs: list[torch.Tensor],
+    y: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    reduction: str = "min",
+    shortcut: str = "transplant",
+) -> torch.Tensor:
+    """``(B, 2, R)`` single-cell scores ``(g_R, g_S)`` for robust and shortcut players.
+
+    Cell r alone is blur-deleted in every environment for ``g_{R, r}`` and
+    transplanted from each other environment into ``x_id`` for ``g_{S, r}``.
+    """
+    units = grid_h * grid_w
+    batch = xs[0].shape[0]
+    cfg = ShiftConfig(robust=reduction, shortcut=shortcut)
+    with eval_mode(model), torch.no_grad():
+        reference = [log_odds(model(view), y) for view in xs]
+        r_scores, s_scores = [], []
+        for r in range(units):
+            mask = xs[0].new_zeros(batch, units)
+            mask[:, r] = 1.0
+            r_scores.append(robust_payoff(model, xs, y, mask, grid_h, grid_w, reduction, reference))
+            s_scores.append(_shortcut(model, xs, y, mask, grid_h, grid_w, cfg, reference))
+        return torch.stack([torch.stack(r_scores, dim=-1), torch.stack(s_scores, dim=-1)], dim=1)
 
 
 def integrated_gap(
@@ -244,25 +305,37 @@ def allocate_shift(
             opt = torch.optim.Adam([theta], lr=float(cfg.lr))
             row_target = _row_targets(players, units, float(area), x_id.device, x_id.dtype)
             dual: list = [None]
+            with torch.no_grad():
+                initial = _masks(theta.detach(), row_target, float(area), cfg, [None])
+            generator = torch.Generator(device="cpu").manual_seed(int(cfg.draw_seed))
+            limit = boundary_offset(x_id.shape[-2], x_id.shape[-1], grid_h, grid_w)
+            joint = not cfg.independent and cfg.projection == "sinkhorn"
             steps = 100 if cfg.steps is None else int(cfg.steps)
             for _ in range(steps):
                 opt.zero_grad(set_to_none=True)
-                robust_mask, shortcut_mask = _player_masks(theta, row_target, float(area), cfg, dual)
-                loss = _loss(model, xs, y, robust_mask, shortcut_mask, grid_h, grid_w, cfg, reference)
+                offsets = _offsets(generator, players, limit) if cfg.boundary_shift else None
+                masks = _masks(theta, row_target, float(area), cfg, dual)
+                if cfg.binary_masks:
+                    shape = (units,) if joint else (players, units)
+                    masks = _draw(masks, torch.rand(shape, generator=generator), joint)
+                loss = _loss(model, xs, y, masks[:, 0], masks[:, 1], grid_h, grid_w, cfg, reference, offsets)
                 loss.backward()
                 opt.step()
             with torch.no_grad():
-                robust_mask, shortcut_mask = _player_masks(theta, row_target, float(area), cfg, dual)
                 if cfg.independent or cfg.projection != "sinkhorn":
-                    transport = torch.stack([robust_mask, shortcut_mask], dim=1)
+                    player_masks = _masks(theta.detach(), row_target, float(area), cfg, dual)
+                    transport = player_masks
                     target = row_target[:players]
                 else:
                     transport = sinkhorn(theta.detach(), row_target, iters=SINKHORN_ITERS, dual=dual)
+                    player_masks = transport[:, :players]
                     target = row_target
+                robust_mask, shortcut_mask = player_masks[:, 0], player_masks[:, 1]
                 pay_r = robust_payoff(
                     model, xs, y, robust_mask, grid_h, grid_w, cfg.robust, reference,
                 )
                 pay_s = _shortcut(model, xs, y, shortcut_mask, grid_h, grid_w, cfg, reference)
+                over = mean_overshoot_share(model, xs, y, shortcut_mask, grid_h, grid_w, reference)
         finally:
             for p, flag in zip(model.parameters(), flags):
                 p.requires_grad_(flag)
@@ -273,59 +346,34 @@ def allocate_shift(
         row_target=target.detach(),
         robust_payoff=pay_r.detach(),
         shortcut_payoff=pay_s.detach(),
+        initial=initial.detach(),
+        overshoot=over.detach(),
     )
 
 
-def _shortcut(model, xs, y, mask, grid_h, grid_w, cfg: ShiftConfig, reference):
+def _shortcut(model, xs, y, mask, grid_h, grid_w, cfg: ShiftConfig, reference, offset: tuple[int, int] = (0, 0)):
     if cfg.shortcut == "deletion":
-        return deletion_shortcut_payoff(model, xs, y, mask, grid_h, grid_w, reference)
-    return transplant_payoff(model, xs, y, mask, grid_h, grid_w, reference)
+        return deletion_shortcut_payoff(model, xs, y, mask, grid_h, grid_w, reference, offset=offset)
+    return transplant_payoff(model, xs, y, mask, grid_h, grid_w, reference, offset=offset)
 
 
-def _loss(model, xs, y, robust_mask, shortcut_mask, grid_h, grid_w, cfg, reference) -> torch.Tensor:
-    robust = robust_payoff(model, xs, y, robust_mask, grid_h, grid_w, cfg.robust, reference)
-    shortcut = _shortcut(model, xs, y, shortcut_mask, grid_h, grid_w, cfg, reference)
+def _loss(model, xs, y, robust_mask, shortcut_mask, grid_h, grid_w, cfg, reference, offsets=None) -> torch.Tensor:
+    off_r = (0, 0) if offsets is None else offsets[0]
+    off_s = (0, 0) if offsets is None else offsets[1]
+    robust = robust_payoff(model, xs, y, robust_mask, grid_h, grid_w, cfg.robust, reference, offset=off_r)
+    shortcut = _shortcut(model, xs, y, shortcut_mask, grid_h, grid_w, cfg, reference, offset=off_s)
     return -(robust + shortcut).sum()
 
 
-def _row_targets(players: int, units: int, area: float, device, dtype) -> torch.Tensor:
-    budget = float(area) * float(units)
-    if players * float(area) > 1.0 + 1e-6:
-        raise ValueError("infeasible: players times area exceeds 1")
-    empty = float(units) - players * budget
-    values = [budget] * players + [max(empty, 0.0)]
-    return torch.tensor(values, device=device, dtype=dtype)
+def _masks(theta, row_target, area: float, cfg: ShiftConfig, dual: list | None = None) -> torch.Tensor:
+    if cfg.independent:
+        return _independent_masks(theta[:, :2], area, cfg.projection)
+    return _project(theta, row_target, cfg.projection, dual)[:, :2]
 
 
 def _player_masks(theta, row_target, area, cfg: ShiftConfig, dual) -> tuple[torch.Tensor, torch.Tensor]:
-    if cfg.independent:
-        masks = _independent(theta[:, :2], area, cfg.projection)
-        return masks[:, 0], masks[:, 1]
-    plan = _project(theta, row_target, cfg.projection, dual)
-    return plan[:, 0], plan[:, 1]
-
-
-def _project(theta, row_target, projection: str, dual) -> torch.Tensor:
-    if projection == "sinkhorn":
-        return sinkhorn(theta, row_target, iters=SINKHORN_ITERS, dual=dual)
-    if projection != "hard_top_mass":
-        raise ValueError(f"unknown projection {projection!r}")
-    budgets = row_target if row_target.ndim == 1 else row_target[0]
-    rows = [hard_top_mass(theta[:, index], float(budgets[index])) for index in range(theta.shape[1])]
-    return torch.stack(rows, dim=1)
-
-
-def _independent(theta: torch.Tensor, area: float, projection: str) -> torch.Tensor:
-    _batch, players, units = theta.shape
-    budget = float(area) * float(units)
-    if projection == "hard_top_mass":
-        return torch.stack([hard_top_mass(theta[:, p], budget) for p in range(players)], dim=1)
-    target = torch.tensor([budget, float(units) - budget], device=theta.device, dtype=theta.dtype)
-    masks = []
-    for player in range(players):
-        both = torch.stack([theta[:, player], theta.new_zeros(theta.shape[0], units)], dim=1)
-        masks.append(sinkhorn(both, target, iters=SINKHORN_ITERS)[:, 0])
-    return torch.stack(masks, dim=1)
+    masks = _masks(theta, row_target, float(area), cfg, dual)
+    return masks[:, 0], masks[:, 1]
 
 
 def _initial_theta(evidence, units: int, init: str, x: torch.Tensor) -> torch.Tensor:
@@ -384,7 +432,9 @@ def _first_order(model, xs, y, reference, grid_h, grid_w, area, cfg: ShiftConfig
     with torch.no_grad():
         pay_r = robust_payoff(model, xs, y, robust, grid_h, grid_w, cfg.robust, reference)
         pay_s = _shortcut(model, xs, y, shortcut, grid_h, grid_w, cfg, reference)
+        over = mean_overshoot_share(model, xs, y, shortcut, grid_h, grid_w, reference)
     target = _row_targets(2, units, area, xs[0].device, xs[0].dtype)[:2]
+    initial = torch.stack([robust, shortcut], dim=1)
     return ShiftAllocation(
         robust=robust,
         shortcut=shortcut,
@@ -392,6 +442,8 @@ def _first_order(model, xs, y, reference, grid_h, grid_w, area, cfg: ShiftConfig
         row_target=target,
         robust_payoff=pay_r.detach(),
         shortcut_payoff=pay_s.detach(),
+        initial=initial.detach(),
+        overshoot=over.detach(),
     )
 
 
