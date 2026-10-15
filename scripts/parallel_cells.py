@@ -30,8 +30,9 @@ class Job:
 # contrastive ResNet probes are the light ones. Measured peaks in past
 # summaries override these seeds (see mem_class).
 MEM_SEED_HIGH = (
-    ("shift", None, None),          # every shift cell, either backbone
-    ("contrastive", None, "vit"),   # IG-backed CDEA and margin IG on ViT
+    ("shift", None, None),            # every shift cell, either backbone
+    ("contrastive", None, "vit"),     # IG-backed CDEA and margin IG on ViT
+    ("decomposition", None, "vit"),   # IG-backed evidence and CDEA on ViT, as for contrastive
 )
 
 
