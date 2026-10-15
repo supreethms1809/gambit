@@ -2,8 +2,8 @@
 
 ResNet-50 and ViT-B/16 are built the same way the training script built them:
 torchvision weights when ``pretrained`` is set, then a new linear head.
-Checkpoint filenames follow ``paper_checkpoint_name``. The recorded input
-convention lives in ``results/paper/input_convention.txt``.
+Checkpoint filenames follow ``paper_checkpoint_name``. The paper's input
+convention is ``models.wrapper.INPUT_CONVENTION``.
 """
 
 from __future__ import annotations

@@ -24,9 +24,9 @@ On the GH200:
 
 ## Current state, 2026-10-14
 
-- **Code.** Method hash `8486647c`, from the shift-game commits of 2026-10-14 (see the log).
-  - Before those commits the hash was `a5deb9fe`.
-  - The decomposition game did not change. A CPU smoke cell at both hashes gives identical rows, every column except the hash (7 core methods, 28 rows).
+- **Code.** Method hash `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
+  - The decomposition game did not change. A CPU smoke cell at all three hashes gives identical rows, every column except the hash (7 core methods, 28 rows).
+  - The input convention is built in (`models.wrapper.INPUT_CONVENTION = "imagenet"`). No file is read, and every paper checkpoint name is unchanged.
   - On `main`: the decomposition method, its runner (`paper_run.py --game decomposition`) and the planted-pair dataset with `verify_roles`.
   - Also on `main`: `scripts/decomp_readout.py` (RR, val-only selection, the candidate ranking and family D-T statistics) and D2/D8/D9 in `scripts/check_degenerate.py`.
 - **Tags.** `framing-v1` and `decomp-declared` (on `80caf2a`) exist. `eval-plan-frozen`, `g0-baselines` and `final-runs` do not.
@@ -45,7 +45,7 @@ On the GH200:
 
   | Where | What | Counts on `main` |
   |---|---|---|
-  | `results/paper/decomp_dev/` | Dev cells: CIFAR-10 and HAM10000, ResNet-50, seed 0, val, n = 64, every method, DA1–DA9 and the 4-config grid. Planted-pair val cells: ResNet-50, seeds 0–4, n = 200 | written at `a5deb9fe`; same decomposition code as `8486647c` (open decision 5). Read with `--expect-hash a5deb9fe` |
+  | `results/paper/decomp_dev/` | Dev cells: CIFAR-10 and HAM10000, ResNet-50, seed 0, val, n = 64, every method, DA1–DA9 and the 4-config grid. Planted-pair val cells: ResNet-50, seeds 0–4, n = 200 | written at `a5deb9fe`; same decomposition code as `11bdeb54` (open decision 5). Read with `--expect-hash a5deb9fe` |
   | `results/paper/cells/` | The contrast-game seed-0 chain, stopped at 10 of 24 units | no, `9d84e7f2` |
   | `results/paper/runs/`, `results/paper/superseded/`, `results/paper/cdea_*` | Earlier objectives and diagnostics | no, never scored |
 
@@ -142,7 +142,7 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 3. **Contrast-game rows.** C1–C5 are descriptive (section 1). Either DA2 inside the decomposition cells is enough, or the contrast-game chain is rerun at the current hash.
 4. **Section 12's freeze list** was written for the contrast-game paper: G0 tag, CVE reproduction, CUB part scorer, two-cue classifiers. Decide which items apply, and add the decomposition ones: the CDEA selection, the D2 and D9 checks, and the planted ViT.
 
-5. **Records written at `a5deb9fe`.** `results/paper/decomp_dev/` was written before the shift commits changed the hash to `8486647c`. The decomposition rows are identical at both hashes (see Current state). Either accept them under `8486647c` and record that here, or rerun them.
+5. **Records written at `a5deb9fe`.** `results/paper/decomp_dev/` was written before two commits changed the hash to `11bdeb54`. The decomposition rows are identical at every hash (see Current state). Either accept them under `11bdeb54` and record that here, or rerun them.
 6. **Shift gate and plan.**
    - Train the seed-1 shift checkpoints for the gate (SH2), or not.
    - The 2026-10-14 edit of `SHIFT_EVAL_PLAN.md` dropped:
@@ -162,6 +162,11 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-14, input convention.** It is built in as `models.wrapper.INPUT_CONVENTION = "imagenet"`. `results/paper/input_convention.txt` and its reader were removed.
+  - The old reader silently fell back to `raw` when the file was missing, which would have renamed every paper checkpoint.
+  - `probe_input_convention.py` now reports its winner against the constant and writes nothing.
+  - The checkpoint names for all 150 dataset × backbone × seed cells are unchanged.
+  - The hash moved from `8486647c` to `11bdeb54`, and the decomposition rows are identical.
 - **2026-10-14, later.** The shift-game changes were reviewed and committed, which moved the method hash from `a5deb9fe` to `8486647c`.
   - **Changes:**
     - binary draws, boundary offsets and the shared plan helpers in `cdea/shift.py`;

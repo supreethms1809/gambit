@@ -17,41 +17,18 @@ CONVENTION_RAW = "raw"
 CONVENTION_IMAGENET = "imagenet"
 CONVENTIONS = (CONVENTION_RAW, CONVENTION_IMAGENET)
 
+# The paper's input convention, built in. scripts/probe_input_convention.py
+# chose it on CIFAR-10 ResNet-50 val balanced accuracy (87bf745, 2026-10-04).
+# Checkpoint names and new training use it. Loading a checkpoint uses that
+# checkpoint's own tag (``checkpoint_input_convention``), never this constant.
+INPUT_CONVENTION = CONVENTION_IMAGENET
+
 
 def choose_input_convention(raw_score: float, imagenet_score: float) -> str:
     """Keep raw on a tie. ImageNet normalisation wins only when its val score is higher."""
     if imagenet_score > raw_score:
         return CONVENTION_IMAGENET
     return CONVENTION_RAW
-
-
-def default_convention_path() -> "Path":
-    from pathlib import Path
-
-    return Path(__file__).resolve().parent.parent / "results" / "paper" / "input_convention.txt"
-
-
-def read_input_convention(path=None) -> str:
-    """``raw`` when the file is absent. The probe writes the winner before a restart."""
-    from pathlib import Path
-
-    path = Path(path) if path is not None else default_convention_path()
-    if not path.is_file():
-        return CONVENTION_RAW
-    text = path.read_text(encoding="utf-8").strip()
-    if text not in CONVENTIONS:
-        raise ValueError(f"input convention must be one of {CONVENTIONS}, got {text!r}")
-    return text
-
-
-def write_input_convention(convention: str, path=None) -> None:
-    from pathlib import Path
-
-    if convention not in CONVENTIONS:
-        raise ValueError(f"input convention must be one of {CONVENTIONS}, got {convention!r}")
-    path = Path(path) if path is not None else default_convention_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(convention + "\n", encoding="utf-8")
 
 
 def maybe_wrap(model: nn.Module, convention: str) -> nn.Module:
