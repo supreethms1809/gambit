@@ -18,9 +18,17 @@ On the GH200:
 1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
    - `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism;
    - `test_plan_refactor` compares against a CPU reference that a Mac does not reproduce, even at the commit that wrote it.
-2. Check the jobs under "Running".
-3. Make the dev selection (plan A2), then run the degenerate checks (plan A3). Record the chosen labels in the log.
-4. Run the shift gate's seed-0 cells (Shift paper, SH1).
+2. Check the jobs under "Running". The planted-pair ViT-B/16 training must have finished: the launcher trains any checkpoint it cannot find, and it cannot see a trainer started outside it.
+3. Dry-run, then launch the val phases in one queue, two large and two small cells at once:
+   ```bash
+   PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate --dry-run
+   nohup env PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate > results/paper/logs/launch_runs.log 2>&1 &
+   ```
+   - Record the launcher's PID under "Running".
+   - Cell logs are in `results/paper/logs/runs/`.
+   - The same command resumes after a stop and skips done cells.
+4. When dev is done, make the dev selection (A2) and run the degenerate checks (A3). Record the chosen labels in the log.
+5. When the shift gate is done, read it (SH2). Only then launch `shift-val` (SH3).
 
 ## Current state, 2026-10-14
 
@@ -37,7 +45,7 @@ On the GH200:
   |---|---|
   | Natural datasets, seed 0 | 7 contrastive probes on both backbones; ImageNet uses torchvision weights |
   | Natural datasets, seed 1 | 7 contrastive probes on both backbones, from the seed-1 chain pinned at `cf07ac2` |
-  | Natural datasets, seeds 2–4 | not trained (open decision 2) |
+  | Natural datasets, seeds 2–4 | not trained; the launcher trains each one before the first cell that needs it |
   | Planted pairs, ResNet-50, seeds 0–4 | trained 2026-10-14; best val balanced accuracy 0.986–0.987 |
   | Planted pairs, ViT-B/16, seeds 0–4 | training started 2026-10-14 01:13 UTC |
 
@@ -45,8 +53,10 @@ On the GH200:
 
   | Where | What | Counts on `main` |
   |---|---|---|
-  | `results/paper/decomp_dev/` | Dev cells: CIFAR-10 and HAM10000, ResNet-50, seed 0, val, n = 64, every method, DA1–DA9 and the 4-config grid. Planted-pair val cells: ResNet-50, seeds 0–4, n = 200 | written at `a5deb9fe`; same decomposition code as `11bdeb54` (open decision 5). Read with `--expect-hash a5deb9fe` |
-  | `results/paper/cells/` | The contrast-game seed-0 chain, stopped at 10 of 24 units | no, `9d84e7f2` |
+  | `results/paper/cells/val/decomposition/`, `.../shift/` | Written by `scripts/launch_runs.py` from now on | yes, when the hash matches |
+  | `results/paper/gate_shift/` | The shift gate cells, written by the `shift-gate` phase | yes, when the hash matches |
+  | `results/paper/decomp_dev/` | The first dev and planted ResNet-50 val cells | no. Written at `a5deb9fe` and rerun at the current hash by user decision (2026-10-14); kept, not scored |
+  | `results/paper/cells/val/contrastive/` | The contrast-game seed-0 chain, stopped at 10 of 24 units | no, `9d84e7f2` |
   | `results/paper/runs/`, `results/paper/superseded/`, `results/paper/cdea_*` | Earlier objectives and diagnostics | no, never scored |
 
 ## Running
@@ -63,42 +73,47 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 
 ## Plan
 
-**A. Dev selection on val (GH200, nothing to build)**
-- [ ] A1. Check that the dev and planted ResNet-50 val cells finished, with no method errors in their `summary.json`.
+**A. Dev selection on val (GH200)**
+- [ ] A1. Run the `dev` and `planted-val` phases of `scripts/launch_runs.py` at the current hash (Next session, step 3). A cell that finishes with a method error is marked failed.
 - [ ] A2. Read them:
   ```bash
-  PYTHONPATH=. python scripts/decomp_readout.py --records results/paper/decomp_dev --split val --expect-hash a5deb9fe
+  PYTHONPATH=. python scripts/decomp_readout.py --records results/paper/cells --split val
   ```
   Record the chosen `cdea_decomp@lr…_t…` setting and the best min-split row per dataset and backbone (13.3).
 - [ ] A3. Run the degenerate checks on each dev cell, for the chosen setting:
   ```bash
-  PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/decomp_dev/val/decomposition/<dataset>/resnet50/seed0 --method <chosen label>
+  PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/cells/val/decomposition/<dataset>/resnet50/seed0 --method <chosen label>
   ```
   - D2 is gated. D8, D9 and the outside-prior share are reported.
   - If D9 (`same_as_init`) is high, CDEA stayed on its min-split start. Stop and decide before going on.
-- [ ] A4. Once ViT-B/16 planted training is done, run its val cells and choose its min-split row by RR (13.3).
+- [ ] A4. Planted ViT-B/16 val cells are in `planted-val`. Choose their min-split row by RR (13.3) with the same read-out.
 
-**B. Wiring (GH200)**
-- [ ] B1. Add the decomposition game to `scripts/launch_paper_chain.py`, for the natural datasets and `planted_pair`.
-- [ ] B2. Give `scripts/completion_check.py` the decomposition manifest. `FINAL_RUNS.md` and `tests/test_completion_check.py` pin today's contrastive manifest, so they change in the same commit.
+**B. Wiring**
+- [x] B1. `scripts/launch_runs.py` (2026-10-14) schedules both games by phase, two large and two small cells at once, and trains missing checkpoints. `--dry-run` lists every cell as done or pending.
+- [ ] B2. Give `scripts/completion_check.py` the decomposition manifest. `FINAL_RUNS.md` and `tests/test_completion_check.py` pin today's contrastive manifest, so they change in the same commit. Until then, `launch_runs.py --dry-run` is the completion check.
 - [ ] B3. Give `analysis/build_results.py` the D-T and D-C tables. `AUDIT.md` and `tests/test_audit_results.py` pin today's dataset list, so they change with it.
 - [ ] B4. Add the decomposition units to `scripts/smoke_e2e.py`, and run the smoke on the GH200 (section 12, item 6).
 
 **C. Natural-image val (family D-C selection)**
-- [ ] C1. Run val cells for the 8 natural datasets, ResNet-50, seed 0. Choose the best min-split row per dataset (13.3).
+- [ ] C1. The `natural-val` phase runs the other 6 natural datasets on ResNet-50 and all 8 on ViT-B/16, seed 0, n = 64. Choose the best min-split row per dataset and backbone (13.3).
 - [ ] C2. Time a cell, then set n per seed and the test-sample seeds (2.4).
 
 **D. Checkpoints**
-- [ ] D1. Train natural-dataset seeds 2–4, after the user decides (open decision 2).
+- [ ] D1. Natural seeds 2–4: the launcher trains each checkpoint before the first cell that needs it (user decision, 2026-10-14).
 
 **E. Freeze**
 - [ ] E1. Rewrite section 12 for the decomposition paper (open decision 4).
 - [ ] E2. Record the selections, hashes and n in `EVAL_PLAN.md`. Add `frozen: true` and tag `eval-plan-frozen`.
+- [ ] E3. Make DA1–DA9 start from the chosen setting. Today `_decomp_maps` applies them to `DecompConfig()` (lr 0.1 and the knobs' steps), which is not a candidate. That is fine for dev, but the test ablations must vary the chosen setting.
 
 **F. Confirmatory runs (test, `--final`, after E2 only)**
+- F1–F3 are one launch, with the n set at the freeze:
+  ```bash
+  PYTHONPATH=. python scripts/launch_runs.py --phases test --cdea <chosen> --final --config-hash <frozen hash> --n-test resnet50:<n>,vit_b_16:<n>
+  ```
 - [ ] F1. Family D-T: planted pairs, ResNet-50, seeds 0–4, n = 200 kept images per seed. ViT-B/16 is the robustness row.
 - [ ] F2. Family D-C: the 8 natural datasets, ResNet-50, seeds 0–4.
-- [ ] F3. Robustness and ablations: blur, the other areas, ViT-B/16, every image, DA1–DA9.
+- [ ] F3. Robustness and ablations: blur, the other areas, ViT-B/16, every image. DA1–DA9 run on section 8's units and seeds (CIFAR-100, CUB-200, brain tumor and ImageNet; seeds 0–2; ResNet-50).
 - [ ] F4. Read out and apply 13.4.
 
 **G. Results and paper**
@@ -111,40 +126,30 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented on 2026-10-14 and ready for the val gate. The test split stays locked.
 - **Checkpoints** (on the GH200):
   - seed 0: the four shift fine-tunes (`colored_mnist`, `planted_patch`, `imagenet9`, `waterbirds`) on both backbones;
-  - seed 1: not trained;
+  - seed 1: not trained; the `shift-gate` phase trains Waterbirds and `planted_patch` ResNet-50 first;
   - Stanford Dogs restyled trains in the chain.
 - **Known errors.** `cdea_shift:S6_precomputed` errors without a maps directory, like A8. Every other core method and ablation ran on a fast smoke cell (`planted_patch`, n = 2).
 
 **Plan**
-- [ ] SH1. Gate, seed 0. The gate is Waterbirds and `planted_patch` val, ResNet-50, seeds 0 and 1, n = 64, area 5%. Don't use `gate_shift.py --run` yet: it runs the four cells in order and stops at the first missing seed-1 checkpoint. Run seed 0 directly:
+- [ ] SH1. The gate: Waterbirds and `planted_patch` val, ResNet-50, seeds 0 and 1, n = 64, area 5%. The `shift-gate` phase runs all four cells (Next session, step 3) and trains the missing seed-1 checkpoints first (user decision, 2026-10-14). Records go to `results/paper/gate_shift/`, apart from `shift-val`.
+- [ ] SH2. Read the gate and check the degenerate routes:
   ```bash
-  PYTHONPATH=. python scripts/paper_run.py --game shift --dataset waterbirds --backbone resnet50 --seed 0 --split val --n 64 --methods cdea_shift,shift_assign,gap_attribution,attribution_difference
-  PYTHONPATH=. python scripts/paper_run.py --game shift --dataset planted_patch --backbone resnet50 --seed 0 --split val --n 64 --methods cdea_shift,shift_assign,gap_attribution,attribution_difference
-  ```
-- [ ] SH2. Train the seed-1 shift checkpoints for the gate, after the user decides (open decision 6):
-  ```bash
-  PYTHONPATH=. python scripts/launch_paper_training.py --seeds 1 --datasets waterbirds,planted_patch --models resnet50
-  ```
-  Then run the seed-1 cells the same way.
-- [ ] SH3. Read the gate and check the degenerate routes:
-  ```bash
-  PYTHONPATH=. python scripts/gate_shift.py --records results/paper/cells --split val
-  PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/cells/val/shift/<dataset>/resnet50/seed<s>
+  PYTHONPATH=. python scripts/gate_shift.py --records results/paper/gate_shift --split val
+  PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/gate_shift/val/shift/<dataset>/resnet50/seed<s>
   ```
   - D2 and D4 are gates. D3 and D9 are reported.
   - The stop rule is in `SHIFT_EVAL_PLAN.md`.
-- [ ] SH4. After the gate: per-dataset selection, the sixth dataset, and seeds 1–4 for every shift dataset.
+- [ ] SH3. After the gate, per-dataset selection: `launch_runs.py --phases shift-val`. That covers the 5 shift datasets on both backbones, seed 0, areas 5/10/25%, the candidates, and S1–S8 without S6 on Waterbirds and `planted_patch` ResNet-50. The sixth dataset and seeds 1–4 come after that.
 
 ## Open decisions
 
 1. **Section 13.4: draft or signed off.** PR #34 recorded a sign-off and tagged `decomp-declared`. On 2026-10-14 the user asked to keep it a draft, because the plan and metrics may change after the dev results. If it stays a draft, remove the tag and restore the DRAFT heading. If it is signed off, a later change is a dated entry.
-2. **Seeds 2–4** for the natural datasets: train them or not, and when.
+2. ~~Seeds 2–4~~ Resolved 2026-10-14: the launcher trains a missing checkpoint before the first cell that needs it.
 3. **Contrast-game rows.** C1–C5 are descriptive (section 1). Either DA2 inside the decomposition cells is enough, or the contrast-game chain is rerun at the current hash.
 4. **Section 12's freeze list** was written for the contrast-game paper: G0 tag, CVE reproduction, CUB part scorer, two-cue classifiers. Decide which items apply, and add the decomposition ones: the CDEA selection, the D2 and D9 checks, and the planted ViT.
 
-5. **Records written at `a5deb9fe`.** `results/paper/decomp_dev/` was written before two commits changed the hash to `11bdeb54`. The decomposition rows are identical at every hash (see Current state). Either accept them under `11bdeb54` and record that here, or rerun them.
+5. ~~Records written at `a5deb9fe`~~ Resolved 2026-10-14: the dev and planted ResNet-50 val cells are rerun at the current hash (`dev`, `planted-val`). `results/paper/decomp_dev/` is kept and not scored.
 6. **Shift gate and plan.**
-   - Train the seed-1 shift checkpoints for the gate (SH2), or not.
    - The 2026-10-14 edit of `SHIFT_EVAL_PLAN.md` dropped:
      - the robustness list (blur, the other areas, ViT, leave-one-dataset-out);
      - the "After the gate" order;
@@ -162,6 +167,12 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-14, launcher.** `scripts/launch_runs.py` runs the paper's phases for both games in one queue.
+  - Phases: `dev`, `planted-val`, `natural-val`, `test`, `shift-gate` and `shift-val`.
+  - It keeps two large cells (shift, and ViT decomposition) and two small cells (ResNet decomposition) running. When no large cell waits, small cells use the idle large slots.
+  - It reuses a checkpoint or trains it under a lock, marks a cell failed on any method error except S6 and A8, and resumes from its markers.
+  - ViT decomposition was added to the large class in `parallel_cells.MEM_SEED_HIGH`.
+  - Checked on the Mac with unit tests, a `--dry-run` of every phase (40 val cells, 90 test cells), and one two-cell smoke launch. Real launches run on the GH200 only.
 - **2026-10-14, input convention.** It is built in as `models.wrapper.INPUT_CONVENTION = "imagenet"`. `results/paper/input_convention.txt` and its reader were removed.
   - The old reader silently fell back to `raw` when the file was missing, which would have renamed every paper checkpoint.
   - `probe_input_convention.py` now reports its winner against the constant and writes nothing.
