@@ -45,13 +45,14 @@ PYTHONPATH=. python scripts/paper_run.py --game decomposition --dataset cifar10 
 
 Without paper checkpoints, add `--model-source smoke` to check the pipeline. Fast knobs and smoke models never satisfy a gate cell. A record counts only when its `method_code_hash` and `knobs_hash` match the current tree.
 
-The chain launcher trains each missing checkpoint, then runs that checkpoint's games before moving to the next dataset:
+The paper runs go through one launcher. It takes the decomposition and shift phases of the plans, keeps two large and two small cells on the GPU, trains a checkpoint only when it is missing, and resumes from its done markers:
 
 ```bash
-PYTHONPATH=. python scripts/launch_paper_chain.py --seeds 0 --jobs 4
+PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate --dry-run
+PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate
 ```
 
-The launcher and `scripts/smoke_e2e.py` cover the contrastive and shift games only. Until the decomposition game is added (`docs/paper/PROGRESS.md`, plan B), run its cells with `paper_run.py` as above. `PROGRESS.md` holds the order of the runs and the current state.
+`docs/paper/PROGRESS.md` holds the order of the phases and the current state. The older `scripts/launch_paper_chain.py` runs the contrast game (ablation DA2) and the shift game seed by seed.
 
 ## Read-outs
 
