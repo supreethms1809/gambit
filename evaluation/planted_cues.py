@@ -179,10 +179,16 @@ class PlantedPatchCIFAR(Dataset):
         )
         patch_a = _solid(_class_hue(int(label), 10), self.patch)
         patch_b = _checker(self.patch)
+        foil_a = _solid(_class_hue((int(label) + 5) % 10, 10), self.patch)
+        inv_b = 1.0 - patch_b
         present, mask_a = _stamp(image, a, patch_a)
         present, mask_b = _stamp(present, b, patch_b)
-        moved, mask_a_moved = _stamp(image, a_moved, patch_a)
-        moved, mask_b_moved = _stamp(moved, b_moved, patch_b)
+        # In-place counterfactual: both patches change at (a, b) so fixed-mask
+        # transplant and fixed-mask ROAD deletion act on the same coordinates.
+        moved, _ = _stamp(image, a, foil_a)
+        moved, _ = _stamp(moved, b, inv_b)
+        _, mask_a_moved = _stamp(image, a_moved, patch_a)
+        _, mask_b_moved = _stamp(image, b_moved, patch_b)
         return {
             "present": present.clamp(0, 1),
             "moved": moved.clamp(0, 1),

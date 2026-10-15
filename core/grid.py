@@ -152,11 +152,12 @@ def transplant(
     unit_mask: torch.Tensor,
     grid_h: int,
     grid_w: int,
+    offset: tuple[int, int] = (0, 0),
 ) -> torch.Tensor:
-    """Copy the masked cells from ``x_env`` into ``x_id``. Hard ``phi``."""
+    """Copy the masked cells from ``x_env`` into ``x_id``, moved by ``offset`` pixels. Hard ``phi``."""
     if x_id.shape != x_env.shape:
         raise ValueError("transplant views must share a shape")
-    pixel = upsample_units(unit_mask, grid_h, grid_w, x_id.shape[-2], x_id.shape[-1])
+    pixel = shift_pixels(upsample_units(unit_mask, grid_h, grid_w, x_id.shape[-2], x_id.shape[-1]), *offset)
     return (1.0 - pixel) * x_id + pixel * x_env
 
 

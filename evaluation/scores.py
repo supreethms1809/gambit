@@ -574,3 +574,113 @@ def mask_patch_confusion(masks: torch.Tensor, patches: torch.Tensor) -> tuple[to
     recall = torch.where(area.unsqueeze(1) > 0, inside / area.clamp_min(1e-8).unsqueeze(1),
                          torch.zeros_like(inside))
     return precision, recall
+
+
+# ---------------------------------------------------------------------------
+# Shift 2x2 role matrix and null-subtracted scores (SHIFT_EVAL_PLAN.md).
+# Players are ordered R (robust), S (shortcut); axes are rob (worst-env drop)
+# and gap (cross-env disagreement drop).
+# ---------------------------------------------------------------------------
+
+def shift_drop_matrix(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    masks: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+    offset: int = 0,
+    remove=None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``((B, P, 2), (B, P))`` raw shift drops ``(rob_drop, gap_drop)`` and probability gap drop.
+
+    ``masks`` is ``(B, P, H, W)``. For each mask p:
+      - ``rob_drop`` is ``min_{e in E} [m(x_e) - m(x_e without M_p)]``;
+      - ``gap_drop`` is ``D(x) - D(x without M_p)`` with ``D = mean_{e != id} |m(x_id) - m(x_e)|``;
+      - ``prob_drop`` is the companion reduction in ``mean_{e != id} |p_y(x_id) - p_y(x_e)|``.
+    """
+    from cdea.shift import log_odds
+
+    if len(xs) < 2:
+        raise ValueError("shift_drop_matrix needs the id view and at least one other environment")
+    if masks.ndim != 4 or masks.shape[0] != xs[0].shape[0]:
+        raise ValueError("masks must be (batch, players, H, W)")
+    y = y.long()
+    if remove is None:
+        def remove(view, mask, env_index=0):
+            return _remove(view, mask, iters, noise, seed + env_index, offset)
+
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            full_logits = [model(view) for view in xs]
+            m_full = [log_odds(logits, y) for logits in full_logits]
+            p_full = [torch.softmax(logits, dim=-1).gather(1, y[:, None]).squeeze(1) for logits in full_logits]
+            gap_before = torch.stack([(m_full[0] - other).abs() for other in m_full[1:]], dim=0).mean(dim=0)
+            prob_before = torch.stack([(p_full[0] - other).abs() for other in p_full[1:]], dim=0).mean(dim=0)
+            rows, prob_rows = [], []
+            for p in range(masks.shape[1]):
+                mask = masks[:, p]
+                ed_logits = [model(remove(view, mask, index)) for index, view in enumerate(xs)]
+                m_ed = [log_odds(logits, y) for logits in ed_logits]
+                p_ed = [torch.softmax(logits, dim=-1).gather(1, y[:, None]).squeeze(1) for logits in ed_logits]
+                rob_drop = torch.stack([m_full[i] - m_ed[i] for i in range(len(xs))], dim=0).min(dim=0).values
+                gap_after = torch.stack([(m_ed[0] - other).abs() for other in m_ed[1:]], dim=0).mean(dim=0)
+                prob_after = torch.stack([(p_ed[0] - other).abs() for other in p_ed[1:]], dim=0).mean(dim=0)
+                rows.append(torch.stack([rob_drop, gap_before - gap_after], dim=-1))
+                prob_rows.append(prob_before - prob_after)
+            return torch.stack(rows, dim=1), torch.stack(prob_rows, dim=1)
+    finally:
+        _restore(model, was_training)
+
+
+def null_shift_drops(
+    model: nn.Module,
+    xs: Sequence[torch.Tensor],
+    y: torch.Tensor,
+    null_masks: torch.Tensor,
+    iters: int = 24,
+    noise: float = 0.01,
+    seed: int = 0,
+    offset: int = 0,
+    remove=None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``((B, 2), (B,))`` mean ``(null_rob, null_gap)`` and ``null_prob`` over the N seeded null masks."""
+    masks = null_masks.to(device=xs[0].device, dtype=xs[0].dtype)
+    batch = xs[0].shape[0]
+    expanded = masks.unsqueeze(0).expand(batch, -1, -1, -1)
+    drops, prob_drops = shift_drop_matrix(
+        model, xs, y, expanded, iters=iters, noise=noise, seed=seed, offset=offset, remove=remove,
+    )
+    return drops.mean(dim=1), prob_drops.mean(dim=1)
+
+
+def shift_scores(
+    drops: torch.Tensor,
+    null: torch.Tensor,
+    prob_drops: torch.Tensor | None = None,
+    null_prob: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Per-image shift scores from ``(B, 2, 2)`` raw drops ``[R, S] x [rob, gap]`` and ``(B, 2)`` null.
+
+    ``rn`` is the excess worst-environment robust drop of M_R. ``delta_d`` is
+    the excess cross-environment gap drop of M_S. ``pur_r`` penalises M_R for
+    moving the cross-environment gap; ``pur_s`` penalises M_S for damaging
+    worst-environment robust log-odds; ``role_sep`` is the 2x2 diagonal minus
+    off-diagonal separation.
+    """
+    if drops.ndim != 3 or drops.shape[1:] != (2, 2):
+        raise ValueError("drops must be (batch, 2 players, 2 axes)")
+    e = drops - null.unsqueeze(1)
+    out = {
+        "rn": e[:, 0, 0],
+        "delta_d": e[:, 1, 1],
+        "pur_r": e[:, 0, 0] - e[:, 0, 1].abs(),
+        "pur_s": e[:, 1, 1] - e[:, 1, 0].clamp_min(0.0),
+        "role_sep": (e[:, 0, 0] - e[:, 1, 0]) + (e[:, 1, 1] - e[:, 0, 1]),
+    }
+    if prob_drops is not None and null_prob is not None:
+        out["delta_d_prob"] = prob_drops[:, 1] - null_prob
+    return out

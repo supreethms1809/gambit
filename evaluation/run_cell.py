@@ -409,8 +409,10 @@ def run_shift(spec: CellSpec, device) -> Path:
     from evaluation.run_methods import SHIFT_CANDIDATES, shift_ablation, shift_method
     from evaluation.run_models import load_cell_model
     from evaluation.scores import (
-        delta_d,
-        robust_necessity,
+        null_pixel_masks,
+        null_shift_drops,
+        shift_drop_matrix,
+        shift_scores,
         shortcut_patch_contrast,
         transplant_closure,
     )
@@ -420,6 +422,8 @@ def run_shift(spec: CellSpec, device) -> Path:
         spec.dataset, spec.backbone, spec.seed, source=spec.model_source,
         checkpoint=spec.checkpoint, device=device,
     )
+    if getattr(device, "type", str(device)) == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     model = loaded.model
     sample = shift_sample(
         spec.dataset, spec.split, spec.n, spec.seed,
@@ -427,6 +431,7 @@ def run_shift(spec: CellSpec, device) -> Path:
     )
     xs_cpu = sample.env.xs
     n = int(xs_cpu[0].shape[0])
+    counter = PassCounter(model)
     code_hash = method_code_hash()
     knob_hash = knobs_hash(spec.knobs)
     rows: list[dict] = []
@@ -435,12 +440,14 @@ def run_shift(spec: CellSpec, device) -> Path:
     runs += [("cdea_shift", f"cdea_shift:{ablation}", shift_ablation(ablation)) for ablation in spec.ablations]
     runs += [("cdea_shift", candidate, SHIFT_CANDIDATES[candidate]) for candidate in spec.candidates]
     grid_h, grid_w = __import__("core.grid", fromlist=["grid_of"]).grid_of(spec.backbone)
+    area_dependent = {"cdea_shift", "shift_assign", "extremal_shift"}
 
     for method, label, cfg in runs:
-        areas = spec.areas if method in {"cdea_shift", "extremal_shift"} else (None,)
+        areas = spec.areas if method in area_dependent else (None,)
         whole = method == "spray"
         ranges = [(0, n)] if whole else _ranges(n, spec.image_batch)
         for area_for_map in areas:
+            counter.reset()
             start = time.perf_counter()
             failed = None
             chunk_rows: list[dict] = []
@@ -451,28 +458,39 @@ def run_shift(spec: CellSpec, device) -> Path:
                         raise FileNotFoundError("precomputed maps need a directory")
                     fn = shift_method(method)
                     kwargs = {}
-                    if method in {"cdea_shift", "extremal_shift"}:
+                    if method in area_dependent:
                         kwargs["area"] = area_for_map if area_for_map is not None else spec.areas[0]
                     if method == "cdea_shift":
                         kwargs["cfg"] = cfg
                     if method in {"spray", "random_floor"}:
                         kwargs["seed"] = spec.seed
                     maps = fn(model, views, spec.backbone, spec.knobs, device, **kwargs)
-                    y = model(views[0]).argmax(dim=-1)
+                    with torch.no_grad():
+                        y = model(views[0]).argmax(dim=-1)
                     for area in (spec.areas if area_for_map is None else (area_for_map,)):
                         chunk_rows += _score_shift(
                             model, views, maps, y, area, spec, label, sample, start_i,
                             code_hash, knob_hash, budget_or_floor, random_floor,
-                            delta_d, robust_necessity, transplant_closure,
-                            shortcut_patch_contrast, mass_in, top_fraction_mask, grid_h, grid_w,
+                            null_pixel_masks, null_shift_drops, shift_drop_matrix, shift_scores,
+                            transplant_closure, shortcut_patch_contrast, mass_in, top_fraction_mask,
+                            grid_h, grid_w,
                         )
             except Exception as exc:
                 failed = exc
+            seconds = time.perf_counter() - start
             if failed is not None:
-                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}"}
+                status[label] = {"status": "error", "error": f"{type(failed).__name__}: {failed}",
+                                 "trace": traceback.format_exc(limit=4)}
                 continue
-            status[label] = {"status": "ok", "seconds": time.perf_counter() - start}
+            status[label] = {"status": "ok", "seconds": seconds, "forward_images": counter.forward,
+                             "backward_images": counter.backward,
+                             "device_mb_after": device_memory_mb(device)}
+            for row in chunk_rows:
+                row["seconds_per_image"] = seconds / n
+                row["forward_images"] = counter.forward
+                row["backward_images"] = counter.backward
             rows += chunk_rows
+    counter.close()
     summary = {
         "game": "shift",
         "dataset": spec.dataset,
@@ -494,9 +512,11 @@ def run_shift(spec: CellSpec, device) -> Path:
 def _score_shift(
     model, views, maps, y, area, spec, label, sample, start_i,
     code_hash, knob_hash, budget_or_floor, random_floor,
-    delta_d, robust_necessity, transplant_closure,
-    shortcut_patch_contrast, mass_in, top_fraction_mask, grid_h, grid_w,
+    null_pixel_masks, null_shift_drops, shift_drop_matrix, shift_scores,
+    transplant_closure, shortcut_patch_contrast, mass_in, top_fraction_mask,
+    grid_h, grid_w,
 ) -> list[dict]:
+    device = views[0].device
     height, width = views[0].shape[-2:]
     grid = maps.grid
     kwargs = dict(
@@ -505,46 +525,75 @@ def _score_shift(
         height=height, width=width,
     )
     # start_i: tie-breaks and ROAD noise follow the image's place in the sample.
-    shortcut, failed_s = budget_or_floor(maps.shortcut, area, spec.seed, offset=start_i, **kwargs)
-    robust, failed_r = budget_or_floor(maps.robust, area, spec.seed + 1, offset=start_i, **kwargs)
-    random_mask = random_floor(maps.shortcut, area, spec.seed + 2, offset=start_i, **kwargs)
-    odds, prob = delta_d(
-        model, views, y, shortcut, random_mask, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
+    shortcut, failed_s = budget_or_floor(maps.shortcut.detach().float().cpu(), area, spec.seed, offset=start_i, **kwargs)
+    robust, failed_r = budget_or_floor(maps.robust.detach().float().cpu(), area, spec.seed + 1, offset=start_i, **kwargs)
+    shortcut = shortcut.to(device)
+    robust = robust.to(device)
+    random_mask = random_floor(maps.shortcut.detach().float().cpu(), area, spec.seed + 2, offset=start_i, **kwargs).to(device)
+    null_masks = null_pixel_masks(grid_h, grid_w, area, height, width)
+    null, null_prob = null_shift_drops(
+        model, views, y, null_masks, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
     )
-    necessity = robust_necessity(
-        model, views, y, robust, random_mask, ROAD["iters"], ROAD["noise"], spec.seed + 3, offset=start_i,
+    stacked = torch.stack([robust, shortcut], dim=1)
+    drops, prob_drops = shift_drop_matrix(
+        model, views, y, stacked, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
     )
+    scores = shift_scores(drops, null, prob_drops, null_prob)
     if grid is not None:
-        units = top_fraction_mask(maps.shortcut, area, spec.seed, offset=start_i)
+        units = top_fraction_mask(maps.shortcut.detach().float().cpu(), area, spec.seed, offset=start_i).to(device)
     else:
         units = _units_from_pixels(shortcut, grid_h, grid_w)
     closure = transplant_closure(model, views, y, units, grid_h, grid_w)
     rolled = torch.roll(shortcut, shifts=max(height // grid_h, 1), dims=-1)
-    odds_rolled, _prob_rolled = delta_d(
-        model, views, y, rolled, random_mask, ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
+    rolled_drops, _ = shift_drop_matrix(
+        model, views, y, rolled.unsqueeze(1), ROAD["iters"], ROAD["noise"], spec.seed, offset=start_i,
     )
-    foreground = None if sample.foreground is None else sample.foreground[start_i:start_i + shortcut.shape[0]].to(shortcut.device)
+    odds_rolled = rolled_drops[:, 0, 1] - null[:, 1]
+    extra = getattr(maps, "extra", None) or {}
+    stages = _shift_stage_payoffs(model, views, maps, y, area, grid_h, grid_w) if "robust_payoff" in extra else {}
+    foreground = None if sample.foreground is None else sample.foreground[start_i:start_i + shortcut.shape[0]].to(device)
     rows = []
     for i in range(shortcut.shape[0]):
         row = {
+            "game": "shift",
+            "dataset": spec.dataset,
+            "backbone": spec.backbone,
+            "seed": spec.seed,
+            "split": spec.split,
             "method": label,
             "area": area,
             "image_index": sample.index[start_i + i],
-            "delta_d": float(odds[i]),
-            "delta_d_prob": float(prob[i]),
-            "rn": float(necessity[i]),
+            "label": int(sample.labels[start_i + i]),
+            "pred": int(y[i]),
+            "correct": int(int(y[i]) == int(sample.labels[start_i + i])),
+            "d_r_rob": float(drops[i, 0, 0]),
+            "d_r_gap": float(drops[i, 0, 1]),
+            "d_s_rob": float(drops[i, 1, 0]),
+            "d_s_gap": float(drops[i, 1, 1]),
+            "null_rob": float(null[i, 0]),
+            "null_gap": float(null[i, 1]),
+            "delta_d": float(scores["delta_d"][i]),
+            "delta_d_prob": float(scores["delta_d_prob"][i]),
+            "rn": float(scores["rn"][i]),
+            "pur_r": float(scores["pur_r"][i]),
+            "pur_s": float(scores["pur_s"][i]),
+            "role_sep": float(scores["role_sep"][i]),
             "tc": float(closure[i]),
             "delta_d_translated": float(odds_rolled[i]),
+            "area_r": float(robust[i].float().mean()),
+            "area_s": float(shortcut[i].float().mean()),
             "failed_row": int(bool(failed_s[i] or failed_r[i])),
             "method_code_hash": code_hash,
             "knobs_hash": knob_hash,
             "fast": int(spec.knobs.fast),
+            "model_source": spec.model_source,
         }
+        row.update({name: float(value[i]) for name, value in stages.items()})
         if sample.mask_a is not None:
             row["spc"] = float(shortcut_patch_contrast(
                 shortcut[i:i + 1],
-                sample.mask_a[start_i + i:start_i + i + 1].to(shortcut.device),
-                sample.mask_b[start_i + i:start_i + i + 1].to(shortcut.device),
+                sample.mask_a[start_i + i:start_i + i + 1].to(device),
+                sample.mask_b[start_i + i:start_i + i + 1].to(device),
             )[0])
         if foreground is not None:
             row["mass_shortcut_background"] = float(mass_in(shortcut[i:i + 1], 1.0 - foreground[i:i + 1])[0])
@@ -552,6 +601,48 @@ def _score_shift(
             row["mass_random_background"] = float(mass_in(random_mask[i:i + 1], 1.0 - foreground[i:i + 1])[0])
         rows.append(row)
     return rows
+
+
+def _shift_stage_payoffs(model, views, maps, y, area: float, grid_h: int, grid_w: int) -> dict[str, torch.Tensor]:
+    """D2, D3 and D9 inputs for a shift allocation: soft vs hard payoffs, overshoot, and same_as_init."""
+    from cdea.first_order import top_mass
+    from cdea.shift import deletion_shortcut_payoff, log_odds, robust_payoff, transplant_payoff
+
+    device = views[0].device
+    dtype = views[0].dtype
+    budget = float(area) * grid_h * grid_w
+    extra = maps.extra
+    rob_mode = extra.get("robust_mode", "min")
+    short_mode = extra.get("shortcut_mode", "transplant")
+    plan_r = maps.robust.detach().to(device=device, dtype=dtype)
+    plan_s = maps.shortcut.detach().to(device=device, dtype=dtype)
+    hard_r = top_mass(plan_r, budget)
+    hard_s = top_mass(plan_s, budget)
+    with torch.no_grad():
+        reference = [log_odds(model(v), y) for v in views]
+        soft_r = extra["robust_payoff"].detach().float().cpu()
+        soft_s = extra["shortcut_payoff"].detach().float().cpu()
+        hard_pay_r = robust_payoff(model, list(views), y, hard_r, grid_h, grid_w, rob_mode, reference).detach().float().cpu()
+        if short_mode == "deletion":
+            hard_pay_s = deletion_shortcut_payoff(model, list(views), y, hard_s, grid_h, grid_w, reference).detach().float().cpu()
+        else:
+            hard_pay_s = transplant_payoff(model, list(views), y, hard_s, grid_h, grid_w, reference).detach().float().cpu()
+    out = {
+        "payoff_soft_r": soft_r,
+        "payoff_hard_r": hard_pay_r,
+        "payoff_soft_s": soft_s,
+        "payoff_hard_s": hard_pay_s,
+    }
+    if extra.get("overshoot") is not None:
+        out["overshoot_share"] = extra["overshoot"].detach().float().cpu()
+    initial = extra.get("initial")
+    if initial is not None:
+        top = max(1, int(round(budget)))
+        plan = torch.stack([plan_r, plan_s], dim=1)
+        final_top = plan.topk(top, dim=-1).indices.sort(dim=-1).values
+        init_top = initial.to(device).topk(top, dim=-1).indices.sort(dim=-1).values
+        out["same_as_init"] = (final_top == init_top).all(dim=-1).all(dim=-1).float().cpu()
+    return out
 
 
 def _units_from_pixels(mask: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:

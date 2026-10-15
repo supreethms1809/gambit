@@ -32,6 +32,7 @@ class ShiftMaps:
     robust: torch.Tensor
     shortcut: torch.Tensor
     grid: Optional[tuple[int, int]]
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -640,6 +641,7 @@ CONTRASTIVE_CANDIDATES: dict = {
 
 SHIFT_CORE = (
     "cdea_shift",
+    "shift_assign",
     "gap_attribution",
     "attribution_difference",
     "spray",
@@ -664,6 +666,9 @@ def _shift_config(cfg, knobs: Knobs):
         backend=cfg.backend,
         ig_steps=knobs.ig_steps,
         kind=cfg.kind,
+        boundary_shift=cfg.boundary_shift,
+        binary_masks=cfg.binary_masks,
+        draw_seed=cfg.draw_seed,
     )
 
 
@@ -675,7 +680,23 @@ def cdea_shift_maps(model, xs, backbone, knobs, device, cfg=None, area: float = 
     if backbone.startswith("vit") and resolved.backend == "gradcam":
         resolved = replace(resolved, backend="ig")
     out = allocate_shift(model, xs, grid[0], grid[1], area, resolved)
-    return ShiftMaps(robust=out.robust, shortcut=out.shortcut, grid=grid)
+    extra = {
+        "initial": out.initial,
+        "overshoot": out.overshoot,
+        "robust_payoff": out.robust_payoff,
+        "shortcut_payoff": out.shortcut_payoff,
+        "robust_mode": resolved.robust,
+        "shortcut_mode": resolved.shortcut,
+    }
+    return ShiftMaps(robust=out.robust, shortcut=out.shortcut, grid=grid, extra=extra)
+
+
+def shift_assign_maps(model, xs, backbone, knobs, device, area: float = 0.05) -> ShiftMaps:
+    from baselines.shift_maps import shift_assign
+
+    grid = grid_of(backbone)
+    robust, shortcut = shift_assign(model, xs, grid[0], grid[1], area)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=grid)
 
 
 def gap_attribution_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
@@ -764,6 +785,7 @@ def r2r_shift_maps(model, xs, backbone, knobs, device) -> ShiftMaps:
 def shift_method(name: str):
     return {
         "cdea_shift": cdea_shift_maps,
+        "shift_assign": shift_assign_maps,
         "gap_attribution": gap_attribution_maps,
         "attribution_difference": attribution_difference_maps,
         "spray": spray_maps,
@@ -790,6 +812,8 @@ SHIFT_ABLATIONS = {
     "S4_uniform": None,
     "S5_first_order": None,
     "S6_precomputed": "precomputed",
+    "S7_fixed_boundary": None,
+    "S8_fractional": None,
 }
 
 
@@ -803,6 +827,8 @@ def shift_ablation(name: str):
         "S4_uniform": ShiftConfig(init="uniform"),
         "S5_first_order": ShiftConfig(kind="first_order"),
         "S6_precomputed": "precomputed",
+        "S7_fixed_boundary": ShiftConfig(boundary_shift=False),
+        "S8_fractional": ShiftConfig(binary_masks=False),
     }[name]
 
 
