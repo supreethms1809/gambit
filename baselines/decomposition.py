@@ -75,7 +75,8 @@ def assign(scores: torch.Tensor, budget: float) -> torch.Tensor:
     a_ub = np.tile(np.eye(units), (1, players))
     b_ub = np.ones(units)
     out = []
-    values = scores.detach().double().cpu().numpy()
+    # cpu() before double(): MPS has no float64.
+    values = scores.detach().cpu().double().numpy()
     for i in range(batch):
         result = linprog(-values[i].reshape(-1), A_ub=a_ub, b_ub=b_ub, A_eq=a_eq, b_eq=b_eq,
                          bounds=(0.0, 1.0), method="highs")
