@@ -80,19 +80,86 @@ def test_impute_pins_known_pixels():
     image = torch.rand(1, 3, 8, 8)
     keep = torch.zeros(1, 1, 8, 8)
     keep[:, :, 2:6, 2:6] = 1
-    filled = noisy_linear_impute(image, keep, iters=5, noise=0.0, gen=torch.Generator().manual_seed(0))
-    assert torch.allclose(filled[:, :, 2:6, 2:6], image[:, :, 2:6, 2:6])
-    assert filled.min() >= 0 and filled.max() <= 1
+    for iters in (5, None):
+        filled = noisy_linear_impute(image, keep, iters=iters, noise=0.0, gen=torch.Generator().manual_seed(0))
+        assert torch.allclose(filled[:, :, 2:6, 2:6], image[:, :, 2:6, 2:6])
+        assert filled.min() >= 0 and filled.max() <= 1
+
+
+def _road_reference(image, keep):
+    """ROAD's NoisyLinearImputer without noise, road_evaluation e6b9987, road/imputations.py.
+
+    ``setup_sparse_system`` transcribed (one channel-stacked right-hand side,
+    weights renormalised at the border), solved with scipy's ``spsolve``.
+    """
+    import numpy as np
+    from scipy.sparse import csc_matrix, lil_matrix
+    from scipy.sparse.linalg import spsolve
+
+    weights = [((1, 1), 1 / 12), ((0, 1), 1 / 6), ((-1, 1), 1 / 12), ((1, -1), 1 / 12),
+               ((0, -1), 1 / 6), ((-1, -1), 1 / 12), ((1, 0), 1 / 6), ((-1, 0), 1 / 6)]
+    img = image.double().numpy()
+    mask = keep.numpy()
+    height, width = mask.shape
+    flat_mask = mask.flatten()
+    flat_img = img.reshape(img.shape[0], -1)
+    indices = np.argwhere(flat_mask == 0).flatten()
+    to_var = np.zeros(len(flat_mask), dtype=int)
+    to_var[indices] = np.arange(len(indices))
+    a = lil_matrix((len(indices), len(indices)))
+    b = np.zeros((len(indices), img.shape[0]))
+    total = np.ones(len(indices))
+    for (dy, dx), w in weights:
+        row, col = indices // width + dy, indices % width + dx
+        valid = (row >= 0) & (col >= 0) & (row < height) & (col < width)
+        coords = (indices + dy * width + dx)[valid]
+        ids = np.argwhere(valid).flatten()
+        has = flat_mask[coords] > 0.5
+        b[ids[has], :] -= w * flat_img[:, coords[has]].T
+        a[ids[~has], to_var[coords[~has]]] = w
+        total[~valid] -= w
+    a[np.arange(len(indices)), np.arange(len(indices))] = -total
+    out = flat_img.copy()
+    out[:, indices] = spsolve(csc_matrix(a), b).T
+    return torch.from_numpy(out.reshape(img.shape))
+
+
+def test_converged_impute_matches_roads_direct_solve():
+    import pytest
+
+    pytest.importorskip("scipy")
+    torch.manual_seed(0)
+    image = torch.nn.functional.avg_pool2d(torch.rand(1, 3, 224, 224), 9, 1, 4)
+    holes = []
+    for r0, r1, c0, c1 in ((96, 128, 96, 128), (56, 168, 56, 168), (0, 64, 0, 64)):
+        keep = torch.ones(224, 224)
+        keep[r0:r1, c0:c1] = 0
+        holes.append(keep)
+    cells = torch.ones(7, 7)
+    cells[3, 3] = 0
+    holes.append(1 - torch.nn.functional.interpolate(cells.view(1, 1, 7, 7), size=(224, 224))[0, 0])
+    for keep in holes:
+        filled = noisy_linear_impute(image, keep.view(1, 1, 224, 224), iters=None, noise=0.0,
+                                     gen=torch.Generator().manual_seed(0))
+        assert float((filled[0].double() - _road_reference(image[0], keep)).abs().max()) < 1e-3
+
+
+def test_converged_impute_fills_a_flat_image_with_its_value():
+    # 24 Jacobi sweeps from black left a 32 px cell of a flat 0.5 image at 0.17.
+    image = torch.full((1, 3, 224, 224), 0.5)
+    keep = torch.ones(1, 1, 224, 224)
+    keep[..., 56:168, 56:168] = 0
+    filled = noisy_linear_impute(image, keep, iters=None, noise=0.0, gen=torch.Generator().manual_seed(0))
+    assert torch.allclose(filled, image, atol=1e-3)
 
 
 def test_impute_stays_finite_inside_a_solid_mask():
-    # Production ROAD runs 24 iters. Dividing the neighbour mean by the
-    # kept-neighbour mass used to amplify interior fill ~1e6x per iter,
-    # reaching inf/NaN by iter 7 inside any solid masked region.
+    # An earlier fill divided the neighbour mean by the kept-neighbour mass,
+    # which amplified interior fill ~1e6x per step to inf/NaN.
     image = torch.rand(2, 3, 32, 32)
     keep = torch.ones(2, 1, 32, 32)
     keep[:, :, 8:24, 8:24] = 0
-    filled = noisy_linear_impute(image, keep, iters=24, noise=0.01,
+    filled = noisy_linear_impute(image, keep, iters=None, noise=0.01,
                                  gen=torch.Generator().manual_seed(0))
     assert torch.isfinite(filled).all()
     assert filled.min() >= 0 and filled.max() <= 1
@@ -103,7 +170,7 @@ def test_impute_stays_finite_inside_a_solid_mask():
 def test_impute_is_identity_when_nothing_is_masked():
     image = torch.rand(2, 3, 16, 16)
     keep = torch.ones(2, 1, 16, 16)
-    filled = noisy_linear_impute(image, keep, iters=24, noise=0.01,
+    filled = noisy_linear_impute(image, keep, iters=None, noise=0.01,
                                  gen=torch.Generator().manual_seed(0))
     assert torch.allclose(filled, image)
 

@@ -144,7 +144,7 @@ Notes on these definitions:
 
 ## 5. Metrics
 
-Every removal is ROAD noisy-linear imputation (`evaluation.removal.noisy_linear_impute`, 24 iterations, noise 0.01) unless marked "blur". CDEA and both Extremal Perturbations variants optimise with blur, so every primary and secondary score uses a different operator from the one they were fitted to. Blur scores are robustness checks.
+Every removal is ROAD noisy-linear imputation (`evaluation.removal.noisy_linear_impute`) unless marked "blur". Each removed pixel is the weighted mean of its in-image neighbours, with ROAD's weights (1/6 edge, 1/12 corner; `road_evaluation` commit `e6b9987`). The system is solved to convergence by conjugate gradient, checked in a test against ROAD's direct solve, and noise 0.01 is then added. Until 2026-10-20 the fill was 24 Jacobi sweeps from black, which left a 32 px cell of a flat 0.5 image at 0.17, close to a black fill. CDEA and both Extremal Perturbations variants optimise with blur, so every primary and secondary score uses a different operator from the one they were fitted to. Blur scores are robustness checks.
 
 ### 5.0 The angles of the question, and who optimises each metric
 

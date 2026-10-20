@@ -8,7 +8,7 @@ Two-patch recovery is the share of each class mask that lands on its patch.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -21,8 +21,10 @@ def _restore(model: nn.Module, was_training: bool) -> None:
     model.train(was_training)
 
 
-def _remove(x: torch.Tensor, mask: torch.Tensor, iters: int, noise: float, seed: int, offset: int = 0) -> torch.Tensor:
+def _remove(x: torch.Tensor, mask: torch.Tensor, iters: Optional[int], noise: float, seed: int, offset: int = 0) -> torch.Tensor:
     """Impute pixels where ``mask`` is 1. ``mask`` is ``(B, H, W)`` or ``(B, 1, H, W)``.
+
+    ``iters=None`` is ROAD's converged linear fill (``evaluation.removal``).
 
     ``offset`` is the first image's index in the full sample. The noise is then
     the rows a single call on the whole sample would have drawn for these images.
@@ -51,7 +53,7 @@ def contrastive_deletion(
     mask_l: torch.Tensor,
     class_k: torch.Tensor,
     class_l: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -59,8 +61,8 @@ def contrastive_deletion(
     """CD = m(x without M_l) − m(x without M_k), with m = z_k − z_l.
 
     A positive score means removing the foil's evidence leaves k ahead of l,
-    and removing k's evidence does not. Defaults match the ROAD settings in
-    ``scripts/eval_faithfulness.py``.
+    and removing k's evidence does not. The default removal is ROAD's
+    converged linear fill with noise 0.01.
     """
     class_k = class_k.long()
     class_l = class_l.long()
@@ -80,7 +82,7 @@ def drop_matrix(
     x: torch.Tensor,
     masks: torch.Tensor,
     class_ids: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -116,7 +118,7 @@ def deletion_matrix(
     x: torch.Tensor,
     masks: torch.Tensor,
     class_ids: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -138,7 +140,7 @@ def sufficiency_contrast(
     mask_l: torch.Tensor,
     class_k: torch.Tensor,
     class_l: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -162,7 +164,7 @@ def shared_validity(
     x: torch.Tensor,
     mask_s: torch.Tensor,
     class_ids: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -257,7 +259,7 @@ def disagreement_reduction(
     y: torch.Tensor,
     shortcut: torch.Tensor,
     random_mask: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -299,7 +301,7 @@ def logit_disagreement_reduction(
     y: torch.Tensor,
     shortcut: torch.Tensor,
     random_mask: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -395,7 +397,7 @@ def delta_d(
     y: torch.Tensor,
     shortcut: torch.Tensor,
     random_mask: torch.Tensor,
-    iters: int,
+    iters: Optional[int],
     noise: float,
     seed: int,
     offset: int = 0,
@@ -429,7 +431,7 @@ def robust_necessity(
     y: torch.Tensor,
     robust: torch.Tensor,
     random_mask: torch.Tensor,
-    iters: int,
+    iters: Optional[int],
     noise: float,
     seed: int,
     offset: int = 0,
@@ -517,7 +519,7 @@ def null_drops_scored(model: nn.Module, x: torch.Tensor, class_ids: torch.Tensor
 
 
 def null_drops_road(model: nn.Module, x: torch.Tensor, class_ids: torch.Tensor, area: float,
-                    grid_h: int, grid_w: int, n: int = 8, null_seed: int = 0, iters: int = 24,
+                    grid_h: int, grid_w: int, n: int = 8, null_seed: int = 0, iters: Optional[int] = None,
                     noise: float = 0.01, seed: int = 0, offset: int = 0) -> torch.Tensor:
     """``(B, K)`` ROAD null: the null masks of section 3.2 removed with the method masks' ROAD noise."""
     masks = null_pixel_masks(grid_h, grid_w, area, x.shape[-2], x.shape[-1], n, null_seed)
@@ -587,7 +589,7 @@ def shift_drop_matrix(
     xs: Sequence[torch.Tensor],
     y: torch.Tensor,
     masks: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,
@@ -641,7 +643,7 @@ def null_shift_drops(
     xs: Sequence[torch.Tensor],
     y: torch.Tensor,
     null_masks: torch.Tensor,
-    iters: int = 24,
+    iters: Optional[int] = None,
     noise: float = 0.01,
     seed: int = 0,
     offset: int = 0,

@@ -12,7 +12,7 @@ Image counts per backbone are the contrastive minimums until this plan is frozen
 
 ## Scorer null and the 2×2 shift matrix (`evaluation/scores.py`)
 
-For each image and area `a`, the scorer forms `N = 8` seeded cell-structured random masks through the shared adapter (`null_pixel_masks`, seed 0). Under ROAD removal (`iters = 24, noise = 0.01`), each mask `M ∈ {M_R, M_S}` is evaluated on two raw intervention drops (`shift_drop_matrix`):
+For each image and area `a`, the scorer forms `N = 8` seeded cell-structured random masks through the shared adapter (`null_pixel_masks`, seed 0). Under ROAD removal (the converged linear fill, noise 0.01; `EVAL_PLAN.md` section 5), each mask `M ∈ {M_R, M_S}` is evaluated on two raw intervention drops (`shift_drop_matrix`):
 - **Worst-environment robust drop:** `d_rob(M) = min_{e ∈ E} [ m(x_e) - m(x_e ⊖ M) ]`
 - **Cross-environment disagreement drop:** `d_gap(M) = D(x) - D(x ⊖ M)`, where `D(x) = mean_{e ∈ E'} |m(x_id) - m(x_e)|`
 

@@ -19,6 +19,7 @@ from typing import Optional, Sequence
 import torch
 import torch.nn as nn
 
+from evaluation.removal import ROAD
 from evaluation.run_methods import (
     ABLATIONS,
     CONTRASTIVE_CANDIDATES,
@@ -33,7 +34,6 @@ from evaluation.run_methods import (
 
 IMAGE_SIZE = 224
 AREA_DEPENDENT = {"extremal", "extremal_preserve", "cdea"}
-ROAD = dict(iters=24, noise=0.01)
 PAPER_ROOT = Path(__file__).resolve().parents[1] / "results" / "paper"
 CELLS_ROOT = PAPER_ROOT / "cells"
 FAST_ROOT = PAPER_ROOT / "smoke" / "fast_knobs"
