@@ -5,7 +5,7 @@ Default configuration. Does not launch the pilot unless ``--run`` is passed.
 When ``--records`` is passed, reads ``shift.csv.gz`` records and prints every
 method's mean shift scores (ΔD, RN, PUR_R, PUR_S, RoleSep, TC, SPC) and paired
 bootstrap differences of CDEA-shift against gap attribution, attribution
-difference, and shift_assign. Fast knobs cannot satisfy the gate: fast-knob
+difference, and shift_assign, then the gate verdict under the stop rule. Fast knobs cannot satisfy the gate: fast-knob
 rows are dropped on load.
 """
 
@@ -41,8 +41,13 @@ READOUT = (
 STOP = (
     "Stop rule: continue as a method paper only if CDEA-shift is ahead of both "
     "gap attribution and attribution difference on both datasets. Otherwise take "
-    "the evaluation-paper route and do not revise the formulation."
+    "the evaluation-paper route and do not revise the formulation. Ahead: the "
+    "paired ΔD@5% difference, images paired within each seed and seeds 0 and 1 "
+    "pooled, has its 95% bootstrap interval above 0."
 )
+GATE_AREA = 0.05
+GATE_BACKBONE = "resnet50"
+GATE_COMPARATORS = ("gap_attribution", "attribution_difference")
 
 
 def cells() -> list[dict]:
@@ -119,6 +124,52 @@ def report_shift_cells(loaded: dict, cdea: str = "cdea_shift") -> None:
                     print(f"    {metric:8s} {_fmt(diff)}")
 
 
+def gate_verdict(loaded: dict, cdea: str = "cdea_shift") -> dict:
+    """``{(dataset, comparator): result}`` for the stop rule (SHIFT_EVAL_PLAN.md).
+
+    Each result has the pooled paired ΔD@5% differences' mean, 95% bootstrap
+    interval and n, and ``ahead``: the interval's lower end is above 0. A pair
+    is ``missing`` when either seed has no paired images. Fast-knob rows were
+    dropped on load.
+    """
+    out = {}
+    for dataset in DATASETS:
+        for other in GATE_COMPARATORS:
+            per_seed = []
+            for seed in SEEDS:
+                methods = loaded.get((dataset, GATE_BACKBONE, seed, GATE_AREA), {})
+                if cdea in methods and other in methods:
+                    per_seed.append(_paired(methods[cdea], methods[other], "delta_d"))
+            if len(per_seed) < len(SEEDS) or any(diff.size == 0 for diff in per_seed):
+                out[(dataset, other)] = {"missing": True, "ahead": False}
+                continue
+            pooled = np.concatenate(per_seed)
+            low, high = bootstrap_mean_ci(pooled, n_boot=4000, seed=0)
+            out[(dataset, other)] = {"missing": False, "mean": float(pooled.mean()), "low": low,
+                                     "high": high, "n": int(pooled.size), "ahead": bool(low > 0)}
+    return out
+
+
+def report_gate(verdict: dict, cdea: str = "cdea_shift") -> str:
+    print(f"\nGate: {cdea} - comparator, ΔD@{GATE_AREA:g}, {GATE_BACKBONE}, seeds "
+          f"{' and '.join(map(str, SEEDS))} pooled; ahead = 95% bootstrap interval above 0")
+    for (dataset, other), result in verdict.items():
+        if result["missing"]:
+            print(f"  {dataset:14s} {other:24s} missing a seed or a method")
+            continue
+        flag = "ahead" if result["ahead"] else "not ahead"
+        print(f"  {dataset:14s} {other:24s} {result['mean']:+.2f} [{result['low']:+.2f}, {result['high']:+.2f}] "
+              f"n={result['n']}  {flag}")
+    if any(result["missing"] for result in verdict.values()):
+        outcome = "incomplete"
+    elif all(result["ahead"] for result in verdict.values()):
+        outcome = "continue as a method paper"
+    else:
+        outcome = "evaluation-paper route"
+    print(f"  verdict: {outcome}")
+    return outcome
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="score the four cells; default is a dry list")
@@ -140,6 +191,7 @@ def main(argv=None) -> None:
         if not loaded:
             raise SystemExit("no shift records found")
         report_shift_cells(loaded, args.cdea)
+        report_gate(gate_verdict(loaded, args.cdea), args.cdea)
         return
     if not args.run:
         return

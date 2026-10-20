@@ -258,6 +258,27 @@ def test_random_shift_floor_draws_r_and_s_apart_over_the_whole_sample():
     assert torch.equal(again.robust, maps.robust) and torch.equal(again.shortcut, maps.shortcut)
 
 
+def test_gate_is_ahead_only_when_the_pooled_interval_is_above_zero(capsys):
+    from scripts.gate_shift import gate_verdict, report_gate
+
+    def cell(cdea, gap, diff):
+        return {"cdea_shift": {str(i): {"delta_d": str(cdea + (i % 3) * 0.1)} for i in range(20)},
+                "gap_attribution": {str(i): {"delta_d": str(gap)} for i in range(20)},
+                "attribution_difference": {str(i): {"delta_d": str(cdea + (i % 3) * 0.1 - diff)} for i in range(20)}}
+
+    loaded = {(d, "resnet50", s, 0.05): cell(1.0, 0.0, 0.0) for d in ("waterbirds", "planted_patch") for s in (0, 1)}
+    verdict = gate_verdict(loaded)
+    assert verdict[("waterbirds", "gap_attribution")]["ahead"]
+    assert verdict[("waterbirds", "gap_attribution")]["n"] == 40
+    # A tie with attribution difference is not ahead, so the gate routes to the evaluation paper.
+    assert not verdict[("planted_patch", "attribution_difference")]["ahead"]
+    assert report_gate(verdict) == "evaluation-paper route"
+    loaded = {k: cell(1.0, 0.0, 0.5) for k in loaded}
+    assert report_gate(gate_verdict(loaded)) == "continue as a method paper"
+    del loaded[("waterbirds", "resnet50", 1, 0.05)]
+    assert report_gate(gate_verdict(loaded)) == "incomplete"
+
+
 def test_per_environment_extremal_uses_deletion_masks(monkeypatch):
     from baselines import shift_maps
 

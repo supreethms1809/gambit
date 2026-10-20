@@ -62,11 +62,13 @@ Default configuration on Waterbirds and `planted_patch` val, ResNet-50, seeds 0 
 # Run the four gate cells
 PYTHONPATH=. python scripts/gate_shift.py --run
 
-# Read out all scores and paired bootstrap intervals
-PYTHONPATH=. python scripts/gate_shift.py --records results/paper/cells --split val
+# Read out all scores, paired bootstrap intervals and the gate verdict
+PYTHONPATH=. python scripts/gate_shift.py --records results/paper/gate_shift --split val
 
 # Check D2, D4, D3 and D9 on each shift cell
-PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/cells/val/shift/waterbirds/resnet50/seed0
+PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/gate_shift/val/shift/waterbirds/resnet50/seed0
 ```
 
 Stop rule: continue as a method paper only if `cdea_shift` (or `shift_assign` under the framing rule) is ahead of both `gap_attribution` and `attribution_difference` on both datasets. Otherwise take the evaluation-paper route, with no further formulation revision. Fast knobs cannot satisfy the gate.
+
+"Ahead" (defined 2026-10-20): on that dataset, the paired difference in ΔD@5% (`cdea_shift` minus the comparator, ResNet-50), with images paired by index within each seed and the differences of seeds 0 and 1 pooled, has its 95% percentile bootstrap interval (4000 resamples over images) above 0. A dataset with a seed or a method missing leaves the gate incomplete. `gate_shift.py --records` prints this verdict last.
