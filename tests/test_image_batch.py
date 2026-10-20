@@ -36,10 +36,11 @@ def test_tie_break_and_road_noise_match_the_full_sample():
     images = torch.rand(4, 3, 8, 8)
     mask = torch.zeros(4, 8, 8)
     mask[:, 2:, :] = 1
-    whole = _remove(images, mask, iters=2, noise=0.01, seed=11)
-    chunks = torch.cat([_remove(images[s:e], mask[s:e], iters=2, noise=0.01, seed=11, offset=s)
-                        for s, e in ((0, 2), (2, 4))])
-    assert torch.equal(whole, chunks)
+    for iters in (2, None):
+        whole = _remove(images, mask, iters=iters, noise=0.01, seed=11)
+        chunks = torch.cat([_remove(images[s:e], mask[s:e], iters=iters, noise=0.01, seed=11, offset=s)
+                            for s, e in ((0, 2), (2, 4))])
+        assert torch.equal(whole, chunks)
 
 
 def test_a_chunked_cell_scores_like_the_whole_sample():

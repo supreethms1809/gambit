@@ -46,6 +46,8 @@ def test_rr_is_the_mean_of_each_players_own_recall():
     row = {"rec_uk_ak": "1.0", "rec_ul_al": "0.5", "rec_s_c": "0.0"}
     assert _value(row, "rr") == 0.5
     assert np.isnan(_value({"pur_k": "1"}, "rr"))
+    # A method with no S map averages the players it has.
+    assert _value({"rec_uk_ak": "1.0", "rec_ul_al": "0.5", "rec_s_c": "nan"}, "rr") == 0.75
 
 
 def test_paired_rr_can_keep_only_role_confirmed_images():

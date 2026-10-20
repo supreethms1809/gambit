@@ -378,6 +378,7 @@ def verify_roles(model, x: torch.Tensor, patches: torch.Tensor, ids: torch.Tenso
     seeded patch-sized squares. A_k is confirmed when its k drop counts and its
     l drop does not; A_l the mirror; C when both count.
     """
+    from evaluation.removal import ROAD
     from evaluation.scores import _remove
 
     ids = ids[:, :2].long()
@@ -391,7 +392,7 @@ def verify_roles(model, x: torch.Tensor, patches: torch.Tensor, ids: torch.Tenso
             full = model(x).gather(1, ids)
 
             def drop(mask: torch.Tensor) -> torch.Tensor:
-                return full - model(_remove(x, mask, 24, 0.01, seed)).gather(1, ids)
+                return full - model(_remove(x, mask, ROAD["iters"], ROAD["noise"], seed)).gather(1, ids)
 
             random_drops = []
             for y0, x0 in origins.tolist():

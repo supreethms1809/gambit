@@ -5,7 +5,8 @@ Default configuration. Does not launch the pilot unless ``--run`` is passed.
 When ``--records`` is passed, reads ``shift.csv.gz`` records and prints every
 method's mean shift scores (ΔD, RN, PUR_R, PUR_S, RoleSep, TC, SPC) and paired
 bootstrap differences of CDEA-shift against gap attribution, attribution
-difference, and shift_assign. Fast knobs cannot satisfy the gate.
+difference, and shift_assign, then the gate verdict under the stop rule. Fast knobs cannot satisfy the gate: fast-knob
+rows are dropped on load.
 """
 
 from __future__ import annotations
@@ -40,8 +41,13 @@ READOUT = (
 STOP = (
     "Stop rule: continue as a method paper only if CDEA-shift is ahead of both "
     "gap attribution and attribution difference on both datasets. Otherwise take "
-    "the evaluation-paper route and do not revise the formulation."
+    "the evaluation-paper route and do not revise the formulation. Ahead: the "
+    "paired ΔD@5% difference, images paired within each seed and seeds 0 and 1 "
+    "pooled, has its 95% bootstrap interval above 0."
 )
+GATE_AREA = 0.05
+GATE_BACKBONE = "resnet50"
+GATE_COMPARATORS = ("gap_attribution", "attribution_difference")
 
 
 def cells() -> list[dict]:
@@ -65,12 +71,20 @@ def load_shift_records(root: Path, split: str = "val", expect_hash: str | None =
         seed = int(seed_part.replace("seed", ""))
         with gzip.open(path, "rt", newline="") as handle:
             for row in csv.DictReader(handle):
+                if row.get("fast", "0") == "1":
+                    continue
                 if expect_hash and not row.get("method_code_hash", "").startswith(expect_hash):
                     continue
                 key = (row.get("dataset") or dataset, row.get("backbone") or backbone,
                        int(row.get("seed", seed)), float(row["area"]))
                 loaded[key][row["method"]][row["image_index"]] = row
     return loaded
+
+
+def _share(rows, key: str) -> str:
+    """Share of rows with ``key`` = 1, e.g. failed or constant maps scored as the random floor."""
+    flags = [r.get(key) == "1" for r in rows if r.get(key) not in ("", None)]
+    return f"{np.mean(flags):7.2f}" if flags else "    n/a"
 
 
 def _paired(a: dict, b: dict, key: str) -> np.ndarray:
@@ -89,14 +103,15 @@ def _fmt(values: np.ndarray) -> str:
 def report_shift_cells(loaded: dict, cdea: str = "cdea_shift") -> None:
     for (dataset, backbone, seed, area), methods in sorted(loaded.items()):
         print(f"\n{dataset} {backbone} seed{seed}  area {area:g}")
-        print(f"  {'method':34s}" + "".join(f"{s:>9s}" for s in SCORES) + "     n")
+        print(f"  {'method':34s}" + "".join(f"{s:>9s}" for s in SCORES) + "     n   failed  constant")
         for method, rows in sorted(methods.items()):
             means = []
             for score in SCORES:
                 values = np.array([_value(r, score) for r in rows.values()], dtype=float)
                 values = values[np.isfinite(values)]
                 means.append(f"{values.mean():9.2f}" if values.size else "      n/a")
-            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}")
+            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}"
+                  f"  {_share(rows.values(), 'failed_row')}  {_share(rows.values(), 'constant_row')}")
         if cdea not in methods:
             continue
         for other, title in COMPARATORS:
@@ -107,6 +122,52 @@ def report_shift_cells(loaded: dict, cdea: str = "cdea_shift") -> None:
                 diff = _paired(methods[cdea], methods[other], metric)
                 if diff.size:
                     print(f"    {metric:8s} {_fmt(diff)}")
+
+
+def gate_verdict(loaded: dict, cdea: str = "cdea_shift") -> dict:
+    """``{(dataset, comparator): result}`` for the stop rule (SHIFT_EVAL_PLAN.md).
+
+    Each result has the pooled paired ΔD@5% differences' mean, 95% bootstrap
+    interval and n, and ``ahead``: the interval's lower end is above 0. A pair
+    is ``missing`` when either seed has no paired images. Fast-knob rows were
+    dropped on load.
+    """
+    out = {}
+    for dataset in DATASETS:
+        for other in GATE_COMPARATORS:
+            per_seed = []
+            for seed in SEEDS:
+                methods = loaded.get((dataset, GATE_BACKBONE, seed, GATE_AREA), {})
+                if cdea in methods and other in methods:
+                    per_seed.append(_paired(methods[cdea], methods[other], "delta_d"))
+            if len(per_seed) < len(SEEDS) or any(diff.size == 0 for diff in per_seed):
+                out[(dataset, other)] = {"missing": True, "ahead": False}
+                continue
+            pooled = np.concatenate(per_seed)
+            low, high = bootstrap_mean_ci(pooled, n_boot=4000, seed=0)
+            out[(dataset, other)] = {"missing": False, "mean": float(pooled.mean()), "low": low,
+                                     "high": high, "n": int(pooled.size), "ahead": bool(low > 0)}
+    return out
+
+
+def report_gate(verdict: dict, cdea: str = "cdea_shift") -> str:
+    print(f"\nGate: {cdea} - comparator, ΔD@{GATE_AREA:g}, {GATE_BACKBONE}, seeds "
+          f"{' and '.join(map(str, SEEDS))} pooled; ahead = 95% bootstrap interval above 0")
+    for (dataset, other), result in verdict.items():
+        if result["missing"]:
+            print(f"  {dataset:14s} {other:24s} missing a seed or a method")
+            continue
+        flag = "ahead" if result["ahead"] else "not ahead"
+        print(f"  {dataset:14s} {other:24s} {result['mean']:+.2f} [{result['low']:+.2f}, {result['high']:+.2f}] "
+              f"n={result['n']}  {flag}")
+    if any(result["missing"] for result in verdict.values()):
+        outcome = "incomplete"
+    elif all(result["ahead"] for result in verdict.values()):
+        outcome = "continue as a method paper"
+    else:
+        outcome = "evaluation-paper route"
+    print(f"  verdict: {outcome}")
+    return outcome
 
 
 def main(argv=None) -> None:
@@ -130,6 +191,7 @@ def main(argv=None) -> None:
         if not loaded:
             raise SystemExit("no shift records found")
         report_shift_cells(loaded, args.cdea)
+        report_gate(gate_verdict(loaded, args.cdea), args.cdea)
         return
     if not args.run:
         return

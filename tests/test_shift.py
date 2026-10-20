@@ -231,6 +231,69 @@ def test_score_shift_writes_matrix_purity_and_stage_payoffs(tmp_path):
     assert ("waterbirds", "resnet50", 0, 0.05) in loaded
     gate_main(["--records", str(tmp_path), "--split", "val"])
 
+    # Fast-knob rows never reach the gate or the degenerate checks.
+    with gzip.open(cell_dir / "shift.csv.gz", "wt", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=sorted(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows([{**row, "fast": 1} for row in rows])
+    assert not load_shift_records(tmp_path, "val", "hash1")
+    assert not shift_gaps(cell_dir)
+
+
+def test_random_shift_floor_draws_r_and_s_apart_over_the_whole_sample():
+    from baselines.adapter import budget_or_floor
+    from evaluation.run_methods import SHIFT_WHOLE_SAMPLE, Knobs, random_shift_maps
+
+    xs = [torch.zeros(8, 3, 32, 32), torch.zeros(8, 3, 32, 32)]
+    maps = random_shift_maps(None, xs, "resnet50", Knobs(), torch.device("cpu"), seed=3)
+    assert not torch.equal(maps.robust, maps.shortcut)
+    kwargs = dict(grid_h=7, grid_w=7, height=32, width=32)
+    robust, _ = budget_or_floor(maps.robust, 0.25, 4, **kwargs)
+    shortcut, _ = budget_or_floor(maps.shortcut, 0.25, 3, **kwargs)
+    assert float((robust * shortcut).sum()) < float(robust.sum())
+    # Image 0 and image 4 would share a map if the floor ran per chunk of 4.
+    assert not torch.equal(maps.robust[0], maps.robust[4])
+    assert "random_floor" in SHIFT_WHOLE_SAMPLE
+    again = random_shift_maps(None, xs, "resnet50", Knobs(), torch.device("cpu"), seed=3)
+    assert torch.equal(again.robust, maps.robust) and torch.equal(again.shortcut, maps.shortcut)
+
+
+def test_gate_is_ahead_only_when_the_pooled_interval_is_above_zero(capsys):
+    from scripts.gate_shift import gate_verdict, report_gate
+
+    def cell(cdea, gap, diff):
+        return {"cdea_shift": {str(i): {"delta_d": str(cdea + (i % 3) * 0.1)} for i in range(20)},
+                "gap_attribution": {str(i): {"delta_d": str(gap)} for i in range(20)},
+                "attribution_difference": {str(i): {"delta_d": str(cdea + (i % 3) * 0.1 - diff)} for i in range(20)}}
+
+    loaded = {(d, "resnet50", s, 0.05): cell(1.0, 0.0, 0.0) for d in ("waterbirds", "planted_patch") for s in (0, 1)}
+    verdict = gate_verdict(loaded)
+    assert verdict[("waterbirds", "gap_attribution")]["ahead"]
+    assert verdict[("waterbirds", "gap_attribution")]["n"] == 40
+    # A tie with attribution difference is not ahead, so the gate routes to the evaluation paper.
+    assert not verdict[("planted_patch", "attribution_difference")]["ahead"]
+    assert report_gate(verdict) == "evaluation-paper route"
+    loaded = {k: cell(1.0, 0.0, 0.5) for k in loaded}
+    assert report_gate(gate_verdict(loaded)) == "continue as a method paper"
+    del loaded[("waterbirds", "resnet50", 1, 0.05)]
+    assert report_gate(gate_verdict(loaded)) == "incomplete"
+
+
+def test_per_environment_extremal_uses_deletion_masks(monkeypatch):
+    from baselines import shift_maps
+
+    calls = []
+
+    def fake(model, x, class_idx, area=0.1, **kwargs):
+        calls.append(kwargs)
+        return torch.rand(x.shape[0], x.shape[-2], x.shape[-1])
+
+    monkeypatch.setattr(shift_maps, "class_masks", fake)
+    xs = [torch.zeros(2, 3, 8, 8), torch.zeros(2, 3, 8, 8)]
+    robust, shortcut = shift_maps.per_environment_extremal(None, xs, torch.zeros(2, dtype=torch.long), area=0.05)
+    assert len(calls) == 2 and all(call.get("deletion") is True for call in calls)
+    assert robust.shape == shortcut.shape == (2, 8, 8)
+
 
 def test_shift_checkpoint_names_stay():
     from models.build import paper_checkpoint_name

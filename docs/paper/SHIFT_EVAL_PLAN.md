@@ -12,7 +12,7 @@ Image counts per backbone are the contrastive minimums until this plan is frozen
 
 ## Scorer null and the 2×2 shift matrix (`evaluation/scores.py`)
 
-For each image and area `a`, the scorer forms `N = 8` seeded cell-structured random masks through the shared adapter (`null_pixel_masks`, seed 0). Under ROAD removal (`iters = 24, noise = 0.01`), each mask `M ∈ {M_R, M_S}` is evaluated on two raw intervention drops (`shift_drop_matrix`):
+For each image and area `a`, the scorer forms `N = 8` seeded cell-structured random masks through the shared adapter (`null_pixel_masks`, seed 0). Under ROAD removal (the converged linear fill, noise 0.01; `EVAL_PLAN.md` section 5), each mask `M ∈ {M_R, M_S}` is evaluated on two raw intervention drops (`shift_drop_matrix`):
 - **Worst-environment robust drop:** `d_rob(M) = min_{e ∈ E} [ m(x_e) - m(x_e ⊖ M) ]`
 - **Cross-environment disagreement drop:** `d_gap(M) = D(x) - D(x ⊖ M)`, where `D(x) = mean_{e ∈ E'} |m(x_id) - m(x_e)|`
 
@@ -39,8 +39,8 @@ Core (`SHIFT_CORE`):
 - `gap_attribution`: path-integrated gradient of `g_e` along `x_e → x_id` for `S` and min over environments of blur-baseline IG for `R` (`baselines/gap_attribution.py`)
 - `attribution_difference`: elementwise min and max-gap of per-environment Grad-CAM / IG maps (`baselines/shift_maps.py`)
 - `spray`: Zennit `EpsilonPlus` LRP + CoRelAy spectral clustering (`baselines/spray.py`)
-- `extremal_shift`: per-environment TorchRay `extremal_perturbation` + min/max-gap reduction (`baselines/shift_maps.py`)
-- `random_floor`: seeded random cell masks
+- `extremal_shift`: per-environment TorchRay `extremal_perturbation`, deletion variant, + min/max-gap reduction (`baselines/shift_maps.py`)
+- `random_floor`: seeded random cell masks, drawn independently for R and S over the whole sample
 
 Extended (`SHIFT_EXTENDED`): `r2r`, fetched by `scripts/fetch_r2r.sh`, unlicensed, research use, never vendored.
 
@@ -62,11 +62,13 @@ Default configuration on Waterbirds and `planted_patch` val, ResNet-50, seeds 0 
 # Run the four gate cells
 PYTHONPATH=. python scripts/gate_shift.py --run
 
-# Read out all scores and paired bootstrap intervals
-PYTHONPATH=. python scripts/gate_shift.py --records results/paper/cells --split val
+# Read out all scores, paired bootstrap intervals and the gate verdict
+PYTHONPATH=. python scripts/gate_shift.py --records results/paper/gate_shift --split val
 
 # Check D2, D4, D3 and D9 on each shift cell
-PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/cells/val/shift/waterbirds/resnet50/seed0
+PYTHONPATH=. python scripts/check_degenerate.py --records results/paper/gate_shift/val/shift/waterbirds/resnet50/seed0
 ```
 
 Stop rule: continue as a method paper only if `cdea_shift` (or `shift_assign` under the framing rule) is ahead of both `gap_attribution` and `attribution_difference` on both datasets. Otherwise take the evaluation-paper route, with no further formulation revision. Fast knobs cannot satisfy the gate.
+
+"Ahead" (defined 2026-10-20): on that dataset, the paired difference in ΔD@5% (`cdea_shift` minus the comparator, ResNet-50), with images paired by index within each seed and the differences of seeds 0 and 1 pooled, has its 95% percentile bootstrap interval (4000 resamples over images) above 0. A dataset with a seed or a method missing leaves the gate incomplete. `gate_shift.py --records` prints this verdict last.

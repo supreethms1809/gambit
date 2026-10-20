@@ -58,7 +58,7 @@ each method has to pass first.
 - **Patches.** `Perturbation.to` keeps the moved pyramid. Upstream called `tensor.to` and discarded the result. `MaskGenerator` passes `indexing="ij"` to `torch.meshgrid`, which is the order current PyTorch uses and which a later release will require by name. Neither change alters the mask update.
 - **Defaults.** Area list `[0.1]`, blur perturbation, preserve variant, `simple_reward`, 800 iterations, step 7, sigma 21, jitter on (a deterministic horizontal flip on even steps), SGD learning rate 0.01, momentum 0.9. The pointing-game setting in the TorchRay benchmark uses areas `{0.025, 0.05, 0.1, 0.2}`, sums those masks, and smooths with a Gaussian whose standard deviation is 9% of the short side. The contrastive adapter scores \(z_k - z_l\) through `reward_func`. TorchRay's own `contrastive_reward` is \(z_c - \max_{c' \neq c} z_{c'}\), which is a different target and is not the one used here.
 - **Reproduction target.** TorchRay's published pointing-game table, VOC 2007 test, all / difficult: VGG16 88.0 / 76.1, ResNet50 88.9 / 78.7, for `extremal_perturbation`, averaged over 3 runs. That run uses the excitation-backprop paper's fine-tuned classifiers and the full 4952-image test set. Those classifiers and PASCAL VOC are not on disk, and TorchRay describes this benchmark as cluster-scale. It has not been run. The CI check is the toy square and an identity check against `extremal_perturbation` itself.
-- **Conversion.** The native mask at the requested area. It does not go through the shared top-a threshold. The area is the function's `areas` argument.
+- **Conversion.** The native mask at the requested area (the function's `areas` argument), then the shared top-a conversion. TorchRay's mask is already at area a but has a smooth edge, so the conversion only resolves that edge to exactly area a.
 - **Failure modes.** The call is one image at a time. A batch is a loop. TorchRay disables `requires_grad` on the classifier; the wrapper turns those flags back on. The kernel defaults (step 7, sigma 21) are for images around 224 px. A 32 px toy uses step 2 and sigma 4 so the mask can sit on an 8 px square. That is an argument to the same function.
 - **Cost.** One forward and backward of the classifier per iteration. The authors' default is 800 iterations per class per image.
 
@@ -70,7 +70,7 @@ each method has to pass first.
 - **Patches.** None. The pool-then-linear scorer is the same replacement, written as a change to the pooled vector. `tests/test_cve.py` checks it against editing the cells and calling the head.
 - **Defaults.** The paper's reported CUB and MNIST numbers use this exhaustive search, on the last convolutional feature map. The continuous relaxation in their Section 2.3 is a different procedure and is not this adapter. The search runs until the class flips, or until every query cell has been replaced.
 - **Reproduction target.** CUB-200, their VGG-16 (79.4% test accuracy), last conv map 7×7×512. Mean edits until the decision changes: 7.4 for a random distractor class, 5.3 for an attribute nearest-neighbor class. After the flip, edited regions fall inside the bird segmentation 97% of the time, near a keypoint 75% (query) and 80% (distractor), and on the same keypoint in both birds 20% of the time. Their MNIST CNN (98.4% test, features 4×4×20) takes 2.67 edits on average. That CUB run has not been started: it needs their classifier and the keypoint and segmentation annotations. The CI check is the toy square.
-- **Conversion.** `earliest_edits` keeps a prefix of the query cells in edit order. Cells the search never replaced stay off. This is not the shared top-a threshold.
+- **Conversion.** Edit-order rank: the earliest edit scores highest and untouched cells score 0. The map then goes through the shared top-a conversion at area a, so the edited cells come first in edit order. When the class flips in fewer than a·R edits, the seeded tie-break fills the rest of area a with untouched cells, which keeps the matched area that C1 compares at. Each row records `edit_cells`, `edit_share` (the part of the a·R budget that is the search's own edits) and `flipped`. `earliest_edits`, which leaves the untouched cells off and so gives a mask smaller than a, is not used (decision 2026-10-20).
 - **Failure modes.** A non-finite feature map raises. If the query map is already predicted as the distractor class, the edit list is empty. If the class never flips, `flipped` is false and the caller counts a failure rather than dropping the image.
 - **Cost.** One decision-network evaluation per candidate pair per step. On the paper's 7×7 map that is 2,401 evaluations per edit.
 
@@ -83,7 +83,7 @@ each method has to pass first.
 - **Defaults.** `counterfactuals_ours_cub_res50.yaml`: λ=0.4, temperature 0.1, `topk=0.2` kNN prefilter, up to 20 distractors. The Goyal configs in the same repo (`counterfactuals_goyal_cub_*.yaml`) set λ=0, no prefilter, 1 distractor. SwAV ResNet-50 at `facebookresearch/swav` @ `06b1b7c`, weights `swav_800ep_pretrain.pth.tar` hash-recorded at download and loaded offline.
 - **Reproduction target.** Their README, ResNet-50 CUB, all edits: 2.9 edits, Near KP 64.6, Same KP 31.1. Their Goyal port in the same repo: 3.5 edits, Near KP 54.0, Same KP 7.4. Not run: needs a CUDA node plus the CUB ResNet checkpoint (191.7 MB) and SwAV weights (113.7 MB) downloads, each with approval at run time.
 - **Audit (2026-10-08).** The objective in `_find_single_best_edit` is argmax of `log p(distractor | edit) + λ · log semantic_prob(edit)` (Eq. 4). The exclusion drops every pair sharing the used query cell *or* the used distractor cell, while our CVE reimplementation lets a distractor cell be copied again. The distractor class comes from the confusion matrix (most-confused class); ours is the foil. Their ResNet head keeps `layer4[1:]` on `layer4[0]` features; ours is avgpool+fc on the full `layer4` output. The `while` loop has no exit when edits run out (`argmax` on empty); the wrapper maps that to `flipped=False`.
-- **Conversion.** Edit-order rank encoding shared with `cve_pair`: earliest edit scores highest, untouched cells 0. One-sided, `l=None`, scored with CD1.
+- **Conversion.** Edit-order rank encoding shared with `cve_pair`: earliest edit scores highest, untouched cells 0. As for CVE, the shared top-a conversion fills area a past the flip with seeded untouched cells, and each row records `edit_cells`, `edit_share` and `flipped`. One-sided, `l=None`, scored with CD1.
 - **Failure modes.** No correctly-classified foil image in the tries writes a NaN row (floored downstream), as in CVE. A non-finite feature map raises. No flip after exhaustion records `flipped=False`, never hangs. Missing SwAV weights raise an informative error. SwAV is ImageNet self-supervised, so its semantic prior is weak on HAM10000 and brain MRI.
 - **Cost.** One head evaluation per candidate pair per step over the joint `49 × (N × 49)` set after the prefilter, per edit. Per-image wall time and memory at 200 images on CIFAR-10 and HAM10000 feed `scripts/launch_paper_eval.py` scheduling before the grid runs.
 
@@ -128,9 +128,11 @@ each method has to pass first.
 - **Source.** Official PyTorch class `RISE` in `explanations.py`, commit `d91ea006d4bb9b7990347fe97086bdc0f5c1fe10`, vendored at `third_party/rise`. Licence MIT. TorchRay's RISE is a different reimplementation and is not this pin.
 - **Patches.** `RISE` takes a `device` and moves the masks there. When CUDA is available the default is still CUDA. `generate_masks` skips the `masks.npy` write when `savepath` is `None`. The mask draw and the weighted sum are unchanged. The official forward uses the model's raw output, not a softmax.
 - **Defaults.** The ImageNet ResNet-50 setting: 8000 masks, cell grid 7, keep-probability 0.5, input 224. VGG-16 in the paper uses 4000 masks. The toy check passes a smaller mask count and grid as arguments of the same function.
+- **Harness count.** The harness does not run the ResNet-50 count. `Knobs.rise_masks` is 4000 (the paper's VGG-16 count), and the val grid is {2000, 4000} × cell {7, 8} (`EVAL_PLAN.md` section 6.2). Both `rise_margin` and `rise_minsplit` use it. More masks only lower the map's sampling noise, but a reviewer can call 4000 an under-sampled RISE on ResNet-50. Whether to add 8000 is open (`PROGRESS.md`, open decisions).
 - **Reproduction target.** Table 1, ImageNet validation, deletion (lower is better) and insertion (higher is better). ResNet-50: deletion \(0.1076 \pm 0.0005\), insertion \(0.7267 \pm 0.0006\). VGG-16: deletion \(0.0980 \pm 0.0025\), insertion \(0.6663 \pm 0.0014\). That run has not been started: ImageNet-1k is not on disk. The CI check is the toy square, plus an identity check against the vendored `RISE.forward`.
 - **Conversion.** The shared budget conversion. The per-class map is the official weighted sum. The margin map uses the same masks and weights each one by \(z_k - z_l\).
 - **Signed-weight variant.** Official RISE weights by nonnegative class scores. The margin map weights by a signed logit margin, so masks can cancel each other — a novel variant, not published RISE. Characterise negative-weight behaviour before it anchors a confirmatory comparison.
+- **`rise_margin` is a new method, not a baseline.** No published number exists for it, so it cannot pass B3. Every table labels it as our variant ("RISE on the margin, new variant"), never as RISE. The per-class maps that `rise_minsplit` splits are official RISE and are the baseline.
 - **Failure modes.** Fewer than one mask raises. A keep-probability outside \((0, 1]\) raises. A non-finite map raises. The margin call raises when the foil is missing.
 - **Cost.** One forward of the classifier per mask. The authors' ResNet-50 setting is 8000 forwards per image.
 
@@ -150,6 +152,7 @@ each method has to pass first.
 - **Reviewer question.** Does the shortcut payoff's own first-order path integral already find the units that change the prediction?
 - **Source.** `baselines/gap_attribution.py`. Integrated gradients of the log-odds from `x_e` to `x_id`, pooled with `pool_sum` and signed by `g_e`. The robust companion is the min over environments of the same integral from the deletion baseline.
 - **Patches.** None. Captum is not used. The sum is the path integral in `cdea/shift.py`.
+- **Robust companion clamp.** `cdea.shift.robust_deletion_units` clamps each environment's pooled integral at 0 and then takes the min over environments. A cell whose deletion raises the log-odds in any environment therefore scores 0, not its negative value, and cells at 0 tie. The top-a conversion breaks those ties with the seed. This is a design choice of this companion, not part of the shortcut map.
 - **Defaults.** 16 steps. Fast smoke uses 4.
 - **Reproduction.** On a model linear in the pixels the pooled map sums to `g_e`. `tests/test_shift.py` checks that identity.
 - **Conversion.** The shared top-a conversion.
@@ -181,13 +184,37 @@ each method has to pass first.
 ## Per-environment Extremal Perturbations
 
 - **Reviewer question.** Does differencing a mask that was optimised in each environment find the shortcut?
-- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. The class mask in each environment uses the deletion Extremal Perturbations entry above. The reduction is the same elementwise min and max-gap.
-- **Patches.** None beyond that entry.
-- **Defaults.** The shared extremal step count and smoothing.
+- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. In each environment, TorchRay `extremal_perturbation` with `variant=DELETE_VARIANT` and `simple_reward` on the in-distribution predicted class (the reward is \(-z_c\)). The mask marks the region whose blur-deletion most lowers \(z_c\) at area a. Deletion matches the shift scores, which are deletion drops. The reduction is the same elementwise min and max-gap.
+- **Status.** Until 2026-10-20 the code ran the preserve variant, although this entry said deletion. The deletion flag is the one change. It needs the fresh-session review (B7) before a gate number counts.
+- **Patches.** None beyond the Extremal Perturbations entry.
+- **Defaults.** The shared extremal step count and smoothing. Otherwise the Extremal Perturbations entry's defaults.
 - **Reproduction.** The published pointing-game number is the contrastive entry's, not this reduction's.
 - **Conversion.** The native area mask, then the shared budget conversion of the reduced map.
 - **Failure modes.** The deletion entry's failures, plus fewer than two environments.
 - **Cost.** One extremal solve per environment per image.
+
+## Occlusion min-split (decomposition)
+
+- **Reviewer question.** Would the plainest perturbation map, split by the min-split rule, already decompose the pair?
+- **Citation.** Matthew D. Zeiler and Rob Fergus, Visualizing and Understanding Convolutional Networks, ECCV 2014.
+- **Source.** Captum 0.9.0 `Occlusion` (`baselines/decomposition.py` `captum_occlusion`), applied to the logit z_j of each class of the pair. The two class maps then go through the min-split rule (`FORMULATION_DECOMPOSITION.md` section 4).
+- **Patches.** None.
+- **Defaults.** Window and stride of one cell (32 px on ResNet-50, 16 px on ViT-B/16), all channels at once. Captum's default baseline 0, which is a black fill of the raw `[0, 1]` input. Each cell's attribution is the mean of its pixels.
+- **Reproduction.** There is no published number for this split.
+- **Conversion.** The min-split maps on the cell grid, then the shared top-a conversion.
+- **Failure modes.** An image that does not divide into whole cells raises. A pair whose two clamped maps are both zero gives constant maps; those rows are flagged `constant_row` and are scored as the random floor.
+- **Cost.** R + 1 forward passes per class (R = 49 on ResNet-50, 196 on ViT-B/16).
+
+## Occlusion assignment (decomposition)
+
+- **Reviewer question.** Does the joint search add anything over additive per-cell scores solved exactly?
+- **Source.** `baselines/decomposition.py` `occlusion_assign`. A construction of this project with no source paper (`FORMULATION_DECOMPOSITION.md` section 4). Each cell is blur-deleted alone (CDEA's deletion, null at one cell), the drops give the cell scores s_k = g_k − |g_l|, s_l = g_l − |g_k|, s_S = min(g_k, g_l), and HiGHS solves the exact assignment of three a·R budgets to exclusive cells.
+- **Patches.** None. It is not a published method, so it has no reproduction target, and every table labels it as our construction.
+- **Defaults.** The scored area a. The null is CDEA's.
+- **Reproduction.** `tests/test_decomposition.py` checks the LP against a brute-force assignment and that it keeps the budgets.
+- **Conversion.** The 0/1 plan on the cell grid, then the shared top-a conversion.
+- **Failure modes.** A failed LP raises. An infeasible budget (3·a·R above R) raises.
+- **Cost.** R + 1 forward passes plus the null's, and one LP per image.
 
 ## Not in this harness yet
 
@@ -198,4 +225,4 @@ each method has to pass first.
 | RISE deletion and insertion | The published ImageNet table above. | Still needs ImageNet-1k. |
 | Grad-CAM pointing game | TorchRay's published Grad-CAM number on VOC 2007. | Still needs VOC 2007 and the fine-tuned classifiers. |
 
-Method-specific conversions that are not the shared top-a rule (CVE edit order, SpRAy cluster relevance, Extremal Perturbations' native area mask) are added with the method that needs them.
+Every map reaches its mask through the shared top-a conversion. What differs is the map handed to it: CVE's and SC-CVE's edit-order rank, SpRAy's cluster relevance, and Extremal Perturbations' native area mask.

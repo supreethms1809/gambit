@@ -10,7 +10,7 @@ import torch.nn as nn
 
 import numpy as np
 
-from baselines.adapter import adapt_scores, budget_or_floor, random_floor, row_failed
+from baselines.adapter import adapt_scores, budget_or_floor, random_floor, row_constant, row_failed
 from baselines.crosscheck import SPEARMAN_MIN, gradcam_spearman, ig_spearman
 from baselines.hypotheses import foil_pair, shared_hypotheses
 from baselines.margin import margin_gradcam, margin_integrated_gradients
@@ -84,6 +84,14 @@ def test_all_negative_maps_rank_without_clamping() -> None:
     assert not bool(failed.any())
     assert masks.view(-1)[1] == 1
     assert masks.sum() == 1
+
+
+def test_a_constant_row_is_flagged_and_scored_as_the_floor() -> None:
+    scores = torch.tensor([[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.4, 0.2], [float("nan"), 1.0, 1.0, 1.0]])
+    assert row_constant(scores).tolist() == [True, False, False]
+    masks, failed = budget_or_floor(scores, 0.5, seed=0)
+    assert not bool(failed[0])
+    assert torch.equal(masks[0], random_floor(scores, 0.5, seed=0)[0])
 
 
 def test_nan_and_empty_rows_become_the_floor_and_stay_in_the_batch() -> None:

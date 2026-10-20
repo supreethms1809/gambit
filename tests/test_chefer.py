@@ -89,3 +89,21 @@ def test_class_relprop_runs_on_mps() -> None:
     assert cam.shape == (14, 14)
     assert cam.device.type == "mps"
     assert bool(torch.isfinite(cam).all())
+
+
+def test_start_layer_reaches_the_rollout_and_splits_the_candidates() -> None:
+    from evaluation.run_cell import CellSpec, _candidate_knobs
+    from evaluation.run_methods import CONTRASTIVE_CANDIDATES
+
+    torch.manual_seed(0)
+    src = torchvision.models.vit_b_16(weights=None)
+    # torchvision zero-initialises the head, which makes every relevance map zero.
+    torch.nn.init.normal_(src.heads.head.weight, std=0.02)
+    src.eval()
+    converted = from_torchvision(src)
+    x = torch.rand(1, 3, 224, 224)
+    assert torch.equal(class_relprop(converted, x, 3), class_relprop(converted, x, 3, start_layer=0))
+    assert not torch.equal(class_relprop(converted, x, 3, start_layer=0), class_relprop(converted, x, 3, start_layer=1))
+    spec = CellSpec(game="contrastive", backbone="vit_b_16")
+    layers = [_candidate_knobs(spec, CONTRASTIVE_CANDIDATES[f"chefer@start{i}"]).chefer_start_layer for i in (0, 1)]
+    assert layers == [0, 1]

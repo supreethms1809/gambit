@@ -132,3 +132,18 @@ def test_a_non_finite_feature_map_raises() -> None:
             distractor_class=1,
             log_probs=lambda _current, _free: torch.zeros(1, 1),
         )
+
+
+def test_rows_record_the_share_of_the_budget_that_is_real_edits() -> None:
+    from evaluation.run_cell import _edit_columns
+    from evaluation.run_methods import PairMaps
+
+    k = torch.zeros(2, 49)
+    k[0, :3] = torch.tensor([3.0, 2.0, 1.0])     # three edits, then the class flipped
+    k[1, :10] = torch.arange(10, 0, -1).float()  # more edits than the budget
+    maps = PairMaps(k=k, l=None, grid=(7, 7), extra={"cve_flipped": [True, False]})
+    cols = _edit_columns(maps, 0.1)
+    assert cols["edit_cells"].tolist() == [3.0, 10.0]
+    assert torch.allclose(cols["edit_share"], torch.tensor([3 / 4.9, 1.0]))
+    assert cols["flipped"].tolist() == [1.0, 0.0]
+    assert _edit_columns(PairMaps(k=k, l=k, grid=(7, 7)), 0.1) == {}

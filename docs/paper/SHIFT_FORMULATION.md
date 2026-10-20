@@ -69,6 +69,6 @@ On ColoredMNIST the colour lives on the digit's pixels, so `R` and `S` compete f
 
 - **D1 and D5** (gate): marginals within `1e-3` (asserted inside Sinkhorn).
 - **D2** (gate): the soft plan and the hard top-`a` mask differ by at most 0.5 nats on average for both `R` and `S` (`payoff_soft_{r,s} - payoff_hard_{r,s}`).
-- **D4** (gate): `S` beats a translated copy of itself on val `ΔD` (`delta_d > delta_d_translated`).
+- **D4** (gate): `S` beats a translated copy of itself on val `ΔD` (`delta_d > delta_d_translated`). The copy is the pixel `S` mask rolled one cell along the width (`torch.roll` in `evaluation/run_cell.py`). The roll wraps around, so the last column of cells reappears as the first.
 - **D3** (reported): the share of `u_S` that comes from the transplant crossing past `m(x_e)` (`overshoot_share`).
 - **D9** (reported): the share of images whose final top cells equal the step-0 plan's (`same_as_init`).

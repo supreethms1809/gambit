@@ -129,6 +129,27 @@ def test_runner_rows_carry_the_matrix_scores_and_stage_payoffs() -> None:
     rows = _score_decomp(model, x, ref, h, 0.05, spec, "margin_gradcam_ref", sample, budget_or_floor, 0, "c", "k")
     assert all(r["sv"] != r["sv"] and r["cd"] == r["cd"] for r in rows)   # no S: NaN; CD present
     assert "payoff_soft_uk" not in rows[0]
+    assert all(r["constant_row"] == 0 for r in rows)
+
+    # On planted patches the missing S has no recall or precision, so RR averages U_k and U_l.
+    from scripts.decomp_readout import _value
+
+    patches = torch.zeros(2, 3, 224, 224)
+    patches[:, 0, :32, :32] = 1
+    patches[:, 1, :32, 192:] = 1
+    patches[:, 2, 192:, :32] = 1
+    planted = SimpleNamespace(index=[10, 11], labels=[0, 1], patches=patches, roles=None)
+    rows = _score_decomp(model, x, ref, h, 0.05, spec, "margin_gradcam_ref", planted, budget_or_floor, 0, "c", "k")
+    for r in rows:
+        assert r["rec_s_c"] != r["rec_s_c"] and r["prec_s_c"] != r["prec_s_c"]
+        assert r["rec_uk_ak"] == r["rec_uk_ak"]
+        rr = _value({key: str(r[key]) for key in ("rec_uk_ak", "rec_ul_al", "rec_s_c")}, "rr")
+        assert abs(rr - (r["rec_uk_ak"] + r["rec_ul_al"]) / 2) < 1e-6
+
+    # An all-zero map is scored as the floor and flagged.
+    flat = DecompMaps(k=torch.zeros(2, 224, 224), l=torch.rand(2, 224, 224), shared=None, grid=None)
+    rows = _score_decomp(model, x, flat, h, 0.05, spec, "margin_gradcam_ref", sample, budget_or_floor, 0, "c", "k")
+    assert all(r["constant_row"] == 1 and r["failed_row"] == 0 for r in rows)
 
 
 def test_every_decomposition_ablation_names_a_change() -> None:

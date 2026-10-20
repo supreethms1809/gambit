@@ -46,7 +46,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 
 | Dataset | Classes | Test split | Val split | Models | Machine |
 |---|---|---|---|---|---|
-| CIFAR-10 *(dev)* | 10 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
+| CIFAR-10 *(dev)* | 10 | official test | 10% of train, seed 42 | trained, 5 seeds | **[set at freeze]** |
 | CIFAR-100 | 100 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
 | Oxford-IIIT Pet | 37 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
 | Stanford Dogs | 120 | complement of `random_split(seed=42)` | 10% of train pool, seed 43 | trained, 5 seeds | **[set at freeze]** |
@@ -99,9 +99,9 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 ### 4.1 Shared rules
 - **Hypotheses.** The model's top K = min(5, C) classes on the full image (H). The contrastive pair is k = rank 0 and l = rank 1. Every method receives the same H, k and l.
 - **Budget.** Every map goes through `baselines.adapter.adapt_scores`: bilinear upsampling, then the top a of pixels, with a seeded tie-break.
-  - Exceptions, each named in the dossier:
-    - Extremal Perturbations' native mask at area a;
-    - CVE's and SC-CVE's edit order.
+  - Maps that are not plain scores, each named in the dossier:
+    - Extremal Perturbations' native mask at area a, whose smooth edge the conversion resolves to exactly a;
+    - CVE's and SC-CVE's edit order. Edited cells come first. When the class flips in fewer than a·R edits, the seeded tie-break fills the rest of area a with untouched cells, and each row records `edit_share`, the part of the budget that is real edits.
   - The primary area is a = 5%. Robustness areas are 2.5% and 10%.
 - **Per-area optimisation.** CDEA and both Extremal Perturbations variants are optimised separately at each area. Every other method produces one map, which is thresholded at each area.
 - **Failures.** A row with a non-finite or empty map is replaced by the seeded random floor and stays in the sample. Failure counts are reported per method × dataset. No image is dropped.
@@ -119,7 +119,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 | Contrastive Extremal Perturbations, preservation | TorchRay `PRESERVE_VARIANT`, reward z_k − z_l | Same, reward z_l − z_k | — | Extended (sufficiency comparator) | Both |
 | Chefer et al. 2021, transformer attribution | Class map for k | Class map for l | Class map for j | Extended | ViT-B/16 |
 | SC-CVE (Vandenhende et al. 2022) | Query cells replaced in joint-search edit order | Not defined | — | Extended | ResNet-50 |
-| RISE | Masks weighted by z_k − z_l | Weighted by z_l − z_k | Official class maps for j | Extended | Both |
+| RISE (margin weighting is our new variant; label it so in every table) | Masks weighted by z_k − z_l | Weighted by z_l − z_k | Official class maps for j | Extended | Both |
 | Contrastive Grad-CAM | Cross-entropy toward l | Cross-entropy toward k | — | Extended | Both |
 | Analytic decomposition | E_k − min_{j∈H} E_j | E_l − min_{j∈H} E_j | E_j − min_{i∈H} E_i; shared map min_{j∈H} E_j | Sanity row | Both |
 
@@ -144,7 +144,7 @@ Notes on these definitions:
 
 ## 5. Metrics
 
-Every removal is ROAD noisy-linear imputation (`evaluation.removal.noisy_linear_impute`, 24 iterations, noise 0.01) unless marked "blur". CDEA and both Extremal Perturbations variants optimise with blur, so every primary and secondary score uses a different operator from the one they were fitted to. Blur scores are robustness checks.
+Every removal is ROAD noisy-linear imputation (`evaluation.removal.noisy_linear_impute`) unless marked "blur". Each removed pixel is the weighted mean of its in-image neighbours, with ROAD's weights (1/6 edge, 1/12 corner; `road_evaluation` commit `e6b9987`). The system is solved to convergence by conjugate gradient, checked in a test against ROAD's direct solve, and noise 0.01 is then added. Until 2026-10-20 the fill was 24 Jacobi sweeps from black, which left a 32 px cell of a flat 0.5 image at 0.17, close to a black fill. CDEA and both Extremal Perturbations variants optimise with blur, so every primary and secondary score uses a different operator from the one they were fitted to. Blur scores are robustness checks.
 
 ### 5.0 The angles of the question, and who optimises each metric
 
@@ -166,6 +166,7 @@ The claims that rest on metrics no method optimises (C2, C3) are the strongest e
 
 ### 5.2 Sufficiency contrast
 - **SC@a** = m(x ⊕ M_k) − m(x ⊕ M_l), where x ⊕ M keeps M and ROAD-imputes every other pixel. Positive means k's evidence alone favours k, and l's evidence alone favours l.
+- The two fills draw their ROAD noise from seeds s and s + 1 (`sufficiency_contrast`), so the noise is not paired between the two terms. It adds variance, not bias.
 - It is reported for every method that defines both sides. Descriptive, with intervals.
 
 ### 5.3 Discriminative-part contrast (CUB-200)

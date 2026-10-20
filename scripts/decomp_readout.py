@@ -4,7 +4,8 @@ For each cell, area and operator: every method's mean scores, and the paired
 difference of CDEA (or another label) against the best min-split row and
 against occlusion_assign, with 95% bootstrap intervals over images. On planted
 pairs it adds RR (EVAL_PLAN.md 13.2: each player's recall of its own patch,
-averaged over U_k, U_l and S) and the patch masses, including S on A_k and S on
+averaged over U_k, U_l and S, or over U_k and U_l for a method with no S map)
+and the patch masses, including S on A_k and S on
 A_l (S spilling onto the unique patches). Both are shown over every kept image
 and over images whose three roles were confirmed by intervention, which is
 RR's primary set.
@@ -22,6 +23,9 @@ role-confirmed images, from the reported split. Each seed's per-image
 differences stay apart, and ``analysis.stats.seed_pooled_summary`` gives the mean
 over seeds of each seed's mean, the two-level 95% interval and the sign-flip p.
 Fast-knob rows are left out.
+
+Each method row also gives the share of failed rows and of constant maps.
+Both are scored as the seeded random floor.
 
 This prints numbers. The win conditions are in EVAL_PLAN.md section 13 and
 are applied there, not here.
@@ -69,7 +73,9 @@ def _value(row: dict, key: str) -> float:
     if key == "pur+sv":
         return _value(row, "pur") + _value(row, "sv")
     if key == "rr":
-        return float(np.mean([_value(row, name) for name in OWN_RECALL]))
+        # Over the players the method has: margin_gradcam_ref has no S, so its RR is over U_k and U_l.
+        recalls = [v for v in (_value(row, name) for name in OWN_RECALL) if math.isfinite(v)]
+        return float(np.mean(recalls)) if recalls else float("nan")
     raw = row.get(key, "")
     return float(raw) if raw not in ("", None) else float("nan")
 
@@ -103,6 +109,12 @@ def _mean(rows, key: str) -> str:
     values = np.array([_value(r, key) for r in rows], dtype=float)
     values = values[np.isfinite(values)]
     return f"{values.mean():.2f}" if values.size else "n/a"
+
+
+def _share(rows, key: str) -> str:
+    """Share of rows with ``key`` = 1, e.g. failed or constant maps scored as the random floor."""
+    flags = [r.get(key) == "1" for r in rows if r.get(key) not in ("", None)]
+    return f"{np.mean(flags):7.2f}" if flags else "    n/a"
 
 
 def _non_fast(rows: dict) -> dict:
@@ -208,14 +220,15 @@ def report(cells: dict, cdea: str, selection: dict) -> None:
     for (dataset, backbone, seed, area, operator), methods in sorted(cells.items()):
         planted = dataset == PLANTED
         print(f"\n{dataset} {backbone} seed{seed}  area {area:g}  {operator}")
-        print(f"  {'method':34s}" + "".join(f"{s:>8s}" for s in SCORES) + "     n")
+        print(f"  {'method':34s}" + "".join(f"{s:>8s}" for s in SCORES) + "     n   failed  constant")
         for method, rows in sorted(methods.items()):
             means = []
             for score in SCORES:
                 values = np.array([_value(r, score) for r in rows.values()], dtype=float)
                 values = values[np.isfinite(values)]
                 means.append(f"{values.mean():8.2f}" if values.size else "     n/a")
-            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}")
+            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}"
+                  f"  {_share(rows.values(), 'failed_row')}  {_share(rows.values(), 'constant_row')}")
         if cdea not in methods:
             continue
         best = selection.get((dataset, backbone), (None, {}))[0]

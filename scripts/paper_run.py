@@ -120,9 +120,10 @@ def spec_from_args(args):
 def run(spec, device_name: str = "auto"):
     from core.device import get_device
     from core.reporting import refuse_final_if_dirty
-    from evaluation.run_cell import run_contrastive, run_decomposition, run_shift
+    from evaluation.run_cell import records_root, run_contrastive, run_decomposition, run_shift
 
     refuse_final_if_dirty(spec.final)
+    records_root(spec)
     import torch
 
     device = get_device(None if device_name == "auto" else torch.device(device_name))

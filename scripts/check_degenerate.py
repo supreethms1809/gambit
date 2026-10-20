@@ -52,6 +52,11 @@ def d2_soft_hard_gap(soft: torch.Tensor, hard: torch.Tensor, tol: float = 0.5) -
     return bool((soft - hard).abs().max() <= tol)
 
 
+def _paper_rows(handle):
+    """Record rows that can count toward a gate. Fast-knob rows never do."""
+    return (row for row in csv.DictReader(handle) if row.get("fast", "0") != "1")
+
+
 def stage_gaps(records: Path, method: str = "cdea", tol: float = 0.5) -> dict[float, dict]:
     """D2 per area from a contrastive cell's records.
 
@@ -64,7 +69,7 @@ def stage_gaps(records: Path, method: str = "cdea", tol: float = 0.5) -> dict[fl
         path = path / "records.csv.gz"
     by_area: dict[float, dict[str, list[float]]] = {}
     with gzip.open(path, "rt", newline="") as handle:
-        for row in csv.DictReader(handle):
+        for row in _paper_rows(handle):
             # Stage payoffs do not depend on the scoring operator; read one copy.
             if row["method"] != method or row["operator"] != "road" or not row.get("payoff_soft_k"):
                 continue
@@ -94,7 +99,7 @@ def decomposition_gaps(records: Path, method: str = "cdea_decomp", tol: float = 
         path = path / "records.csv.gz"
     by_area: dict[float, dict[str, list[float]]] = {}
     with gzip.open(path, "rt", newline="") as handle:
-        for row in csv.DictReader(handle):
+        for row in _paper_rows(handle):
             if row["method"] != method or not row.get("payoff_soft_uk"):
                 continue
             slot = by_area.setdefault(float(row["area"]), {})
@@ -128,7 +133,7 @@ def shift_gaps(records: Path, method: str = "cdea_shift", tol: float = 0.5) -> d
         path = path / "shift.csv.gz"
     by_area: dict[float, dict[str, list[float]]] = {}
     with gzip.open(path, "rt", newline="") as handle:
-        for row in csv.DictReader(handle):
+        for row in _paper_rows(handle):
             if row["method"] != method or not row.get("payoff_soft_r"):
                 continue
             slot = by_area.setdefault(float(row["area"]), {})

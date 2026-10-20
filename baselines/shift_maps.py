@@ -5,8 +5,10 @@ The robust map is the elementwise minimum, evidence that is present in every
 environment. The shortcut map is the largest absolute gap between the
 in-distribution map and any other environment.
 
-Per-environment Extremal Perturbations runs the class mask on each environment
-and then applies that same reduction. The mask update is unchanged.
+Per-environment Extremal Perturbations runs TorchRay's deletion class mask on
+each environment, the region whose removal most lowers the class at area a,
+because the shift scores are deletion drops. It then applies that same
+reduction. The mask update is unchanged.
 
 ``shift_assign`` is the additive per-cell assignment baseline: it scores each
 cell alone by its worst-environment deletion drop (for R) and its single-cell
@@ -47,14 +49,14 @@ def per_environment_extremal(
     area: float = 0.1,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Class masks per environment, then the robust and shortcut reduction.
+    """Deletion class masks per environment, then the robust and shortcut reduction.
 
     ``xs[0]`` is the in-distribution batch. ``class_idx`` is ``(B,)`` and is
     shared across environments. Returns ``(robust, shortcut)``.
     """
     if len(xs) < 2:
         raise ValueError("a shift comparison needs the ID batch and at least one other environment")
-    masks = [class_masks(model, x, class_idx, area=area, **kwargs) for x in xs]
+    masks = [class_masks(model, x, class_idx, area=area, deletion=True, **kwargs) for x in xs]
     return environment_maps(masks)
 
 

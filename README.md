@@ -33,7 +33,7 @@ PYTHONPATH=. python -m pytest tests/
 
 ## Run
 
-One cell is every method on one dataset × backbone × seed. Records go to `results/paper/cells/`.
+One cell is every method on one dataset × backbone × seed. Records go to `results/paper/cells/`. Fast-knob records go to `results/paper/smoke/fast_knobs/`, and a fast cell refuses any other path under `results/paper/`, so it can never overwrite a paper cell.
 
 ```bash
 # contrastive game, fast knobs, one image

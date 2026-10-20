@@ -19,6 +19,7 @@ from typing import Optional, Sequence
 import torch
 import torch.nn as nn
 
+from evaluation.removal import ROAD
 from evaluation.run_methods import (
     ABLATIONS,
     CONTRASTIVE_CANDIDATES,
@@ -33,8 +34,9 @@ from evaluation.run_methods import (
 
 IMAGE_SIZE = 224
 AREA_DEPENDENT = {"extremal", "extremal_preserve", "cdea"}
-ROAD = dict(iters=24, noise=0.01)
-CELLS_ROOT = Path(__file__).resolve().parents[1] / "results" / "paper" / "cells"
+PAPER_ROOT = Path(__file__).resolve().parents[1] / "results" / "paper"
+CELLS_ROOT = PAPER_ROOT / "cells"
+FAST_ROOT = PAPER_ROOT / "smoke" / "fast_knobs"
 
 
 class PassCounter:
@@ -268,6 +270,7 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     stages = {}
     if "payoff_ids" in maps.extra and maps.grid is not None and ml is not None:
         stages = _stage_payoffs(model, x, maps, mk, ml, area, grid)
+    stages.update(_edit_columns(maps, area))
     rows = []
     batch = x.shape[0]
     for operator in spec.operators:
@@ -330,6 +333,26 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
                         "method_code_hash": code_hash, "knobs_hash": knob_hash,
                     })
     return rows
+
+
+def _edit_columns(maps: PairMaps, area: float) -> dict[str, torch.Tensor]:
+    """CVE and SC-CVE: edited cells, their share of the area-a budget, and whether the class flipped.
+
+    Their map ranks the edited cells by edit order and leaves the rest at 0. When
+    the flip takes fewer than a·R edits, the shared top-a conversion fills the
+    rest of area a with seeded untouched cells. The mask keeps area a, and
+    ``edit_share`` is the part of it that is the search's own edits.
+    """
+    flipped = maps.extra.get("cve_flipped", maps.extra.get("sc_cve_flipped"))
+    if flipped is None:
+        return {}
+    budget = float(area) * maps.k.shape[-1]
+    edits = (maps.k.detach().float().cpu() > 0).sum(dim=-1).float()
+    return {
+        "edit_cells": edits,
+        "edit_share": edits.clamp(max=budget) / budget,
+        "flipped": torch.tensor([float(bool(f)) for f in flipped]),
+    }
 
 
 def _stage_payoffs(model, x, maps: PairMaps, mk, ml, area, grid) -> dict[str, torch.Tensor]:
@@ -406,7 +429,7 @@ def run_shift(spec: CellSpec, device) -> Path:
     from baselines.adapter import budget_or_floor, random_floor
     from evaluation.provenance import knobs_hash, method_code_hash
     from evaluation.run_data import shift_sample
-    from evaluation.run_methods import SHIFT_CANDIDATES, shift_ablation, shift_method
+    from evaluation.run_methods import SHIFT_CANDIDATES, SHIFT_WHOLE_SAMPLE, shift_ablation, shift_method
     from evaluation.run_models import load_cell_model
     from evaluation.scores import (
         null_pixel_masks,
@@ -444,7 +467,7 @@ def run_shift(spec: CellSpec, device) -> Path:
 
     for method, label, cfg in runs:
         areas = spec.areas if method in area_dependent else (None,)
-        whole = method == "spray"
+        whole = method in SHIFT_WHOLE_SAMPLE
         ranges = [(0, n)] if whole else _ranges(n, spec.image_batch)
         for area_for_map in areas:
             counter.reset()
@@ -516,6 +539,8 @@ def _score_shift(
     transplant_closure, shortcut_patch_contrast, mass_in, top_fraction_mask,
     grid_h, grid_w,
 ) -> list[dict]:
+    from baselines.adapter import row_constant
+
     device = views[0].device
     height, width = views[0].shape[-2:]
     grid = maps.grid
@@ -527,6 +552,7 @@ def _score_shift(
     # start_i: tie-breaks and ROAD noise follow the image's place in the sample.
     shortcut, failed_s = budget_or_floor(maps.shortcut.detach().float().cpu(), area, spec.seed, offset=start_i, **kwargs)
     robust, failed_r = budget_or_floor(maps.robust.detach().float().cpu(), area, spec.seed + 1, offset=start_i, **kwargs)
+    constant = row_constant(maps.shortcut.detach().float().cpu()) | row_constant(maps.robust.detach().float().cpu())
     shortcut = shortcut.to(device)
     robust = robust.to(device)
     random_mask = random_floor(maps.shortcut.detach().float().cpu(), area, spec.seed + 2, offset=start_i, **kwargs).to(device)
@@ -583,6 +609,7 @@ def _score_shift(
             "area_r": float(robust[i].float().mean()),
             "area_s": float(shortcut[i].float().mean()),
             "failed_row": int(bool(failed_s[i] or failed_r[i])),
+            "constant_row": int(bool(constant[i])),
             "method_code_hash": code_hash,
             "knobs_hash": knob_hash,
             "fast": int(spec.knobs.fast),
@@ -747,6 +774,7 @@ def run_decomposition(spec: CellSpec, device) -> Path:
 
 def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor, offset,
                   code_hash, knob_hash) -> list[dict]:
+    from baselines.adapter import row_constant
     from core.grid import grid_of
     from evaluation.scores import decomposition_scores, drop_matrix, mask_patch_confusion, null_drops_scored, null_pixel_masks
 
@@ -756,15 +784,17 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
         grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=x.shape[-2], width=x.shape[-1])
     mask_seed = spec.seed * 1000 + int(round(area * 1000))
     sources = (maps.k, maps.l, maps.shared)
-    masks, failed = [], []
+    masks, failed, constant = [], [], []
     for index, source in enumerate(sources):
         if source is None:
             masks.append(torch.full(x.shape[:1] + x.shape[-2:], float("nan"), device=x.device))
             failed.append(torch.zeros(x.shape[0], dtype=torch.bool))
+            constant.append(torch.zeros(x.shape[0], dtype=torch.bool))
             continue
         m, f = budget_or_floor(source.detach().float().cpu(), area, mask_seed + index, offset=offset, **grid_kw)
         masks.append(m.to(x.device))
         failed.append(f)
+        constant.append(row_constant(source.detach().float().cpu()))
     stacked = torch.stack(masks, dim=1)
     ids = h.ids[:, :2].long()
     k, l = ids[:, 0], ids[:, 1]
@@ -775,7 +805,13 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
     confusion = None
     if patches is not None:
         safe = torch.nan_to_num(stacked, nan=0.0)
-        confusion = mask_patch_confusion(safe, patches[offset:offset + x.shape[0]].to(x.device))
+        precision, recall = mask_patch_confusion(safe, patches[offset:offset + x.shape[0]].to(x.device))
+        # A player the method does not have (margin_gradcam_ref's S) has no
+        # precision or recall, not a zero one.
+        absent = [p for p in range(3) if sources[p] is None]
+        precision[:, absent] = float("nan")
+        recall[:, absent] = float("nan")
+        confusion = (precision, recall)
     rows = []
     for operator in spec.operators:
         def remove_op(images, mask, operator=operator):
@@ -796,6 +832,7 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
                 "z_k_full": float(_pick(full, k)[i]), "z_l_full": float(_pick(full, l)[i]),
                 "null_k": float(null[i, 0]), "null_l": float(null[i, 1]),
                 "failed_row": int(any(bool(f[i]) for f in failed)),
+                "constant_row": int(any(bool(c[i]) for c in constant)),
                 "fast": int(spec.knobs.fast), "model_source": spec.model_source,
                 "method_code_hash": code_hash, "knobs_hash": knob_hash,
             }
@@ -861,11 +898,28 @@ def _decomp_stage_payoffs(model, x, maps, scored, ids, area, grid) -> dict[str, 
     return out
 
 
+def records_root(spec: CellSpec) -> Path:
+    """The root a cell writes under. Fast-knob records never share a path with paper records.
+
+    Without ``out_dir``, a fast cell writes under ``results/paper/smoke/fast_knobs``.
+    A fast cell asked to write anywhere else under ``results/paper`` raises,
+    because it would overwrite the paper cell at the same path.
+    """
+    if not spec.out_dir:
+        return FAST_ROOT if spec.knobs.fast else CELLS_ROOT
+    root = Path(spec.out_dir)
+    resolved = root.resolve()
+    if spec.knobs.fast and resolved.is_relative_to(PAPER_ROOT) and not resolved.is_relative_to(PAPER_ROOT / "smoke"):
+        raise ValueError(f"fast-knob records would overwrite paper records under {root}; "
+                         "write them under results/paper/smoke or outside results/paper")
+    return root
+
+
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
 
     summary["device_peak_mb"] = _peak_mb(device)
-    root = Path(spec.out_dir) if spec.out_dir else CELLS_ROOT
+    root = records_root(spec)
     out = root / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}"
     out.mkdir(parents=True, exist_ok=True)
     name = "shift.csv.gz" if spec.game == "shift" else "records.csv.gz"
