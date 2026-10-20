@@ -39,8 +39,8 @@ Core (`SHIFT_CORE`):
 - `gap_attribution`: path-integrated gradient of `g_e` along `x_e → x_id` for `S` and min over environments of blur-baseline IG for `R` (`baselines/gap_attribution.py`)
 - `attribution_difference`: elementwise min and max-gap of per-environment Grad-CAM / IG maps (`baselines/shift_maps.py`)
 - `spray`: Zennit `EpsilonPlus` LRP + CoRelAy spectral clustering (`baselines/spray.py`)
-- `extremal_shift`: per-environment TorchRay `extremal_perturbation` + min/max-gap reduction (`baselines/shift_maps.py`)
-- `random_floor`: seeded random cell masks
+- `extremal_shift`: per-environment TorchRay `extremal_perturbation`, deletion variant, + min/max-gap reduction (`baselines/shift_maps.py`)
+- `random_floor`: seeded random cell masks, drawn independently for R and S over the whole sample
 
 Extended (`SHIFT_EXTENDED`): `r2r`, fetched by `scripts/fetch_r2r.sh`, unlicensed, research use, never vendored.
 
