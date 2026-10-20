@@ -258,6 +258,22 @@ def test_random_shift_floor_draws_r_and_s_apart_over_the_whole_sample():
     assert torch.equal(again.robust, maps.robust) and torch.equal(again.shortcut, maps.shortcut)
 
 
+def test_per_environment_extremal_uses_deletion_masks(monkeypatch):
+    from baselines import shift_maps
+
+    calls = []
+
+    def fake(model, x, class_idx, area=0.1, **kwargs):
+        calls.append(kwargs)
+        return torch.rand(x.shape[0], x.shape[-2], x.shape[-1])
+
+    monkeypatch.setattr(shift_maps, "class_masks", fake)
+    xs = [torch.zeros(2, 3, 8, 8), torch.zeros(2, 3, 8, 8)]
+    robust, shortcut = shift_maps.per_environment_extremal(None, xs, torch.zeros(2, dtype=torch.long), area=0.05)
+    assert len(calls) == 2 and all(call.get("deletion") is True for call in calls)
+    assert robust.shape == shortcut.shape == (2, 8, 8)
+
+
 def test_shift_checkpoint_names_stay():
     from models.build import paper_checkpoint_name
 

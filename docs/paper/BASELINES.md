@@ -181,9 +181,10 @@ each method has to pass first.
 ## Per-environment Extremal Perturbations
 
 - **Reviewer question.** Does differencing a mask that was optimised in each environment find the shortcut?
-- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. The class mask in each environment uses the deletion Extremal Perturbations entry above. The reduction is the same elementwise min and max-gap.
-- **Patches.** None beyond that entry.
-- **Defaults.** The shared extremal step count and smoothing.
+- **Source.** `baselines/shift_maps.py` `per_environment_extremal`. In each environment, TorchRay `extremal_perturbation` with `variant=DELETE_VARIANT` and `simple_reward` on the in-distribution predicted class (the reward is \(-z_c\)). The mask marks the region whose blur-deletion most lowers \(z_c\) at area a. Deletion matches the shift scores, which are deletion drops. The reduction is the same elementwise min and max-gap.
+- **Status.** Until 2026-10-20 the code ran the preserve variant, although this entry said deletion. The deletion flag is the one change. It needs the fresh-session review (B7) before a gate number counts.
+- **Patches.** None beyond the Extremal Perturbations entry.
+- **Defaults.** The shared extremal step count and smoothing. Otherwise the Extremal Perturbations entry's defaults.
 - **Reproduction.** The published pointing-game number is the contrastive entry's, not this reduction's.
 - **Conversion.** The native area mask, then the shared budget conversion of the reduced map.
 - **Failure modes.** The deletion entry's failures, plus fewer than two environments.
