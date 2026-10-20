@@ -518,6 +518,8 @@ def _score_shift(
     transplant_closure, shortcut_patch_contrast, mass_in, top_fraction_mask,
     grid_h, grid_w,
 ) -> list[dict]:
+    from baselines.adapter import row_constant
+
     device = views[0].device
     height, width = views[0].shape[-2:]
     grid = maps.grid
@@ -529,6 +531,7 @@ def _score_shift(
     # start_i: tie-breaks and ROAD noise follow the image's place in the sample.
     shortcut, failed_s = budget_or_floor(maps.shortcut.detach().float().cpu(), area, spec.seed, offset=start_i, **kwargs)
     robust, failed_r = budget_or_floor(maps.robust.detach().float().cpu(), area, spec.seed + 1, offset=start_i, **kwargs)
+    constant = row_constant(maps.shortcut.detach().float().cpu()) | row_constant(maps.robust.detach().float().cpu())
     shortcut = shortcut.to(device)
     robust = robust.to(device)
     random_mask = random_floor(maps.shortcut.detach().float().cpu(), area, spec.seed + 2, offset=start_i, **kwargs).to(device)
@@ -585,6 +588,7 @@ def _score_shift(
             "area_r": float(robust[i].float().mean()),
             "area_s": float(shortcut[i].float().mean()),
             "failed_row": int(bool(failed_s[i] or failed_r[i])),
+            "constant_row": int(bool(constant[i])),
             "method_code_hash": code_hash,
             "knobs_hash": knob_hash,
             "fast": int(spec.knobs.fast),
@@ -749,6 +753,7 @@ def run_decomposition(spec: CellSpec, device) -> Path:
 
 def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor, offset,
                   code_hash, knob_hash) -> list[dict]:
+    from baselines.adapter import row_constant
     from core.grid import grid_of
     from evaluation.scores import decomposition_scores, drop_matrix, mask_patch_confusion, null_drops_scored, null_pixel_masks
 
@@ -758,15 +763,17 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
         grid_kw = dict(grid_h=maps.grid[0], grid_w=maps.grid[1], height=x.shape[-2], width=x.shape[-1])
     mask_seed = spec.seed * 1000 + int(round(area * 1000))
     sources = (maps.k, maps.l, maps.shared)
-    masks, failed = [], []
+    masks, failed, constant = [], [], []
     for index, source in enumerate(sources):
         if source is None:
             masks.append(torch.full(x.shape[:1] + x.shape[-2:], float("nan"), device=x.device))
             failed.append(torch.zeros(x.shape[0], dtype=torch.bool))
+            constant.append(torch.zeros(x.shape[0], dtype=torch.bool))
             continue
         m, f = budget_or_floor(source.detach().float().cpu(), area, mask_seed + index, offset=offset, **grid_kw)
         masks.append(m.to(x.device))
         failed.append(f)
+        constant.append(row_constant(source.detach().float().cpu()))
     stacked = torch.stack(masks, dim=1)
     ids = h.ids[:, :2].long()
     k, l = ids[:, 0], ids[:, 1]
@@ -777,7 +784,13 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
     confusion = None
     if patches is not None:
         safe = torch.nan_to_num(stacked, nan=0.0)
-        confusion = mask_patch_confusion(safe, patches[offset:offset + x.shape[0]].to(x.device))
+        precision, recall = mask_patch_confusion(safe, patches[offset:offset + x.shape[0]].to(x.device))
+        # A player the method does not have (margin_gradcam_ref's S) has no
+        # precision or recall, not a zero one.
+        absent = [p for p in range(3) if sources[p] is None]
+        precision[:, absent] = float("nan")
+        recall[:, absent] = float("nan")
+        confusion = (precision, recall)
     rows = []
     for operator in spec.operators:
         def remove_op(images, mask, operator=operator):
@@ -798,6 +811,7 @@ def _score_decomp(model, x, maps, h, area, spec, label, sample, budget_or_floor,
                 "z_k_full": float(_pick(full, k)[i]), "z_l_full": float(_pick(full, l)[i]),
                 "null_k": float(null[i, 0]), "null_l": float(null[i, 1]),
                 "failed_row": int(any(bool(f[i]) for f in failed)),
+                "constant_row": int(any(bool(c[i]) for c in constant)),
                 "fast": int(spec.knobs.fast), "model_source": spec.model_source,
                 "method_code_hash": code_hash, "knobs_hash": knob_hash,
             }

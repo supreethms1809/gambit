@@ -76,6 +76,12 @@ def load_shift_records(root: Path, split: str = "val", expect_hash: str | None =
     return loaded
 
 
+def _share(rows, key: str) -> str:
+    """Share of rows with ``key`` = 1, e.g. failed or constant maps scored as the random floor."""
+    flags = [r.get(key) == "1" for r in rows if r.get(key) not in ("", None)]
+    return f"{np.mean(flags):7.2f}" if flags else "    n/a"
+
+
 def _paired(a: dict, b: dict, key: str) -> np.ndarray:
     common = sorted(set(a) & set(b))
     diff = np.array([_value(a[i], key) - _value(b[i], key) for i in common], dtype=float)
@@ -92,14 +98,15 @@ def _fmt(values: np.ndarray) -> str:
 def report_shift_cells(loaded: dict, cdea: str = "cdea_shift") -> None:
     for (dataset, backbone, seed, area), methods in sorted(loaded.items()):
         print(f"\n{dataset} {backbone} seed{seed}  area {area:g}")
-        print(f"  {'method':34s}" + "".join(f"{s:>9s}" for s in SCORES) + "     n")
+        print(f"  {'method':34s}" + "".join(f"{s:>9s}" for s in SCORES) + "     n   failed  constant")
         for method, rows in sorted(methods.items()):
             means = []
             for score in SCORES:
                 values = np.array([_value(r, score) for r in rows.values()], dtype=float)
                 values = values[np.isfinite(values)]
                 means.append(f"{values.mean():9.2f}" if values.size else "      n/a")
-            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}")
+            print(f"  {method:34s}" + "".join(means) + f"  {len(rows):4d}"
+                  f"  {_share(rows.values(), 'failed_row')}  {_share(rows.values(), 'constant_row')}")
         if cdea not in methods:
             continue
         for other, title in COMPARATORS:

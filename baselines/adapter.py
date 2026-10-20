@@ -51,6 +51,22 @@ def row_failed(scores: torch.Tensor) -> torch.Tensor:
     return ~torch.isfinite(flat).all(dim=-1)
 
 
+def row_constant(scores: torch.Tensor) -> torch.Tensor:
+    """Per-image: True when a finite row holds a single value, so every entry ties.
+
+    This is not a failure, but the seeded tie-break then draws the whole area,
+    so the mask is the random floor. An all-zero Grad-CAM map is the usual
+    case. Callers write it per row so the rate is reported.
+    """
+    if scores.ndim < 1:
+        raise ValueError("scores need a batch dimension")
+    flat = scores.detach().reshape(scores.shape[0], -1)
+    if flat.shape[-1] == 0:
+        return torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
+    finite = torch.isfinite(flat).all(dim=-1)
+    return finite & (flat.amax(dim=-1) == flat.amin(dim=-1))
+
+
 def random_floor(
     like: torch.Tensor,
     fraction: float,
