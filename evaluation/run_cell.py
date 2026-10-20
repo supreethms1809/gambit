@@ -406,7 +406,7 @@ def run_shift(spec: CellSpec, device) -> Path:
     from baselines.adapter import budget_or_floor, random_floor
     from evaluation.provenance import knobs_hash, method_code_hash
     from evaluation.run_data import shift_sample
-    from evaluation.run_methods import SHIFT_CANDIDATES, shift_ablation, shift_method
+    from evaluation.run_methods import SHIFT_CANDIDATES, SHIFT_WHOLE_SAMPLE, shift_ablation, shift_method
     from evaluation.run_models import load_cell_model
     from evaluation.scores import (
         null_pixel_masks,
@@ -444,7 +444,7 @@ def run_shift(spec: CellSpec, device) -> Path:
 
     for method, label, cfg in runs:
         areas = spec.areas if method in area_dependent else (None,)
-        whole = method == "spray"
+        whole = method in SHIFT_WHOLE_SAMPLE
         ranges = [(0, n)] if whole else _ranges(n, spec.image_batch)
         for area_for_map in areas:
             counter.reset()

@@ -649,6 +649,9 @@ SHIFT_CORE = (
     "random_floor",
 )
 SHIFT_EXTENDED = ("r2r",)
+# One call on the whole sample: SpRAy clusters across images, and the random
+# floor would otherwise redraw the same seeded scores in every chunk.
+SHIFT_WHOLE_SAMPLE = ("spray", "random_floor")
 
 
 def _shift_config(cfg, knobs: Knobs):
@@ -767,12 +770,14 @@ def extremal_shift_maps(model, xs, backbone, knobs, device, area: float = 0.05) 
 
 
 def random_shift_maps(model, xs, backbone, knobs, device, seed: int = 0) -> ShiftMaps:
+    """Independent seeded scores for R and S. One call covers the whole sample (SHIFT_WHOLE_SAMPLE)."""
     grid = grid_of(backbone)
     count = xs[0].shape[0]
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
-    scores = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
-    return ShiftMaps(robust=scores, shortcut=scores, grid=grid)
+    robust = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
+    shortcut = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
+    return ShiftMaps(robust=robust, shortcut=shortcut, grid=grid)
 
 
 def r2r_shift_maps(model, xs, backbone, knobs, device) -> ShiftMaps:

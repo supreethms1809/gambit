@@ -232,6 +232,24 @@ def test_score_shift_writes_matrix_purity_and_stage_payoffs(tmp_path):
     gate_main(["--records", str(tmp_path), "--split", "val"])
 
 
+def test_random_shift_floor_draws_r_and_s_apart_over_the_whole_sample():
+    from baselines.adapter import budget_or_floor
+    from evaluation.run_methods import SHIFT_WHOLE_SAMPLE, Knobs, random_shift_maps
+
+    xs = [torch.zeros(8, 3, 32, 32), torch.zeros(8, 3, 32, 32)]
+    maps = random_shift_maps(None, xs, "resnet50", Knobs(), torch.device("cpu"), seed=3)
+    assert not torch.equal(maps.robust, maps.shortcut)
+    kwargs = dict(grid_h=7, grid_w=7, height=32, width=32)
+    robust, _ = budget_or_floor(maps.robust, 0.25, 4, **kwargs)
+    shortcut, _ = budget_or_floor(maps.shortcut, 0.25, 3, **kwargs)
+    assert float((robust * shortcut).sum()) < float(robust.sum())
+    # Image 0 and image 4 would share a map if the floor ran per chunk of 4.
+    assert not torch.equal(maps.robust[0], maps.robust[4])
+    assert "random_floor" in SHIFT_WHOLE_SAMPLE
+    again = random_shift_maps(None, xs, "resnet50", Knobs(), torch.device("cpu"), seed=3)
+    assert torch.equal(again.robust, maps.robust) and torch.equal(again.shortcut, maps.shortcut)
+
+
 def test_shift_checkpoint_names_stay():
     from models.build import paper_checkpoint_name
 
