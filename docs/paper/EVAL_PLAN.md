@@ -99,9 +99,9 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 ### 4.1 Shared rules
 - **Hypotheses.** The model's top K = min(5, C) classes on the full image (H). The contrastive pair is k = rank 0 and l = rank 1. Every method receives the same H, k and l.
 - **Budget.** Every map goes through `baselines.adapter.adapt_scores`: bilinear upsampling, then the top a of pixels, with a seeded tie-break.
-  - Exceptions, each named in the dossier:
-    - Extremal Perturbations' native mask at area a;
-    - CVE's and SC-CVE's edit order.
+  - Maps that are not plain scores, each named in the dossier:
+    - Extremal Perturbations' native mask at area a, whose smooth edge the conversion resolves to exactly a;
+    - CVE's and SC-CVE's edit order. Edited cells come first. When the class flips in fewer than a·R edits, the seeded tie-break fills the rest of area a with untouched cells, and each row records `edit_share`, the part of the budget that is real edits.
   - The primary area is a = 5%. Robustness areas are 2.5% and 10%.
 - **Per-area optimisation.** CDEA and both Extremal Perturbations variants are optimised separately at each area. Every other method produces one map, which is thresholded at each area.
 - **Failures.** A row with a non-finite or empty map is replaced by the seeded random floor and stays in the sample. Failure counts are reported per method × dataset. No image is dropped.

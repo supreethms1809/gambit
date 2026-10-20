@@ -270,6 +270,7 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     stages = {}
     if "payoff_ids" in maps.extra and maps.grid is not None and ml is not None:
         stages = _stage_payoffs(model, x, maps, mk, ml, area, grid)
+    stages.update(_edit_columns(maps, area))
     rows = []
     batch = x.shape[0]
     for operator in spec.operators:
@@ -332,6 +333,26 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
                         "method_code_hash": code_hash, "knobs_hash": knob_hash,
                     })
     return rows
+
+
+def _edit_columns(maps: PairMaps, area: float) -> dict[str, torch.Tensor]:
+    """CVE and SC-CVE: edited cells, their share of the area-a budget, and whether the class flipped.
+
+    Their map ranks the edited cells by edit order and leaves the rest at 0. When
+    the flip takes fewer than a·R edits, the shared top-a conversion fills the
+    rest of area a with seeded untouched cells. The mask keeps area a, and
+    ``edit_share`` is the part of it that is the search's own edits.
+    """
+    flipped = maps.extra.get("cve_flipped", maps.extra.get("sc_cve_flipped"))
+    if flipped is None:
+        return {}
+    budget = float(area) * maps.k.shape[-1]
+    edits = (maps.k.detach().float().cpu() > 0).sum(dim=-1).float()
+    return {
+        "edit_cells": edits,
+        "edit_share": edits.clamp(max=budget) / budget,
+        "flipped": torch.tensor([float(bool(f)) for f in flipped]),
+    }
 
 
 def _stage_payoffs(model, x, maps: PairMaps, mk, ml, area, grid) -> dict[str, torch.Tensor]:
