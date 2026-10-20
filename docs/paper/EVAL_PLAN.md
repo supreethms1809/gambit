@@ -101,7 +101,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 - **Budget.** Every map goes through `baselines.adapter.adapt_scores`: bilinear upsampling, then the top a of pixels, with a seeded tie-break.
   - Maps that are not plain scores, each named in the dossier:
     - Extremal Perturbations' native mask at area a, whose smooth edge the conversion resolves to exactly a;
-    - CVE's and SC-CVE's edit order. Edited cells come first. When the class flips in fewer than a·R edits, the seeded tie-break fills the rest of area a with untouched cells, and each row records `edit_share`, the part of the budget that is real edits.
+    - CVE's and SC-CVE's edit order. Edited cells rank first. When the class flips in fewer than a·R edits, the rest of area a is first the bilinear halo around the edited cells (up to half a cell wide) and then scattered tie-break pixels. Each row records `edit_share`, the share of the scored mask on edited cells.
   - The primary area is a = 5%. Robustness areas are 2.5% and 10%.
 - **Per-area optimisation.** CDEA and both Extremal Perturbations variants are optimised separately at each area. Every other method produces one map, which is thresholded at each area.
 - **Failures.** A row with a non-finite or empty map is replaced by the seeded random floor and stays in the sample. Failure counts are reported per method × dataset. No image is dropped.

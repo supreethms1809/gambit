@@ -177,3 +177,27 @@ def test_gradcam_and_ig_match_the_reference_libraries() -> None:
     ig = ig_spearman(model, x, y, grid_h=8, grid_w=8, steps=4)
     assert bool((gc >= SPEARMAN_MIN).all())
     assert bool((ig >= SPEARMAN_MIN).all())
+
+
+def test_random_floors_never_reproduce_the_null_masks() -> None:
+    """At seed 0 a floor drawn from the null's seed scored the null's own masks as its first rows."""
+    from types import SimpleNamespace
+
+    from cdea.null import null_unit_scores
+    from evaluation.run_methods import Knobs, random_decomp, random_pair, random_shift_maps
+    from evaluation.scores import null_pixel_masks
+
+    x = torch.zeros(8, 3, 224, 224)
+    h = SimpleNamespace(ids=torch.zeros(8, 2, dtype=torch.long))
+    null = null_unit_scores(49)
+    null_masks = null_pixel_masks(7, 7, 0.05, 224, 224)
+    cpu = torch.device("cpu")
+    for seed in range(5):
+        pair = random_pair(None, x, h, "resnet50", Knobs(), cpu, seed=seed)
+        decomp = random_decomp(None, x, h, "resnet50", Knobs(), cpu, seed=seed)
+        shift = random_shift_maps(None, [x, x], "resnet50", Knobs(), cpu, seed=seed)
+        rows = torch.cat([pair.per_class.reshape(-1, 49), decomp.k, decomp.l, decomp.shared,
+                          shift.robust, shift.shortcut])
+        assert not (rows[:, None, :] == null[None, :, :]).all(dim=-1).any()
+        masks = adapt_scores(shift.robust, 0.05, seed + 1, grid_h=7, grid_w=7, height=224, width=224)
+        assert not (masks[:, None] == null_masks[None]).flatten(2).all(dim=-1).any()

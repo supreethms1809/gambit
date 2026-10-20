@@ -343,8 +343,23 @@ def chefer_class_pair(model, x, h, backbone, knobs, device) -> PairMaps:
     return PairMaps(k=flat[:, 0], l=flat[:, 1], grid=(gh, gw), per_class=flat)
 
 
+def floor_generator(seed: int) -> torch.Generator:
+    """Generator for the random floors' cell scores.
+
+    The scorer's null masks rank ``cdea.null.null_unit_scores``, drawn from
+    ``NULL_SEED``. A floor seeded the same way would score the null's own masks
+    as its first rows, so the floors draw from ``1000 * seed + 7`` instead.
+    """
+    from cdea.null import NULL_SEED
+
+    stream = 1000 * int(seed) + 7
+    if stream == NULL_SEED:
+        raise ValueError("the floor stream must differ from the null's")
+    return torch.Generator(device="cpu").manual_seed(stream)
+
+
 def random_pair(model, x, h, backbone, knobs, device, seed: int = 0) -> PairMaps:
-    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    g = floor_generator(seed)
     gh, gw = grid_of(backbone)
     per = torch.rand(x.shape[0], h.ids.shape[1], gh * gw, generator=g).to(x.device)
     return PairMaps(k=per[:, 0], l=per[:, 1], grid=(gh, gw), per_class=per)
@@ -775,8 +790,7 @@ def random_shift_maps(model, xs, backbone, knobs, device, seed: int = 0) -> Shif
     """Independent seeded scores for R and S. One call covers the whole sample (SHIFT_WHOLE_SAMPLE)."""
     grid = grid_of(backbone)
     count = xs[0].shape[0]
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(int(seed))
+    generator = floor_generator(seed)
     robust = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
     shortcut = torch.rand(count, grid[0] * grid[1], generator=generator).to(device=xs[0].device)
     return ShiftMaps(robust=robust, shortcut=shortcut, grid=grid)
@@ -999,7 +1013,7 @@ def margin_gradcam_ref(model, x, h, backbone, knobs, device) -> DecompMaps:
 
 
 def random_decomp(model, x, h, backbone, knobs, device, seed: int = 0) -> DecompMaps:
-    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    g = floor_generator(seed)
     gh, gw = grid_of(backbone)
     per = torch.rand(x.shape[0], 3, gh * gw, generator=g).to(x.device)
     return DecompMaps(k=per[:, 0], l=per[:, 1], shared=per[:, 2], grid=(gh, gw))

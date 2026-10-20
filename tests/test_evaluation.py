@@ -130,18 +130,44 @@ def test_converged_impute_matches_roads_direct_solve():
     pytest.importorskip("scipy")
     torch.manual_seed(0)
     image = torch.nn.functional.avg_pool2d(torch.rand(1, 3, 224, 224), 9, 1, 4)
-    holes = []
-    for r0, r1, c0, c1 in ((96, 128, 96, 128), (56, 168, 56, 168), (0, 64, 0, 64)):
+
+    def removed(*boxes):
         keep = torch.ones(224, 224)
-        keep[r0:r1, c0:c1] = 0
-        holes.append(keep)
-    cells = torch.ones(7, 7)
-    cells[3, 3] = 0
-    holes.append(1 - torch.nn.functional.interpolate(cells.view(1, 1, 7, 7), size=(224, 224))[0, 0])
-    for keep in holes:
+        for r0, r1, c0, c1 in boxes:
+            keep[r0:r1, c0:c1] = 0
+        return keep
+
+    def kept(*boxes):
+        return 1 - removed(*boxes)
+
+    cases = [
+        # Deletion: one cell, a 25% block, a border block, two cells. Kept to 1e-3.
+        (removed((96, 128, 96, 128)), 1e-3),
+        (removed((56, 168, 56, 168)), 1e-3),
+        (removed((0, 64, 0, 64)), 1e-3),
+        (removed((0, 32, 0, 32), (192, 224, 96, 128)), 1e-3),
+        # Sufficiency keeps M and imputes the rest: 95% and 98% removed (5e-4, 7e-4). Kept to 1e-3.
+        (kept((96, 128, 96, 128), (0, 32, 192, 224), (160, 192, 32, 64)), 1e-3),
+        (kept((96, 128, 96, 128)), 1e-3),
+        # Under 1% kept: about 4e-3 in float32, still below ROAD's noise of 0.01.
+        (kept((0, 16, 0, 16)), 1e-2),
+    ]
+    for keep, bound in cases:
         filled = noisy_linear_impute(image, keep.view(1, 1, 224, 224), iters=None, noise=0.0,
                                      gen=torch.Generator().manual_seed(0))
-        assert float((filled[0].double() - _road_reference(image[0], keep)).abs().max()) < 1e-3
+        assert float((filled[0].double() - _road_reference(image[0], keep)).abs().max()) < bound
+
+
+def test_neighbour_sum_is_roads_weighted_sum_in_plain_float32():
+    from evaluation.removal import _neighbour_sum
+
+    u = torch.rand(2, 3, 9, 11)
+    weights = torch.tensor([[1 / 12, 1 / 6, 1 / 12], [1 / 6, 0.0, 1 / 6], [1 / 12, 1 / 6, 1 / 12]], dtype=torch.float64)
+    reference = torch.nn.functional.conv2d(u.double(), weights.view(1, 1, 3, 3).expand(3, 1, 3, 3),
+                                           padding=1, groups=3)
+    out = _neighbour_sum(u)
+    assert out.dtype == torch.float32
+    assert torch.allclose(out.double(), reference, atol=1e-6)
 
 
 def test_converged_impute_fills_a_flat_image_with_its_value():

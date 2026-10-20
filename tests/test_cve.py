@@ -134,16 +134,28 @@ def test_a_non_finite_feature_map_raises() -> None:
         )
 
 
-def test_rows_record_the_share_of_the_budget_that_is_real_edits() -> None:
+def test_edit_share_is_the_scored_masks_share_on_edited_cells() -> None:
+    from baselines.adapter import budget_or_floor
+    from evaluation.masks import regions_to_pixels
     from evaluation.run_cell import _edit_columns
     from evaluation.run_methods import PairMaps
 
-    k = torch.zeros(2, 49)
-    k[0, :3] = torch.tensor([3.0, 2.0, 1.0])     # three edits, then the class flipped
-    k[1, :10] = torch.arange(10, 0, -1).float()  # more edits than the budget
-    maps = PairMaps(k=k, l=None, grid=(7, 7), extra={"cve_flipped": [True, False]})
-    cols = _edit_columns(maps, 0.1)
-    assert cols["edit_cells"].tolist() == [3.0, 10.0]
-    assert torch.allclose(cols["edit_share"], torch.tensor([3 / 4.9, 1.0]))
-    assert cols["flipped"].tolist() == [1.0, 0.0]
-    assert _edit_columns(PairMaps(k=k, l=k, grid=(7, 7)), 0.1) == {}
+    k = torch.zeros(3, 49)
+    k[0, [24, 25]] = torch.tensor([2.0, 1.0])        # two adjacent edits, then the class flipped
+    k[1, 10] = 1.0                                     # one edit
+    k[2, :10] = torch.arange(10, 0, -1).float()       # more edits than the budget
+    maps = PairMaps(k=k, l=None, grid=(7, 7), extra={"cve_flipped": [True, True, False]})
+    mask, _ = budget_or_floor(k, 0.05, 0, grid_h=7, grid_w=7, height=224, width=224)
+    cols = _edit_columns(maps, mask)
+    assert cols["edit_cells"].tolist() == [2.0, 1.0, 10.0]
+    assert cols["flipped"].tolist() == [1.0, 1.0, 0.0]
+    edited = regions_to_pixels((k > 0).float(), 7, 7, 224, 224, mode="nearest")
+    direct = (mask * edited).sum(dim=(1, 2)) / mask.sum(dim=(1, 2))
+    assert torch.allclose(cols["edit_share"], direct)
+    # Two edits are 2/2.45 = 0.82 of the budget, but the bilinear halo of the
+    # first edit outranks the second edit's border, so less of the mask is edits.
+    assert float(cols["edit_share"][0]) < 2 / 2.45 - 0.05
+    # One edit: its whole cell is in the mask, and the halo and the tie-break fill the rest.
+    assert abs(float(cols["edit_share"][1]) - 1024 / float(mask[1].sum())) < 1e-6
+    assert float(cols["edit_share"][2]) > 0.95
+    assert _edit_columns(PairMaps(k=k, l=k, grid=(7, 7)), mask) == {}

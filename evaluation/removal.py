@@ -10,9 +10,14 @@ import torch.nn.functional as F
 # ROAD's linear imputer (Rong et al. 2022), road_evaluation commit
 # e6b9987ffbd79654125af2f581b5dae70e831b09, road/imputations.py
 # ``neighbors_weights``: 1/6 for the four edge neighbours, 1/12 for the corners.
-ROAD_WEIGHTS = torch.tensor([[1 / 12, 1 / 6, 1 / 12], [1 / 6, 0.0, 1 / 6], [1 / 12, 1 / 6, 1 / 12]])
-# Max-abs residual at which the solve stops. In float32 this leaves the fill
-# within about 5e-4 of ROAD's direct solve, against ROAD's own noise of 0.01.
+ROAD_EDGE_WEIGHT = 1 / 6
+ROAD_CORNER_WEIGHT = 1 / 12
+# Max-abs residual at which the solve stops. In float32 the fill is then, against
+# ROAD's direct solve: about 1e-4 for a deletion mask, under 1e-3 when at least
+# 2% of the image is kept (sufficiency imputes the rest), and about 3e-3 to 4e-3
+# when under 1% is kept. ROAD's own noise is 0.01. The error grows with the
+# inverse of the hole's smallest eigenvalue, which a residual tolerance does not
+# bound.
 ROAD_TOL = 1e-6
 # Cap on solver steps for the converged fill. A 224 px image with 95% removed
 # converges in about 600; reaching the cap raises.
@@ -22,10 +27,16 @@ ROAD = dict(iters=None, noise=0.01)
 
 
 def _neighbour_sum(u: torch.Tensor) -> torch.Tensor:
-    """Weighted sum of each pixel's in-image neighbours. Zero padding drops the outside ones, as ROAD does."""
-    channels = u.shape[1]
-    kernel = ROAD_WEIGHTS.to(device=u.device, dtype=u.dtype).view(1, 1, 3, 3).expand(channels, 1, 3, 3)
-    return F.conv2d(u, kernel, padding=1, groups=channels)
+    """Weighted sum of each pixel's in-image neighbours. Zero padding drops the outside ones, as ROAD does.
+
+    Shifted adds, not a convolution: on CUDA a convolution may run in TF32,
+    whose 10-bit mantissa can stall the solve, and these adds are plain float32
+    on every device whatever the backend flags say.
+    """
+    p = F.pad(u, (1, 1, 1, 1))
+    edge = p[..., :-2, 1:-1] + p[..., 2:, 1:-1] + p[..., 1:-1, :-2] + p[..., 1:-1, 2:]
+    corner = p[..., :-2, :-2] + p[..., :-2, 2:] + p[..., 2:, :-2] + p[..., 2:, 2:]
+    return ROAD_EDGE_WEIGHT * edge + ROAD_CORNER_WEIGHT * corner
 
 
 def noisy_linear_impute(

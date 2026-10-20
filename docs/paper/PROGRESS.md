@@ -15,7 +15,7 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
-0. The 2026-10-20 review fixes (log) moved the method hash to `e910f251` and the knobs hash to `38f5d7c0`. No earlier record counts. Before the shift gate, a fresh session reviews the `extremal_shift` deletion change (B7). ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
+0. The 2026-10-20 review fixes and the B7 review's fixes (log) moved the method hash to `d69b1ac6` and the knobs hash to `38f5d7c0`. No earlier record counts. ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
 1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
    - `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism;
    - `test_plan_refactor` compares against a CPU reference that a Mac does not reproduce, even at the commit that wrote it.
@@ -33,7 +33,7 @@ On the GH200:
 
 ## Current state, 2026-10-14
 
-- **Code.** Method hash `e910f251`, knobs hash `38f5d7c0` (2026-10-20, the review fixes). Before that it was `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
+- **Code.** Method hash `d69b1ac6`, knobs hash `38f5d7c0` (2026-10-20, the review fixes and the B7 review's fixes). Before that it was `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
   - The 2026-10-20 fixes change scores: ROAD's fill, the shift random floor and `extremal_shift`. Rows written at `11bdeb54` are not comparable.
   - The decomposition game did not change. A CPU smoke cell at all three hashes gives identical rows, every column except the hash (7 core methods, 28 rows).
   - The input convention is built in (`models.wrapper.INPUT_CONVENTION = "imagenet"`). No file is read, and every paper checkpoint name is unchanged.
@@ -163,6 +163,7 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
    - The `SHIFT_FORMULATION.md` edit replaced S7 (steps matched to per-environment Extremal Perturbations) with `S7_fixed_boundary`.
    - Confirm these drops were intended. Restore the disclosure if it is still true.
 7. **RISE mask count.** The harness runs 4000 masks with the val grid {2000, 4000}. That is the RISE paper's VGG-16 count; its ResNet-50 setting is 8000 (`BASELINES.md`). Either add 8000 to the grid or keep 4000 and say so in the paper.
+8. **The adapter floor is scattered pixels.** `baselines.adapter.random_floor`, used for failed rows and constant maps, ranks a map of ones, so every pixel ties and the tie-break picks scattered pixels, not cells. ROAD fills scattered pixels far better than a cell (mean fill error 0.032 against 0.104 at 5%), so a floored row likely drops less than the cell-shaped null and scores below chance. Either draw it from seeded cell scores, as the floor methods and the null do, or keep it and report the floored share (both read-outs print it).
 
 ## Parked
 
@@ -173,6 +174,11 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-20, B7 review of PR #40.** A fresh session reviewed the baseline changes. `extremal_shift` as deletion, Chefer's `start_layer` and the converged ROAD fill are sound, and count as reviewed. Fixed on branch `paper/review-pr40-fixes`; the method hash moved from `e910f251` to `d69b1ac6`.
+  - **CVE `edit_share`.** The fill past the edits is the bilinear halo around them, then scattered tie-break pixels, not seeded untouched cells. `edit_share` is now the scored mask's share on edited cells (two edits at 5%: 0.74, where the old count gave 0.82), and the dossier and plan say what the fill is.
+  - **Floor seed.** At seed 0 the shift floor, `random_decomp` and `random_pair` drew the null's own scores. They now draw from `floor_generator` (stream `1000 · seed + 7`).
+  - **ROAD.** The neighbour sum is shifted float32 adds, so TF32 cannot reach the solve. The accuracy comment gives the measured range, and the direct-solve test covers 95%, 98% and 99.5% imputed.
+  - **Not done.** The review's suggested deletion-variant tests in `tests/test_extremal.py` (not blocking), the ROAD clamp disclosure, and open decision 8 (the adapter floor).
 - **2026-10-20, review fixes.** A verified review of `c3dee9b` was worked through on branch `paper/review-fixes`, one commit per item. The method hash moved from `11bdeb54` to `e910f251`, and the knobs hash to `38f5d7c0`.
   - **ROAD.** The fill was 24 Jacobi sweeps from black: a 32 px cell of a flat 0.5 image filled to 0.17, and a 25% block to 0.04. It now solves ROAD's own system (`road_evaluation` `e6b9987`) to convergence by conjugate gradient, within 1e-3 of scipy's direct solve in a test. `verify_roles` uses it too (user decision: converge).
   - **Shift.** The random floor drew one map for R and S and repeated it per chunk; now independent and whole-sample. `extremal_shift` runs deletion masks (user decision; needs the B7 review). The gate's "ahead" is defined: pooled paired ΔD@5% with its 95% bootstrap interval above 0 (user decision), and `gate_shift.py` prints the verdict.
