@@ -151,6 +151,7 @@ each method has to pass first.
 - **Conversion.** The shared budget conversion. The floor is that conversion applied to a constant map.
 - **Failure modes.** The floor is the score for a failed row. It is not itself a failure.
 - **Cost.** One seeded ranking of the pixels. No model call.
+- **The floor methods.** The `random_floor` rows of the contrastive and shift games and `random_decomp` are not this mask. They rank seeded cell scores drawn from `evaluation.run_methods.floor_generator`, which uses stream `1000 · seed + 7`. That stream is kept apart from `cdea.null.NULL_SEED`: before 2026-10-20, seed 0 drew the scorer's own null scores, so the floor's first rows were null masks.
 
 ## Gap attribution
 
