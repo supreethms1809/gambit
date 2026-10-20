@@ -140,14 +140,15 @@ def from_torchvision(model: nn.Module):
     return converted.to(device)
 
 
-def class_relprop(converted, image: torch.Tensor, class_idx: int) -> torch.Tensor:
+def class_relprop(converted, image: torch.Tensor, class_idx: int, start_layer: int = 0) -> torch.Tensor:
     """Author-default class map: ``transformer_attribution`` relprop (14x14).
 
-    Upstream fixes ``alpha=1`` inside ``generate_LRP``. ``image`` is
+    Upstream fixes ``alpha=1`` inside ``generate_LRP``. ``start_layer`` is the
+    first block in the relevance rollout, upstream default 0. ``image`` is
     ``(1, 3, 224, 224)`` on the model's device. Returns the ``(14, 14)``
     patch relevance for ``class_idx``.
     """
     _, LRP = _import_chefer()
-    cam = LRP(converted).generate_LRP(image, index=int(class_idx))
+    cam = LRP(converted).generate_LRP(image, index=int(class_idx), start_layer=int(start_layer))
     side = int(round(float(cam.shape[-1]) ** 0.5))
     return cam.reshape(side, side).detach()

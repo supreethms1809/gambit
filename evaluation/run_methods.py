@@ -60,6 +60,7 @@ class Knobs:
     sc_cve_distractors: int = 20       # authors' max_num_distractors (ours config)
     sc_cve_swav_weights: Optional[str] = None  # local SwAV file; required off the fast path
     extremal_smooth: float = 0.0
+    chefer_start_layer: int = 0        # first block in Chefer's rollout; 0 is the upstream default
     fast: bool = False
 
 
@@ -333,7 +334,8 @@ def chefer_class_pair(model, x, h, backbone, knobs, device) -> PairMaps:
             maps = []
             for i in range(x.shape[0]):
                 img = x[i:i + 1].to(dev)
-                maps.append(class_relprop(converted, img, int(h.ids[i, j])).to(x.device))
+                maps.append(class_relprop(converted, img, int(h.ids[i, j]),
+                                          start_layer=knobs.chefer_start_layer).to(x.device))
             columns.append(torch.stack(maps))
     per = torch.stack(columns, dim=1)
     gh, gw = 14, 14
@@ -634,8 +636,8 @@ CONTRASTIVE_CANDIDATES: dict = {
     "base_evidence@ig": {"backend": "ig"},
     "analytic@gradcam": {"backend": "gradcam"},
     "analytic@ig": {"backend": "ig"},
-    "chefer@start0": {},
-    "chefer@start1": {},
+    "chefer@start0": {"chefer_start_layer": 0},
+    "chefer@start1": {"chefer_start_layer": 1},
 }
 
 
