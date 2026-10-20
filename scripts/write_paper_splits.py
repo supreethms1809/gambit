@@ -8,6 +8,11 @@ Pets and dogs: test is the complement of train_backbone's old
 ``random_split(seed=42)`` 80/20 cut. Val is 10% of that train pool, carved with
 seed 43, so the historical holdout is unchanged.
 
+CIFAR-10 and MNIST: test is the official test set. Val is 10% of the official
+train set, carved by ``torchvision_train_val`` with seed 42, and recorded as
+42. The checkpoints were trained on the complement of that carve, so it must
+not be redrawn with 43.
+
 HAM10000: the current lesion-grouped ``val`` folder is test. Val is a
 lesion-grouped 10% carve of ``train``.
 
@@ -39,12 +44,13 @@ from evaluation.splits import (  # noqa: E402
 DATA = REPO / "data"
 
 
-def _spec(dataset: str, protocol: str, roots: dict, indices: dict, lengths: dict) -> dict:
+def _spec(dataset: str, protocol: str, roots: dict, indices: dict, lengths: dict,
+          val_carve_seed: int = VAL_CARVE_SEED) -> dict:
     return {
         "dataset": dataset,
         "protocol": protocol,
         "holdout_seed": HOLDOUT_SEED,
-        "val_carve_seed": VAL_CARVE_SEED,
+        "val_carve_seed": val_carve_seed,
         "val_fraction_of_train": VAL_FRACTION_OF_TRAIN,
         "roots": roots,
         "indices": indices,
@@ -70,6 +76,7 @@ def _torchvision(name: str) -> dict:
         {"train": "train", "val": "train", "test": "test"},
         {"train": carved["train"], "val": carved["val"], "test": list(range(len(test)))},
         {"train": len(train), "val": len(train), "test": len(test)},
+        val_carve_seed=HOLDOUT_SEED,
     )
 
 

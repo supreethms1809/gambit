@@ -21,6 +21,7 @@ from evaluation.splits import (
     imagefolder_three_way,
     load_indices,
     plan_is_frozen,
+    torchvision_train_val,
     write_spec,
 )
 
@@ -158,6 +159,16 @@ def test_recorded_splits_keep_train_and_val_disjoint():
     assert ham["roots"]["test"] == "ham10000/val"
     assert brain["roots"]["val"] == "brain_tumor/Training"
     assert brain["roots"]["test"] == "brain_tumor/Testing"
+
+
+def test_torchvision_val_carve_seed_label_is_the_seed_that_drew_it():
+    """CIFAR-10 and MNIST val were carved with seed 42; the recorded label must say so."""
+    root = Path(__file__).resolve().parents[1] / "data" / "splits"
+    for name in ("cifar10", "mnist"):
+        spec = json.loads((root / f"{name}.json").read_text(encoding="utf-8"))
+        carved = torchvision_train_val(spec["index_length"]["train"], seed=spec["val_carve_seed"])
+        assert carved["val"] == spec["indices"]["val"]
+        assert carved["train"] == spec["indices"]["train"]
 
 
 def test_load_indices_checks_length_and_lock(tmp_path: Path):

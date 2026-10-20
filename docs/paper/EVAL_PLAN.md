@@ -46,7 +46,7 @@ C2 is a plausibility claim against expert annotation. It is not a localisation c
 
 | Dataset | Classes | Test split | Val split | Models | Machine |
 |---|---|---|---|---|---|
-| CIFAR-10 *(dev)* | 10 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
+| CIFAR-10 *(dev)* | 10 | official test | 10% of train, seed 42 | trained, 5 seeds | **[set at freeze]** |
 | CIFAR-100 | 100 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
 | Oxford-IIIT Pet | 37 | official test | 10% of train, seed 43 | trained, 5 seeds | **[set at freeze]** |
 | Stanford Dogs | 120 | complement of `random_split(seed=42)` | 10% of train pool, seed 43 | trained, 5 seeds | **[set at freeze]** |
