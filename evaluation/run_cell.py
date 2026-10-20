@@ -34,7 +34,9 @@ from evaluation.run_methods import (
 IMAGE_SIZE = 224
 AREA_DEPENDENT = {"extremal", "extremal_preserve", "cdea"}
 ROAD = dict(iters=24, noise=0.01)
-CELLS_ROOT = Path(__file__).resolve().parents[1] / "results" / "paper" / "cells"
+PAPER_ROOT = Path(__file__).resolve().parents[1] / "results" / "paper"
+CELLS_ROOT = PAPER_ROOT / "cells"
+FAST_ROOT = PAPER_ROOT / "smoke" / "fast_knobs"
 
 
 class PassCounter:
@@ -861,11 +863,28 @@ def _decomp_stage_payoffs(model, x, maps, scored, ids, area, grid) -> dict[str, 
     return out
 
 
+def records_root(spec: CellSpec) -> Path:
+    """The root a cell writes under. Fast-knob records never share a path with paper records.
+
+    Without ``out_dir``, a fast cell writes under ``results/paper/smoke/fast_knobs``.
+    A fast cell asked to write anywhere else under ``results/paper`` raises,
+    because it would overwrite the paper cell at the same path.
+    """
+    if not spec.out_dir:
+        return FAST_ROOT if spec.knobs.fast else CELLS_ROOT
+    root = Path(spec.out_dir)
+    resolved = root.resolve()
+    if spec.knobs.fast and resolved.is_relative_to(PAPER_ROOT) and not resolved.is_relative_to(PAPER_ROOT / "smoke"):
+        raise ValueError(f"fast-knob records would overwrite paper records under {root}; "
+                         "write them under results/paper/smoke or outside results/paper")
+    return root
+
+
 def _write(spec: CellSpec, rows: list[dict], summary: dict, device) -> Path:
     from core.reporting import save_json
 
     summary["device_peak_mb"] = _peak_mb(device)
-    root = Path(spec.out_dir) if spec.out_dir else CELLS_ROOT
+    root = records_root(spec)
     out = root / spec.split / spec.game / spec.dataset / spec.backbone / f"seed{spec.seed}"
     out.mkdir(parents=True, exist_ok=True)
     name = "shift.csv.gz" if spec.game == "shift" else "records.csv.gz"

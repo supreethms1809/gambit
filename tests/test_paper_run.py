@@ -112,6 +112,26 @@ def test_records_path_separates_val_and_test(tmp_path):
     assert (tmp_path / "val").is_dir() and (tmp_path / "test").is_dir()
 
 
+def test_fast_records_never_share_a_path_with_paper_records(tmp_path):
+    import pytest
+
+    from evaluation.run_cell import CELLS_ROOT, FAST_ROOT, PAPER_ROOT, CellSpec, records_root
+    from evaluation.run_methods import FAST
+
+    def spec(fast, out_dir=None):
+        return CellSpec(game="shift", dataset="waterbirds", backbone="resnet50",
+                        knobs=FAST if fast else CellSpec().knobs, out_dir=out_dir)
+
+    assert records_root(spec(False)) == CELLS_ROOT
+    assert records_root(spec(True)) == FAST_ROOT
+    assert records_root(spec(True, str(tmp_path))) == tmp_path
+    assert records_root(spec(True, str(PAPER_ROOT / "smoke" / "x"))) == PAPER_ROOT / "smoke" / "x"
+    for paper in (CELLS_ROOT, PAPER_ROOT / "gate_shift"):
+        with pytest.raises(ValueError):
+            records_root(spec(True, str(paper)))
+        assert records_root(spec(False, str(paper))) == paper
+
+
 def test_n_is_set_per_backbone():
     import pytest
 

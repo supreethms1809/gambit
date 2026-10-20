@@ -5,7 +5,8 @@ Default configuration. Does not launch the pilot unless ``--run`` is passed.
 When ``--records`` is passed, reads ``shift.csv.gz`` records and prints every
 method's mean shift scores (ΔD, RN, PUR_R, PUR_S, RoleSep, TC, SPC) and paired
 bootstrap differences of CDEA-shift against gap attribution, attribution
-difference, and shift_assign. Fast knobs cannot satisfy the gate.
+difference, and shift_assign. Fast knobs cannot satisfy the gate: fast-knob
+rows are dropped on load.
 """
 
 from __future__ import annotations
@@ -65,6 +66,8 @@ def load_shift_records(root: Path, split: str = "val", expect_hash: str | None =
         seed = int(seed_part.replace("seed", ""))
         with gzip.open(path, "rt", newline="") as handle:
             for row in csv.DictReader(handle):
+                if row.get("fast", "0") == "1":
+                    continue
                 if expect_hash and not row.get("method_code_hash", "").startswith(expect_hash):
                     continue
                 key = (row.get("dataset") or dataset, row.get("backbone") or backbone,

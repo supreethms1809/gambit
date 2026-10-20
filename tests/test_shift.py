@@ -231,6 +231,14 @@ def test_score_shift_writes_matrix_purity_and_stage_payoffs(tmp_path):
     assert ("waterbirds", "resnet50", 0, 0.05) in loaded
     gate_main(["--records", str(tmp_path), "--split", "val"])
 
+    # Fast-knob rows never reach the gate or the degenerate checks.
+    with gzip.open(cell_dir / "shift.csv.gz", "wt", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=sorted(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows([{**row, "fast": 1} for row in rows])
+    assert not load_shift_records(tmp_path, "val", "hash1")
+    assert not shift_gaps(cell_dir)
+
 
 def test_random_shift_floor_draws_r_and_s_apart_over_the_whole_sample():
     from baselines.adapter import budget_or_floor
