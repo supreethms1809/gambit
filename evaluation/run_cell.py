@@ -270,7 +270,7 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     stages = {}
     if "payoff_ids" in maps.extra and maps.grid is not None and ml is not None:
         stages = _stage_payoffs(model, x, maps, mk, ml, area, grid)
-    stages.update(_edit_columns(maps, area))
+    stages.update(_edit_columns(maps, mk))
     rows = []
     batch = x.shape[0]
     for operator in spec.operators:
@@ -335,22 +335,27 @@ def _score_pair(model, x, maps: PairMaps, k, l, full, area, spec, label, sample,
     return rows
 
 
-def _edit_columns(maps: PairMaps, area: float) -> dict[str, torch.Tensor]:
-    """CVE and SC-CVE: edited cells, their share of the area-a budget, and whether the class flipped.
+def _edit_columns(maps: PairMaps, mask: torch.Tensor) -> dict[str, torch.Tensor]:
+    """CVE and SC-CVE: edited cells, the share of the scored mask on them, and whether the class flipped.
 
-    Their map ranks the edited cells by edit order and leaves the rest at 0. When
-    the flip takes fewer than a·R edits, the shared top-a conversion fills the
-    rest of area a with seeded untouched cells. The mask keeps area a, and
-    ``edit_share`` is the part of it that is the search's own edits.
+    Their map ranks the edited cells by edit order and leaves the rest at 0. The
+    shared conversion upsamples it bilinearly, which spreads each edit's rank up
+    to half a cell into its neighbours, and then takes the top a of pixels. Past
+    the edited cells, the rest of area a is that halo; only beyond the halo does
+    the seeded tie-break pick scattered untouched pixels. ``edit_share`` is the
+    share of ``mask``, the ``(B, H, W)`` mask actually scored, that falls on
+    edited cells.
     """
+    from evaluation.masks import mass_in, regions_to_pixels
+
     flipped = maps.extra.get("cve_flipped", maps.extra.get("sc_cve_flipped"))
     if flipped is None:
         return {}
-    budget = float(area) * maps.k.shape[-1]
-    edits = (maps.k.detach().float().cpu() > 0).sum(dim=-1).float()
+    edited = (maps.k.detach().float().cpu() > 0).float()
+    cells = regions_to_pixels(edited, maps.grid[0], maps.grid[1], mask.shape[-2], mask.shape[-1], mode="nearest")
     return {
-        "edit_cells": edits,
-        "edit_share": edits.clamp(max=budget) / budget,
+        "edit_cells": edited.sum(dim=-1),
+        "edit_share": mass_in(mask.detach().float().cpu(), cells),
         "flipped": torch.tensor([float(bool(f)) for f in flipped]),
     }
 
