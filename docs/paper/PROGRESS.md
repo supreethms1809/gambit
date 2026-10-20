@@ -15,6 +15,7 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
+0. The 2026-10-20 review fixes (log) moved the method hash to `e910f251` and the knobs hash to `38f5d7c0`. No earlier record counts. Before the shift gate, a fresh session reviews the `extremal_shift` deletion change (B7). ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
 1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
    - `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism;
    - `test_plan_refactor` compares against a CPU reference that a Mac does not reproduce, even at the commit that wrote it.
@@ -32,7 +33,8 @@ On the GH200:
 
 ## Current state, 2026-10-14
 
-- **Code.** Method hash `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
+- **Code.** Method hash `e910f251`, knobs hash `38f5d7c0` (2026-10-20, the review fixes). Before that it was `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
+  - The 2026-10-20 fixes change scores: ROAD's fill, the shift random floor and `extremal_shift`. Rows written at `11bdeb54` are not comparable.
   - The decomposition game did not change. A CPU smoke cell at all three hashes gives identical rows, every column except the hash (7 core methods, 28 rows).
   - The input convention is built in (`models.wrapper.INPUT_CONVENTION = "imagenet"`). No file is read, and every paper checkpoint name is unchanged.
   - On `main`: the decomposition method, its runner (`paper_run.py --game decomposition`) and the planted-pair dataset with `verify_roles`.
@@ -93,6 +95,7 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 - [ ] B2. Give `scripts/completion_check.py` the decomposition manifest. `FINAL_RUNS.md` and `tests/test_completion_check.py` pin today's contrastive manifest, so they change in the same commit. Until then, `launch_runs.py --dry-run` is the completion check.
 - [ ] B3. Give `analysis/build_results.py` the D-T and D-C tables. `AUDIT.md` and `tests/test_audit_results.py` pin today's dataset list, so they change with it.
 - [ ] B4. Add the decomposition units to `scripts/smoke_e2e.py`, and run the smoke on the GH200 (section 12, item 6).
+- [ ] B5. Save the scored masks for figures and for G2's eye-check. No runner writes them today, so G2 cannot look at a mask without rerunning a cell.
 
 **C. Natural-image val (family D-C selection)**
 - [ ] C1. The `natural-val` phase runs the other 6 natural datasets on ResNet-50 and all 8 on ViT-B/16, seed 0, n = 64. Choose the best min-split row per dataset and backbone (13.3).
@@ -146,6 +149,7 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 1. **Section 13.4: draft or signed off.** PR #34 recorded a sign-off and tagged `decomp-declared`. On 2026-10-14 the user asked to keep it a draft, because the plan and metrics may change after the dev results. If it stays a draft, remove the tag and restore the DRAFT heading. If it is signed off, a later change is a dated entry.
 2. ~~Seeds 2–4~~ Resolved 2026-10-14: the launcher trains a missing checkpoint before the first cell that needs it.
 3. **Contrast-game rows.** C1–C5 are descriptive (section 1). Either DA2 inside the decomposition cells is enough, or the contrast-game chain is rerun at the current hash.
+   - The K×K specificity, contrast SV, DPC and TCS scorers (`EVAL_PLAN.md` sections 5.3–5.5) do not exist. They are descoped with this decision (user, 2026-10-20). If the contrast-game chain is rerun, they are implemented or dropped from the plan before the freeze.
 4. **Section 12's freeze list** was written for the contrast-game paper: G0 tag, CVE reproduction, CUB part scorer, two-cue classifiers. Decide which items apply, and add the decomposition ones: the CDEA selection, the D2 and D9 checks, and the planted ViT.
 
 5. ~~Records written at `a5deb9fe`~~ Resolved 2026-10-14: the dev and planted ResNet-50 val cells are rerun at the current hash (`dev`, `planted-val`). `results/paper/decomp_dev/` is kept and not scored.
@@ -158,15 +162,25 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
      - the "No shift number has been read" disclosure.
    - The `SHIFT_FORMULATION.md` edit replaced S7 (steps matched to per-environment Extremal Perturbations) with `S7_fixed_boundary`.
    - Confirm these drops were intended. Restore the disclosure if it is still true.
+7. **RISE mask count.** The harness runs 4000 masks with the val grid {2000, 4000}. That is the RISE paper's VGG-16 count; its ResNet-50 setting is 8000 (`BASELINES.md`). Either add 8000 to the grid or keep 4000 and say so in the paper.
 
 ## Parked
 
 Not part of this plan unless reopened:
 - the fractional-mask test (held 2026-10-14);
 - ablation A8's map export from `framing-v1`, and S6's from the same tag.
+- `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
 
+- **2026-10-20, review fixes.** A verified review of `c3dee9b` was worked through on branch `paper/review-fixes`, one commit per item. The method hash moved from `11bdeb54` to `e910f251`, and the knobs hash to `38f5d7c0`.
+  - **ROAD.** The fill was 24 Jacobi sweeps from black: a 32 px cell of a flat 0.5 image filled to 0.17, and a 25% block to 0.04. It now solves ROAD's own system (`road_evaluation` `e6b9987`) to convergence by conjugate gradient, within 1e-3 of scipy's direct solve in a test. `verify_roles` uses it too (user decision: converge).
+  - **Shift.** The random floor drew one map for R and S and repeated it per chunk; now independent and whole-sample. `extremal_shift` runs deletion masks (user decision; needs the B7 review). The gate's "ahead" is defined: pooled paired ΔD@5% with its 95% bootstrap interval above 0 (user decision), and `gate_shift.py` prints the verdict.
+  - **Records.** Fast-knob cells write to `results/paper/smoke/fast_knobs` and refuse other paths under `results/paper`. The gate and every degenerate check drop fast rows.
+  - **Scores.** A missing S is NaN, not 0, so `margin_gradcam_ref`'s RR is over U_k and U_l. Constant maps are flagged (`constant_row`), and both read-outs print the failed and constant shares.
+  - **Contrast game.** Chefer's `start_layer` reaches the rollout, so its two candidates differ. CVE keeps matched area, and rows record `edit_share` (user decision). K×K, contrast SV, DPC and TCS are descoped under open decision 3.
+  - **Labels and docs.** CIFAR-10 and MNIST record their real val carve seed, 42; the indices are unchanged. The dossier, plans, `PAPER_NOTES` (section 10 rewritten) and the guide match the code.
+  - **Checks.** Tests on the Mac in `marl`; the full-suite result is in the PR. No cell was run.
 - **2026-10-14, launcher.** `scripts/launch_runs.py` runs the paper's phases for both games in one queue.
   - Phases: `dev`, `planted-val`, `natural-val`, `test`, `shift-gate` and `shift-val`.
   - It keeps two large cells (shift, and ViT decomposition) and two small cells (ResNet decomposition) running. When no large cell waits, small cells use the idle large slots.
