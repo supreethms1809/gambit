@@ -103,15 +103,30 @@ def test_additive_toy_rules_recover_the_roles() -> None:
         assert int((labels != OUTSIDE).sum()) == 3
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known limit of the straight-through gradient, reported in PROGRESS.md: a pure U_k has d~_l = -nu_l < 0, "
-    "so |d~_l| has slope -1 there and l-evidence looks like a gain for U_k. At lr 0.1 the shared cell "
-    "drifts from S to U_k, and the final hard welfare (2.0) falls below step 0's (2.625)."))
 def test_additive_toy_cdea_keeps_the_shared_cell() -> None:
     model, x = additive_toy()
     _, _, cdea = _labels(model, x, 1.0)
     labels = cdea.labels[0]
     assert int(labels[K_ONLY]) == U_K and int(labels[L_ONLY]) == U_L and int(labels[SHARED_CELL]) == SHARED
+
+
+def test_the_search_alone_drifts_below_step_zero_and_the_polish_recovers() -> None:
+    """Section 4.4. A pure U_k has d~_l = -nu_l < 0, where |d~_l| has slope -1, so to first order l-evidence
+    looks like a gain for U_k. At lr 0.1 the straight-through search moves the shared cell to U_k and ends
+    below step 0 (2.0 against 2.625). The polish starts from the better of the two and never goes below it."""
+    model, x = additive_toy()
+    h, evidence, _ = _setup(model, x, 1.0)
+    alone = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, polish=False), evidence=evidence)
+    assert int(alone.labels[0, SHARED_CELL]) == U_K
+    from cdea.decompose import role_welfare
+
+    full = model(x).detach()
+    def welfare(roles):
+        return float(role_welfare(model, x, h.ids, full, roles, alone.null, True, *GRID))
+    assert welfare(alone.search_roles) < welfare(alone.initial_roles) - 0.5
+    polished = partition(model, x, h, *GRID, PartitionConfig(rho=1.0), evidence=evidence)
+    assert float(polished.welfare) >= welfare(polished.initial_roles) - 1e-6
+    assert float(polished.welfare) == pytest.approx(welfare(polished.roles), abs=1e-5)
 
 
 ART = 5
@@ -201,14 +216,12 @@ def mixing_toy():
     return CellToy(weight, torch.tensor([0.5, 0.0, -5.0])).eval(), toy_image(torch.ones(UNITS))
 
 
-def test_with_no_shared_cell_cdea_leaves_s_empty_or_unconfirmed() -> None:
-    """Section 9 toy 4. CDEA parks a weak k cell in S (it ties with the empty role: both start at log eps
-    and Adam moves both alike), so S is not empty here. The scorer does not confirm it (D8)."""
+def test_with_no_shared_cell_cdea_leaves_s_empty() -> None:
+    """Section 9 toy 4. The search alone parks a weak k cell in S (S and the empty role both start at log eps,
+    and Adam moves both alike); the polish takes it back out."""
     model, x = mixing_toy()
     _, _, cdea = _labels(model, x, 1.0)
-    if cdea.roles[0, SHARED].any():
-        scores, _ = _score(model, x, cdea.roles)
-        assert float(scores["confirmed_s"]) == 0.0
+    assert not cdea.roles[0, SHARED].any()
 
 
 def _score(model, x, roles, operator="blur"):
@@ -224,11 +237,16 @@ def _score(model, x, roles, operator="blur"):
         s = int(sizes[0, p])
         if s:
             nu[0, p], q[0, p] = null[s][0][0], null[s][1][0]
+    q05 = nan.clone()
+    for p in range(4):
+        s = int(sizes[0, p])
+        if s:
+            q05[0, p] = null[s][2][0]
     cells = removal_drops(model, x, torch.eye(UNITS), ids, operator, GRID)
     excess = (cells - null[1][0].unsqueeze(1)).transpose(1, 2)
     from cdea.region import cell_overlap
 
-    scores = partition_scores(drops, nu, q, sizes, excess, roles, cell_overlap(evidence), omega)
+    scores = partition_scores(drops, nu, q, sizes, excess, roles, cell_overlap(evidence), omega, q05)
     return scores, null
 
 
@@ -307,7 +325,6 @@ def test_colocated_features_are_shared_for_the_cell_methods() -> None:
     assert float(out["p"]) == 1.0 and float(out["q"]) == 0.0 and float(out["share"]) == 1.0
 
 
-@pytest.mark.xfail(strict=True, reason="The straight-through drift of the additive toy: the cell moves from S to U_l.")
 def test_colocated_features_are_shared_for_cdea() -> None:
     model, x = colocation_toy()
     _, _, cdea = _labels(model, x, 1.0)
@@ -334,7 +351,16 @@ def test_size_null_does_not_depend_on_the_batch_and_the_grid_interpolates() -> N
     sparse = size_null(model, x2, ids, *GRID, 6, sizes=[0, 2, 6])
     assert torch.allclose(sparse[..., [0, 2, 6]], both[..., [0, 2, 6]], atol=1e-6)
     assert torch.allclose(sparse[..., 1], 0.5 * (both[..., 0] + both[..., 2]), atol=1e-6)
-    assert null_size_grid(30) == [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 28, 30]
+    # Measured sizes may pass the largest one; they must reach it.
+    beyond = size_null(model, x2, ids, *GRID, 5, sizes=[0, 2, 6])
+    assert torch.allclose(beyond[..., :6], sparse[..., :6], atol=1e-6)
+    with pytest.raises(ValueError):
+        size_null(model, x2, ids, *GRID, 6, sizes=[0, 2, 4])
+    # The grid below an image's largest size does not depend on the batch's.
+    assert null_size_grid(30, 196) == [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 28, 32]
+    assert null_size_grid(10, 196) == [0, 1, 2, 3, 4, 5, 6, 7, 8, 12]
+    assert null_size_grid(6, 196) == [0, 1, 2, 3, 4, 5, 6]
+    assert null_size_grid(195, 196)[-1] == 196
     assert interpolate_sizes(torch.tensor([0.0, 2.0, 8.0]), torch.tensor([0.0, 2.0, 4.0]), 4).tolist() == \
         [0.0, 1.0, 2.0, 5.0, 8.0]
 
@@ -359,8 +385,9 @@ def test_partition_is_exclusive_covers_omega_and_does_not_depend_on_the_batch() 
     whole = partition(model, x2, h2, *GRID, cfg)
     again = partition(model, x2, h2, *GRID, cfg)
     part = partition(model, x2[1:], HypothesisSet(ids=h2.ids[1:], mask=h2.mask[1:]), *GRID, cfg)
-    assert torch.equal(whole.plan, again.plan)
+    assert torch.equal(whole.plan, again.plan) and torch.equal(whole.roles, again.roles)
     assert torch.allclose(whole.plan[1:], part.plan, atol=1e-5)
+    assert torch.equal(whole.roles[1:], part.roles)
     assert torch.equal(whole.roles.sum(dim=1), whole.omega.long())
     assert torch.allclose(whole.plan.sum(dim=1), whole.omega.float(), atol=1e-5)
 
@@ -456,6 +483,7 @@ def test_partition_scores_follow_the_definitions() -> None:
     drops = torch.tensor([[[3.0, 1.0, 0.5], [0.5, 2.0, 0.0], [2.0, 1.5, 1.0], [0.1, 0.1, 0.0]]])
     null = torch.full((1, 4, 3), 0.5)
     q95 = torch.tensor([[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]])
+    q05 = torch.full((1, 4, 3), 0.2)
     roles = torch.zeros(1, 4, 6, dtype=torch.bool)
     roles[0, 0, 0] = roles[0, 1, 1] = roles[0, 2, 2] = roles[0, 2, 3] = roles[0, 3, 4] = True
     sizes = roles.sum(dim=-1)
@@ -464,7 +492,7 @@ def test_partition_scores_follow_the_definitions() -> None:
     excess[0, :, 3] = torch.tensor([-0.1, 0.8, 0.0])
     overlap = torch.tensor([[0.0, 0.1, 0.2, 0.2, 0.1, 0.4]])
     omega = torch.tensor([[True, True, True, True, True, False]])
-    s = partition_scores(drops, null, q95, sizes, excess, roles, overlap, omega)
+    s = partition_scores(drops, null, q95, sizes, excess, roles, overlap, omega, q05)
     assert float(s["pur_k"]) == pytest.approx(2.5 - 0.5)
     assert float(s["pur_l"]) == pytest.approx(1.5 - 0.0)
     assert float(s["sv"]) == pytest.approx(1.0) and float(s["bal"]) == pytest.approx(0.5)
@@ -475,8 +503,15 @@ def test_partition_scores_follow_the_definitions() -> None:
     assert [float(s[f"confirmed_{r}"]) for r in ("uk", "ul", "s", "none")] == [1.0, 1.0, 1.0, 1.0]
     assert float(s["vr"]) == pytest.approx(1.0)
     assert float(s["res_shared"]) == pytest.approx(0.4 / 0.6)
+    # The empty role's drops (0.1) are below the 5th percentile (0.2): absent for both, so confirmed.
+    # Above it, the lenient rule still confirms the role and the absence rule does not.
+    weak = q05.clone()
+    weak[0, 3] = 0.05
+    s = partition_scores(drops, null, q95, sizes, excess, roles, overlap, omega, weak)
+    assert float(s["confirmed_none"]) == 0.0 and float(s["confirmed_none_lenient"]) == 1.0
+    assert float(s["vr"]) == pytest.approx(1.0 - 0.1 / 0.6) and float(s["vr_lenient"]) == pytest.approx(1.0)
     roles[0, 0] = False
-    s = partition_scores(drops, null, q95, roles.sum(dim=-1), excess, roles, overlap, omega)
+    s = partition_scores(drops, null, q95, roles.sum(dim=-1), excess, roles, overlap, omega, q05)
     assert torch.isnan(s["pur_k"]).all() and torch.isnan(s["confirmed_uk"]).all()
 
 
@@ -488,6 +523,16 @@ def test_the_confirmation_rule_is_verify_roles_rule() -> None:
         out = role_confirmed(count)[0].tolist()
         k, l = count[0, :, 0].tolist(), count[0, :, 1].tolist()
         assert out == [k[0] and not l[0], l[1] and not k[1], k[2] and l[2], not k[3] and not l[3]]
+        absent = ~count
+        strict = role_confirmed(count, absent)[0].tolist()
+        assert strict[:3] == out[:3] and strict[3] == (not k[3] and not l[3])
+    # The absence test reads only the empty role's own absences.
+    count = torch.zeros(1, 4, 2, dtype=torch.bool)
+    absent = torch.zeros(1, 4, 2, dtype=torch.bool)
+    absent[0, 3, 0] = True
+    assert role_confirmed(count, absent)[0].tolist() == [False, False, False, False]
+    absent[0, 3, 1] = True
+    assert role_confirmed(count, absent)[0].tolist() == [False, False, False, True]
 
 
 def test_resolution_counts_a_cell_once_when_roles_overlap() -> None:

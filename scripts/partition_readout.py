@@ -2,7 +2,8 @@
 
 Per dataset: the overlap before (O, |Omega|, tertile cuts on the sample),
 then per method the resolution shares and VR (all images and the top O
-tertile), role sizes, the empty and unconfirmed S shares (D8), the per-role
+tertile; ``lenient`` is VR with the lenient empty-role rule), role sizes, the
+empty and unconfirmed S shares (D8), the per-role
 scores, MIX and the split-half verdicts, and the third class. For CDEA rows:
 D2, D9, the trapped and empty shares, and how often the final partition's
 blur welfare falls below step 0's. Then the paired differences of 13.8
@@ -77,7 +78,7 @@ def method_table(rows, top_images) -> list[str]:
     import numpy as np
 
     out = []
-    header = (f"{'method':30s} {'VR all':>7s} {'VR top':>7s} {'shared':>7s} {'unique':>7s} {'neither':>7s} "
+    header = (f"{'method':30s} {'VR all':>7s} {'VR top':>7s} {'lenient':>7s} {'shared':>7s} {'unique':>7s} {'neither':>7s} "
               f"{'|Uk|':>5s} {'|Ul|':>5s} {'|S|':>5s} {'|0|':>5s} {'S=0':>5s} {'S?':>5s} "
               f"{'PUR':>7s} {'SV':>7s} {'PURc':>7s} {'SVc':>7s} {'MIX':>7s} {'GEN':>7s} {'cfUk':>5s} {'cfUl':>5s} {'cfS':>5s} {'cf0':>5s}")
     out.append(header)
@@ -88,7 +89,8 @@ def method_table(rows, top_images) -> list[str]:
         pur = (g["pur_k"] + g["pur_l"]).mean()
         purc = (g["pur_cell_k"] + g["pur_cell_l"]).mean()
         out.append(
-            f"{method:30s} {g['vr'].mean():7.3f} {top['vr'].mean():7.3f} {g['res_shared'].mean():7.3f} "
+            f"{method:30s} {g['vr'].mean():7.3f} {top['vr'].mean():7.3f} "
+            f"{g['vr_lenient'].mean() if 'vr_lenient' in g else float('nan'):7.3f} {g['res_shared'].mean():7.3f} "
             f"{g['res_unique'].mean():7.3f} {g['res_neither'].mean():7.3f} "
             f"{g['size_uk'].mean():5.1f} {g['size_ul'].mean():5.1f} {g['size_s'].mean():5.1f} {g['size_none'].mean():5.1f} "
             f"{s_empty:5.2f} {s_unconf:5.2f} {pur:7.3f} {g['sv'].mean():7.3f} {purc:7.3f} {g['sv_cell'].mean():7.3f} "
@@ -114,10 +116,15 @@ def cdea_diagnostics(rows) -> list[str]:
         soft = g[["payoff_soft_uk", "payoff_soft_ul", "payoff_soft_s"]].sum(axis=1)
         hard = g[["payoff_hard_uk", "payoff_hard_ul", "payoff_hard_s"]].sum(axis=1)
         init = g[["payoff_init_uk", "payoff_init_ul", "payoff_init_s"]].sum(axis=1)
-        out.append(f"{method:30s} D2 soft-hard {float((soft - hard).mean()):+.3f}  W init {float(init.mean()):+.3f} "
-                   f"-> hard {float(hard.mean()):+.3f}  hard < init {float((hard < init - 1e-6).mean()):.2f}  "
-                   f"D9 same {float(g['same_as_init'].mean()):.2f}  trapped {float(g['trapped'].mean()):.3f}  "
-                   f"empty {float(g['empty_share'].mean()):.3f}")
+        line = (f"{method:30s} D2 soft-hard {float((soft - hard).mean()):+.3f}  W init {float(init.mean()):+.3f} "
+                f"-> hard {float(hard.mean()):+.3f}  hard < init {float((hard < init - 1e-6).mean()):.2f}  "
+                f"D9 same {float(g['same_as_init'].mean()):.2f}  trapped {float(g['trapped'].mean()):.3f}  "
+                f"empty {float(g['empty_share'].mean()):.3f}")
+        if "payoff_search_uk" in g and g["payoff_search_uk"].notna().any():
+            search = g[["payoff_search_uk", "payoff_search_ul", "payoff_search_s"]].sum(axis=1)
+            line += (f"  search W {float(search.mean()):+.3f} (< init {float((search < init - 1e-6).mean()):.2f})"
+                     f"  polish moved {float(g['polish_changed'].mean()):.3f}")
+        out.append(line)
     return out
 
 

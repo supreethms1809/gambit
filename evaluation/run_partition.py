@@ -138,7 +138,7 @@ def run_partition(spec: CellSpec, device) -> Path:
 
 
 def _null_at_sizes(null: dict, sizes: torch.Tensor, which: int) -> torch.Tensor:
-    """``(B, P, J)`` the scorer's null (``which=0``) or 95th percentile (``which=1``) at each size; NaN at size 0."""
+    """``(B, P, J)`` the scorer's null (``which=0``), 95th (``1``) or 5th (``2``) percentile at each size; NaN at size 0."""
     batch, players = sizes.shape
     some = next(iter(null.values()))[which] if null else None
     width = some.shape[-1] if some is not None else 3
@@ -216,7 +216,7 @@ def _score_batch(model, x, ids, ctx, maps, spec, sample, offset, code_hash, knob
             role_drops = drops[:, index, :4].clone()
             role_drops[sizes == 0] = float("nan")
             scores = partition_scores(role_drops, _null_at_sizes(null, sizes, 0), _null_at_sizes(null, sizes, 1),
-                                      sizes, cell_excess, roles, overlap, omega)
+                                      sizes, cell_excess, roles, overlap, omega, _null_at_sizes(null, sizes, 2))
             half_sizes = halves_by[label].sum(dim=-1)
             half_q = _null_at_sizes(null, half_sizes, 1)
             half_count = drops[:, index, 4:, :2] > half_q[..., :2]
@@ -252,8 +252,10 @@ def _score_batch(model, x, ids, ctx, maps, spec, sample, offset, code_hash, knob
 def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     """D2, D9 and trapped-role inputs for a version-2 plan, under blur, with CDEA's own blur null by size.
 
-    ``soft``: the payoff of the final plan on Omega. ``hard``: of the final
-    partition. ``init``: of the step-0 partition. ``same_as_init`` is 1 when
+    ``soft``: the payoff of the search's final plan on Omega. ``search``: of
+    the hard plan the search ends at. ``hard``: of the final partition, after
+    the polish. ``init``: of the step-0 partition. ``polish_changed`` is the
+    share of Omega cells the polish moved. ``same_as_init`` is 1 when
     the final partition equals step 0 on every Omega cell (D9). ``trapped`` is
     the share of Omega cells whose final role, U_k, U_l or S, started from a
     zero part (initial logit log eps). ``empty_share`` is the share labelled
@@ -267,6 +269,7 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     inside = omega.to(x.dtype).unsqueeze(1)
     views = {
         "soft": part.plan[:, :3] * inside,
+        "search": part.search_roles[:, :3].to(x.dtype),
         "hard": part.roles[:, :3].to(x.dtype),
         "init": part.initial_roles[:, :3].to(x.dtype),
     }
@@ -282,6 +285,8 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     size = omega.sum(dim=-1).clamp_min(1).float()
     same = ((part.roles == part.initial_roles) | ~omega.unsqueeze(1)).all(dim=-1).all(dim=-1)
     out["same_as_init"] = same.float().cpu()
+    moved = ((part.roles != part.search_roles).any(dim=1) & omega).sum(dim=-1).float()
+    out["polish_changed"] = (moved / size).cpu()
     out["empty_share"] = (part.roles[:, 3].sum(dim=-1).float() / size).cpu()
     if part.init_parts is None:
         out["trapped"] = torch.full((x.shape[0],), float("nan"))

@@ -1080,6 +1080,7 @@ class PartitionRunConfig:
     draw_seed: int = 0
     null: bool = True
     independent: bool = False
+    polish: bool = True                # False is ablation DA11
     kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
 
 
@@ -1095,6 +1096,9 @@ PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig
     "DA9_steps_50": lambda c: replace(c, steps=50),
     "DA9_steps_200": lambda c: replace(c, steps=200),
     "DA10_fixed_budgets": lambda c: replace(c, kind="fixed_budgets"),
+    # The optimiser (section 4.4): the straight-through search alone, and the polish alone from step 0.
+    "DA11_no_polish": lambda c: replace(c, polish=False),
+    "DA12_polish_only": lambda c: replace(c, steps=0),
 }
 
 # Val selection grid (EVAL_PLAN.md 13.7): 13.3's steps and lr.
@@ -1156,6 +1160,7 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         null=cfg.null,
         null_grid=backbone.startswith("vit"),
         independent=cfg.independent,
+        polish=cfg.polish,
     )
     out = partition(model, x, h, gh, gw, resolved, evidence=ctx.evidence)
     return PartitionMaps(roles=out.roles, extra={"partition": out})

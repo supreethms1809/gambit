@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 
 from core.eval_mode import eval_mode
-from core.grid import boundary_offset
+from core.grid import boundary_offset, delete
 from core.types import HypothesisSet
 from cdea._plan import (
     SINKHORN_ITERS,
@@ -208,6 +208,8 @@ class PartitionConfig:
     null_seed: int = NULL_SEED
     null_grid: bool = False              # True: measure the null on ``null_size_grid`` (ViT-B/16)
     independent: bool = False            # True is ablation DA1
+    polish: bool = True                  # False is ablation DA11: the straight-through search alone
+    polish_moves: Optional[int] = None   # cap on accepted moves per image; None is 4 R
 
 
 @dataclass
@@ -216,6 +218,8 @@ class Partition:
     labels: Optional[torch.Tensor]       # (B, R) long, OUTSIDE off Omega; None when roles may overlap
     plan: torch.Tensor                   # (B, 4, R) the final plan; independent: the three role probabilities and 1 - their max
     initial_roles: torch.Tensor          # (B, 4, R) bool: the step-0 hard plan
+    search_roles: torch.Tensor           # (B, 4, R) bool: the hard plan the straight-through search ends at
+    welfare: torch.Tensor                # (B,) blur welfare of ``roles``, the polish's objective
     init_parts: Optional[torch.Tensor]   # (B, 3, R) the parts the roles were initialised from; None for uniform
     omega: torch.Tensor                  # (B, R) bool
     evidence: torch.Tensor               # (B, 2, R) normalised reference evidence
@@ -296,7 +300,7 @@ def partition(
             with torch.no_grad():
                 reference = model(x.detach())
             if cfg.null and top > 0:
-                sizes = null_size_grid(top) if cfg.null_grid else None
+                sizes = null_size_grid(top, units) if cfg.null_grid else None
                 table = size_null(model, x.detach(), ids, grid_h, grid_w, top, cfg.n_null, cfg.null_seed,
                                   sizes=sizes)
             else:
@@ -328,24 +332,147 @@ def partition(
                 opt.step()
             with torch.no_grad():
                 plan = _role_plan(theta.detach(), cfg.independent)
+            search = _hard_roles(plan, omega, cfg.independent)
+            moves = 4 * units if cfg.polish_moves is None else int(cfg.polish_moves)
+            with torch.no_grad():
+                welfare_search = role_welfare(model, x.detach(), ids, reference, search, table, cfg.null, grid_h, grid_w)
+                if cfg.polish and not cfg.independent:
+                    welfare_init = role_welfare(model, x.detach(), ids, reference, initial, table, cfg.null,
+                                                grid_h, grid_w)
+                    better = (welfare_search >= welfare_init).view(-1, 1, 1)
+                    start = torch.where(better, search, initial)
+                    roles, welfare = polish(model, x.detach(), ids, reference, start, omega, table, cfg.null,
+                                            grid_h, grid_w, moves)
+                else:
+                    roles, welfare = search, welfare_search
         finally:
             for p, flag in zip(model.parameters(), flags):
                 p.requires_grad_(flag)
 
-    roles = _hard_roles(plan, omega, cfg.independent)
     labels = None
     if not cfg.independent:
-        labels = torch.where(omega, plan.argmax(dim=1), torch.full_like(omega, OUTSIDE, dtype=torch.long))
+        labels = torch.where(omega, roles.to(x.dtype).argmax(dim=1), torch.full_like(omega, OUTSIDE, dtype=torch.long))
     return Partition(
         roles=roles,
         labels=labels,
         plan=(plan * omega.unsqueeze(1)).detach(),
         initial_roles=initial,
+        search_roles=search,
+        welfare=welfare.detach(),
         init_parts=None if parts is None else parts.detach(),
         omega=omega,
         evidence=evidence,
         null=table.detach(),
     )
+
+
+# ---------------------------------------------------------------------------
+# The discrete polish (section 4.4). The straight-through gradient is a first-
+# order estimate: where a payoff has a kink, as |d~_l| does at d~_l = 0, a
+# whole cell's move can change the payoff in the opposite direction to its
+# gradient, and the search can end below its own step 0. The polish starts
+# from the better of the search's end and step 0, and moves one cell to
+# another role at a time, each move the one that most raises the exact
+# welfare of the hard partition. The welfare is the search's objective without
+# the boundary offsets: blur deletion of whole cells and each role's null at
+# its size. It ends when no move raises the welfare, so the result is never
+# below step 0.
+# ---------------------------------------------------------------------------
+
+POLISH_BATCH = 64     # deleted inputs per forward pass; the result does not depend on it
+POLISH_TOL = 1e-6     # smallest welfare gain a move must make
+
+
+def _deletion_drops(model, x, ids, reference, rows: torch.Tensor, masks: torch.Tensor,
+                    grid_h: int, grid_w: int) -> torch.Tensor:
+    """``(n, J)`` drop of the classes ``ids`` when image ``rows[i]`` loses the cells of ``masks[i]``."""
+    out = []
+    for start in range(0, rows.numel(), POLISH_BATCH):
+        r = rows[start:start + POLISH_BATCH]
+        edited = delete(x[r], masks[start:start + POLISH_BATCH].to(x.dtype), grid_h, grid_w)
+        out.append(reference[r].gather(1, ids[r]) - model(edited).gather(1, ids[r]))
+    return torch.cat(out, dim=0) if out else reference.new_zeros(0, ids.shape[1])
+
+
+def _welfare_terms(drops: torch.Tensor, sizes: torch.Tensor, table: torch.Tensor, use_null: bool) -> torch.Tensor:
+    return decomposition_payoffs(drops, null_at(table, sizes) if use_null else None)
+
+
+def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h: int, grid_w: int) -> torch.Tensor:
+    """``(B,)`` blur welfare ``u_k + u_l + u_S`` of a hard partition ``(B, 4, R)``, each role net of its null."""
+    batch, _, units = roles.shape
+    rows = torch.arange(batch, device=x.device).repeat_interleave(PLAYERS)
+    masks = roles[:, :PLAYERS].reshape(batch * PLAYERS, units)
+    drops = _deletion_drops(model, x, ids, reference, rows, masks, grid_h, grid_w).view(batch, PLAYERS, -1)
+    sizes = roles[:, :PLAYERS].sum(dim=-1).to(x.dtype)
+    return _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
+
+
+def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h: int, grid_w: int,
+           moves: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Best-improvement single-cell moves on an exclusive partition ``(B, 4, R)``. Returns it and its welfare.
+
+    Each image moves on its own, so its result does not depend on the batch.
+    """
+    batch, roles_count, units = roles.shape
+    current = roles.clone()
+    rows = torch.arange(batch, device=x.device).repeat_interleave(PLAYERS)
+    drops = _deletion_drops(model, x, ids, reference, rows, current[:, :PLAYERS].reshape(-1, units),
+                            grid_h, grid_w).view(batch, PLAYERS, -1)
+    sizes = current[:, :PLAYERS].sum(dim=-1).to(x.dtype)
+    welfare = _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
+    active = omega.any(dim=-1).tolist()
+    for _ in range(int(moves)):
+        if not any(active):
+            break
+        candidates, del_rows, del_masks, owners = [], [], [], []
+        for b in range(batch):
+            if not active[b]:
+                continue
+            labels = current[b].to(x.dtype).argmax(dim=0)
+            for r in torch.nonzero(omega[b]).flatten().tolist():
+                source = int(labels[r])
+                for target in range(roles_count):
+                    if target == source:
+                        continue
+                    index = len(candidates)
+                    candidates.append((b, r, source, target))
+                    for p in (source, target):
+                        if p < PLAYERS:
+                            mask = current[b, p].clone()
+                            mask[r] = p == target
+                            del_rows.append(b)
+                            del_masks.append(mask)
+                            owners.append((index, p))
+        owner_rows = torch.tensor([c[0] for c in candidates], device=x.device)
+        new = _deletion_drops(model, x, ids, reference, torch.tensor(del_rows, device=x.device),
+                              torch.stack(del_masks), grid_h, grid_w)
+        cand_drops = drops[owner_rows].clone()
+        cand_sizes = sizes[owner_rows].clone()
+        for (index, p), value in zip(owners, new):
+            cand_drops[index, p] = value
+        for index, (_, _, source, target) in enumerate(candidates):
+            if source < PLAYERS:
+                cand_sizes[index, source] -= 1
+            if target < PLAYERS:
+                cand_sizes[index, target] += 1
+        cand_welfare = _welfare_terms(cand_drops, cand_sizes, table[owner_rows], use_null).sum(dim=-1)
+        gain = cand_welfare - welfare[owner_rows]
+        for b in range(batch):
+            if not active[b]:
+                continue
+            mine = [i for i, c in enumerate(candidates) if c[0] == b]
+            best = max(mine, key=lambda i: float(gain[i]))
+            if float(gain[best]) <= POLISH_TOL:
+                active[b] = False
+                continue
+            _, r, source, target = candidates[best]
+            current[b, source, r] = False
+            current[b, target, r] = True
+            drops[b] = cand_drops[best]
+            sizes[b] = cand_sizes[best]
+            welfare[b] = cand_welfare[best]
+    return current, welfare
 
 
 def budget_roles(out: Decomposition, omega: torch.Tensor, area: float) -> torch.Tensor:
