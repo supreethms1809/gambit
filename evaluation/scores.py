@@ -762,8 +762,8 @@ def removal_drops(model: nn.Module, x: torch.Tensor, cells: torch.Tensor, ids: t
 
 def scored_size_null(model: nn.Module, x: torch.Tensor, ids: torch.Tensor, grid: tuple[int, int], sizes,
                      operator: str, seed: int = 0, offset: int = 0, n: int = SCORER_NULL,
-                     null_seed: int = 0) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
-    """``{s: (mean, q95)}``, each ``(B, J)``: the drop over ``n`` random s-cell masks of the whole grid.
+                     null_seed: int = 0) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """``{s: (mean, q95, q05)}``, each ``(B, J)``: the drop over ``n`` random s-cell masks of the whole grid.
 
     The masks are ``cdea.null.size_masks``: the same for every image and nested
     in s. ``sizes`` is one set for every image, or one set per image; an image
@@ -787,12 +787,12 @@ def scored_size_null(model: nn.Module, x: torch.Tensor, ids: torch.Tensor, grid:
     drops = drops.view(batch, len(union), n, -1)
     mean = drops.mean(dim=2)
     q95 = torch.quantile(drops, 0.95, dim=2)
+    q05 = torch.quantile(drops, 0.05, dim=2)
     for b, wanted in enumerate(per_image):
         for i, s in enumerate(union):
             if s not in wanted:
-                mean[b, i] = float("nan")
-                q95[b, i] = float("nan")
-    return {s: (mean[:, i], q95[:, i]) for i, s in enumerate(union)}
+                mean[b, i] = q95[b, i] = q05[b, i] = float("nan")
+    return {s: (mean[:, i], q95[:, i], q05[:, i]) for i, s in enumerate(union)}
 
 
 def split_halves(cells: torch.Tensor) -> torch.Tensor:
@@ -810,14 +810,18 @@ def split_halves(cells: torch.Tensor) -> torch.Tensor:
     return halves
 
 
-def role_confirmed(count: torch.Tensor) -> torch.Tensor:
+def role_confirmed(count: torch.Tensor, absent: Optional[torch.Tensor] = None) -> torch.Tensor:
     """``(..., 4)`` bool from ``(..., 4, 2)`` counts on k and l: section 6.4, ``verify_roles``' rule.
 
-    U_k: counts for k and not l. U_l: the mirror. S: both. Empty: neither.
+    U_k: counts for k and not l. U_l: the mirror. S: counts for both.
+    Empty: with ``absent`` (``(..., 4, 2)``, the drop is below the 5th
+    percentile of random sets of its size), absent for both classes. Without
+    it, counts for neither: the lenient rule, which a random set passes about
+    90% of the time.
     """
     k, l = count[..., 0], count[..., 1]
-    return torch.stack([k[..., 0] & ~l[..., 0], l[..., 1] & ~k[..., 1], k[..., 2] & l[..., 2],
-                        ~k[..., 3] & ~l[..., 3]], dim=-1)
+    empty = ~k[..., 3] & ~l[..., 3] if absent is None else absent[..., 3, 0] & absent[..., 3, 1]
+    return torch.stack([k[..., 0] & ~l[..., 0], l[..., 1] & ~k[..., 1], k[..., 2] & l[..., 2], empty], dim=-1)
 
 
 def half_verdict(count: torch.Tensor) -> int:
@@ -861,13 +865,16 @@ def resolution_shares(roles: torch.Tensor, confirmed: torch.Tensor, overlap: tor
 
 def partition_scores(drops: torch.Tensor, null: torch.Tensor, q95: torch.Tensor, sizes: torch.Tensor,
                      cell_excess: torch.Tensor, roles: torch.Tensor, overlap: torch.Tensor,
-                     omega: torch.Tensor) -> dict[str, torch.Tensor]:
-    """Per-image version-2 scores (sections 6.3 to 6.6).
+                     omega: torch.Tensor, q05: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Per-image version 2 scores (sections 6.3 to 6.6).
 
-    ``drops``, ``null`` and ``q95`` are ``(B, 4, 3)``: each role's raw drop of
-    k, l and m, and the scorer's null and its 95th percentile at the role's
-    size. ``sizes`` is ``(B, 4)``. ``cell_excess`` is ``(B, 3, R)``: each cell
-    deleted alone, minus the null of one cell. A score on an empty role is NaN.
+    ``drops``, ``null``, ``q95`` and ``q05`` are ``(B, 4, 3)``: each role's raw
+    drop of k, l and m, and the scorer's null and its 95th and 5th percentiles
+    at the role's size. ``sizes`` is ``(B, 4)``. ``cell_excess`` is
+    ``(B, 3, R)``: each cell deleted alone, minus the null of one cell. A
+    score on an empty role is NaN. VR and the resolution shares confirm the
+    empty role by the absence test; the ``*_lenient`` columns repeat them with
+    the lenient rule (section 6.4).
     """
     e = drops - null
     empty = sizes <= 0
@@ -883,7 +890,9 @@ def partition_scores(drops: torch.Tensor, null: torch.Tensor, q95: torch.Tensor,
     sv_cell = (member[:, 2] * torch.minimum(g[:, 0], g[:, 1])).sum(dim=-1)
     sv = torch.minimum(e[:, 2, 0], e[:, 2, 1])
     count = drops > q95
-    confirmed = role_confirmed(count[..., :2]) & ~empty
+    absent = drops < q05
+    confirmed = role_confirmed(count[..., :2], absent[..., :2]) & ~empty
+    lenient = role_confirmed(count[..., :2]) & ~empty
     out = {
         "pur_k": on(0, e[:, 0, 0] - e[:, 0, 1].abs()),
         "pur_l": on(1, e[:, 1, 1] - e[:, 1, 0].abs()),
@@ -906,7 +915,10 @@ def partition_scores(drops: torch.Tensor, null: torch.Tensor, q95: torch.Tensor,
             out[f"d_{name}_{cls}"] = on(role, drops[:, role, j])
             out[f"nu_{name}_{cls}"] = on(role, null[:, role, j])
             out[f"q_{name}_{cls}"] = on(role, q95[:, role, j])
+    out["confirmed_none_lenient"] = torch.where(empty[:, 3], torch.full_like(sizes[:, 3], nan, dtype=drops.dtype),
+                                                lenient[:, 3].to(drops.dtype))
     out.update(resolution_shares(roles, confirmed, overlap, omega))
+    out.update({f"{key}_lenient": value for key, value in resolution_shares(roles, lenient, overlap, omega).items()})
     return out
 
 
