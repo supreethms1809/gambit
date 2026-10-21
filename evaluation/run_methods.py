@@ -1081,6 +1081,7 @@ class PartitionRunConfig:
     null: bool = True
     independent: bool = False
     polish: bool = True                # False is ablation DA11
+    polish_operator: str = "blur"      # blur | road (ablation DA13)
     kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
 
 
@@ -1099,7 +1100,36 @@ PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig
     # The optimiser (section 4.4): the straight-through search alone, and the polish alone from step 0.
     "DA11_no_polish": lambda c: replace(c, polish=False),
     "DA12_polish_only": lambda c: replace(c, steps=0),
+    # The polish deletes with ROAD's fill instead of blur, with its own ROAD null.
+    "DA13_road_polish": lambda c: replace(c, polish_operator="road"),
 }
+
+
+def polish_noise_seed(seed: int) -> int:
+    """The ROAD noise stream of DA13's polish. The scorer's is ``1000 * seed``; this one never equals it."""
+    return 1000 * int(seed) + 500
+
+
+def road_polish_edit(x: torch.Tensor, first_row: int, seed: int, grid: tuple[int, int]):
+    """``edit(rows, cells)``: ROAD's converged fill of whole cells of ``x[rows]``, for DA13's polish.
+
+    Each image takes the noise rows of its own sample position (``first_row``
+    is the batch's first), from a stream the scorer does not use, so the
+    polish cannot fit the scorer's noise and its result does not depend on
+    the batch.
+    """
+    from core.grid import upsample_units
+    from evaluation.removal import ROAD, noisy_linear_impute
+    from evaluation.scores import noise_rows
+
+    draws = noise_rows(x, polish_noise_seed(seed), first_row)
+    height, width = x.shape[-2:]
+
+    def edit(rows: torch.Tensor, cells: torch.Tensor) -> torch.Tensor:
+        pixel = upsample_units(cells.to(x.dtype), grid[0], grid[1], height, width)
+        return noisy_linear_impute(x[rows], 1.0 - pixel, ROAD["iters"], ROAD["noise"], None, draw=draws[rows.cpu()])
+
+    return edit
 
 # Val selection grid (EVAL_PLAN.md 13.7): 13.3's steps and lr.
 PARTITION_CANDIDATES: dict[str, PartitionRunConfig] = {
@@ -1130,7 +1160,7 @@ def partition_reference(model, x, h, backbone, knobs) -> torch.Tensor:
 
 
 def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
-                   cfg: Optional[PartitionRunConfig] = None) -> PartitionMaps:
+                   cfg: Optional[PartitionRunConfig] = None, seed: int = 0) -> PartitionMaps:
     cfg = cfg or PartitionRunConfig()
     gh, gw = ctx.grid
     if cfg.kind == "gradient_partition":
@@ -1162,7 +1192,10 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         independent=cfg.independent,
         polish=cfg.polish,
     )
-    out = partition(model, x, h, gh, gw, resolved, evidence=ctx.evidence)
+    if cfg.polish_operator not in {"blur", "road"}:
+        raise ValueError(f"unknown polish operator {cfg.polish_operator!r}")
+    edit = road_polish_edit(x, ctx.rows[0], seed, ctx.grid) if cfg.polish_operator == "road" else None
+    out = partition(model, x, h, gh, gw, resolved, evidence=ctx.evidence, polish_edit=edit)
     return PartitionMaps(roles=out.roles, extra={"partition": out})
 
 
@@ -1240,7 +1273,7 @@ def random_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionCo
     return _labels_maps(random_partition(ctx.omega, list(ctx.rows), floor_generator(seed)))
 
 
-PARTITION_SEEDED = {"random_partition", "rise_minsplit"}
+PARTITION_SEEDED = {"cdea", "random_partition", "rise_minsplit"}
 
 
 def partition_method(name: str):

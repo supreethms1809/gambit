@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -38,7 +38,7 @@ from cdea._plan import (
     _row_targets,
 )
 from cdea.allocation import DRAW_SEED, EPS, _prior
-from cdea.null import N_NULL, NULL_SEED, null_at, null_drops, null_size_grid, size_null
+from cdea.null import N_NULL, NULL_SEED, interpolate_sizes, null_at, null_drops, null_size_grid, size_masks, size_null
 from cdea.payoffs import class_drops, decomposition_payoffs
 from cdea.region import OUTSIDE, RHO, evidence_region, roles_from_labels, rule_parts
 from cdea.sinkhorn import sinkhorn
@@ -270,11 +270,17 @@ def partition(
     grid_w: int,
     cfg: Optional[PartitionConfig] = None,
     evidence: Optional[torch.Tensor] = None,
+    polish_edit: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
 ) -> Partition:
     """Partition Omega for the pair (rank 0, rank 1). ``x`` is on the model's device.
 
     ``evidence`` is the ``(B, 2, R)`` reference evidence; pass it so that every
     method divides the same Omega. It defines Omega whatever ``cfg.init`` is.
+
+    ``polish_edit(rows, cells)`` deletes the ``(n, R)`` whole-cell masks
+    ``cells`` from the images ``x[rows]``. The polish, the choice of its start
+    and the polish's own null then use it instead of blur (ablation DA13 passes
+    ROAD's fill). The search always uses blur.
     """
     cfg = cfg or PartitionConfig()
     parameter = next(model.parameters())
@@ -335,14 +341,23 @@ def partition(
             search = _hard_roles(plan, omega, cfg.independent)
             moves = 4 * units if cfg.polish_moves is None else int(cfg.polish_moves)
             with torch.no_grad():
-                welfare_search = role_welfare(model, x.detach(), ids, reference, search, table, cfg.null, grid_h, grid_w)
+                edit = polish_edit or blur_edit(x.detach(), grid_h, grid_w)
+                polish_table = table
+                if polish_edit is not None:
+                    polish_table = reference.new_zeros(x.shape[0], 2, top + 1)
+                    if cfg.null and top > 0:
+                        sizes = null_size_grid(top, units) if cfg.null_grid else None
+                        polish_table = edit_null(model, ids, reference, edit, x.shape[0], units, top, cfg.n_null,
+                                                 cfg.null_seed, sizes)
+                welfare_search = role_welfare(model, x.detach(), ids, reference, search, polish_table, cfg.null,
+                                              grid_h, grid_w, edit)
                 if cfg.polish and not cfg.independent:
-                    welfare_init = role_welfare(model, x.detach(), ids, reference, initial, table, cfg.null,
-                                                grid_h, grid_w)
+                    welfare_init = role_welfare(model, x.detach(), ids, reference, initial, polish_table, cfg.null,
+                                                grid_h, grid_w, edit)
                     better = (welfare_search >= welfare_init).view(-1, 1, 1)
                     start = torch.where(better, search, initial)
-                    roles, welfare = polish(model, x.detach(), ids, reference, start, omega, table, cfg.null,
-                                            grid_h, grid_w, moves)
+                    roles, welfare = polish(model, x.detach(), ids, reference, start, omega, polish_table, cfg.null,
+                                            grid_h, grid_w, moves, edit)
                 else:
                     roles, welfare = search, welfare_search
         finally:
@@ -376,49 +391,84 @@ def partition(
 # welfare of the hard partition. The welfare is the search's objective without
 # the boundary offsets: blur deletion of whole cells and each role's null at
 # its size. It ends when no move raises the welfare, so the result is never
-# below step 0.
+# below step 0. Ablation DA13 deletes with ROAD's fill instead, with a null
+# measured the same way.
 # ---------------------------------------------------------------------------
 
 POLISH_BATCH = 64     # deleted inputs per forward pass; the result does not depend on it
 POLISH_TOL = 1e-6     # smallest welfare gain a move must make
 
 
-def _deletion_drops(model, x, ids, reference, rows: torch.Tensor, masks: torch.Tensor,
-                    grid_h: int, grid_w: int) -> torch.Tensor:
+def blur_edit(x: torch.Tensor, grid_h: int, grid_w: int) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    """CDEA's deletion as an ``edit(rows, cells)``: blur of the whole cells of ``x[rows]``."""
+    return lambda rows, cells: delete(x[rows], cells.to(x.dtype), grid_h, grid_w)
+
+
+def _deletion_drops(model, ids, reference, rows: torch.Tensor, masks: torch.Tensor, edit) -> torch.Tensor:
     """``(n, J)`` drop of the classes ``ids`` when image ``rows[i]`` loses the cells of ``masks[i]``."""
     out = []
     for start in range(0, rows.numel(), POLISH_BATCH):
         r = rows[start:start + POLISH_BATCH]
-        edited = delete(x[r], masks[start:start + POLISH_BATCH].to(x.dtype), grid_h, grid_w)
+        edited = edit(r, masks[start:start + POLISH_BATCH])
         out.append(reference[r].gather(1, ids[r]) - model(edited).gather(1, ids[r]))
     return torch.cat(out, dim=0) if out else reference.new_zeros(0, ids.shape[1])
+
+
+def edit_null(model, ids, reference, edit, batch: int, units: int, top: int, n: int, seed: int,
+              sizes: Optional[list[int]] = None) -> torch.Tensor:
+    """``(B, J, top + 1)``: ``size_null``'s table under any ``edit(rows, cells)``.
+
+    The same nested random masks, every image. ``sizes`` measures only those
+    and interpolates the rest, as ``size_null`` does.
+    """
+    measured = list(range(top + 1)) if sizes is None else sorted({int(s) for s in sizes} | {0})
+    masks = size_masks(units, measured, n, seed).to(reference.device)
+    values = reference.new_zeros(batch, ids.shape[1], len(measured))
+    rows = torch.arange(batch, device=reference.device).repeat(n)
+    for index, size in enumerate(measured):
+        if size == 0:
+            continue
+        flat = masks[index].repeat_interleave(batch, dim=0)
+        drops = _deletion_drops(model, ids, reference, rows, flat, edit)
+        values[..., index] = drops.view(n, batch, -1).mean(dim=0)
+    if measured == list(range(top + 1)):
+        return values
+    grid = torch.tensor(measured, dtype=values.dtype, device=values.device)
+    return interpolate_sizes(values, grid, top)
 
 
 def _welfare_terms(drops: torch.Tensor, sizes: torch.Tensor, table: torch.Tensor, use_null: bool) -> torch.Tensor:
     return decomposition_payoffs(drops, null_at(table, sizes) if use_null else None)
 
 
-def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h: int, grid_w: int) -> torch.Tensor:
-    """``(B,)`` blur welfare ``u_k + u_l + u_S`` of a hard partition ``(B, 4, R)``, each role net of its null."""
+def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h: int, grid_w: int,
+                 edit=None) -> torch.Tensor:
+    """``(B,)`` welfare ``u_k + u_l + u_S`` of a hard partition ``(B, 4, R)``, each role net of its null.
+
+    Blur deletion unless ``edit`` is given.
+    """
+    edit = edit or blur_edit(x, grid_h, grid_w)
     batch, _, units = roles.shape
     rows = torch.arange(batch, device=x.device).repeat_interleave(PLAYERS)
     masks = roles[:, :PLAYERS].reshape(batch * PLAYERS, units)
-    drops = _deletion_drops(model, x, ids, reference, rows, masks, grid_h, grid_w).view(batch, PLAYERS, -1)
+    drops = _deletion_drops(model, ids, reference, rows, masks, edit).view(batch, PLAYERS, -1)
     sizes = roles[:, :PLAYERS].sum(dim=-1).to(x.dtype)
     return _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
 
 
 def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h: int, grid_w: int,
-           moves: int) -> tuple[torch.Tensor, torch.Tensor]:
+           moves: int, edit=None) -> tuple[torch.Tensor, torch.Tensor]:
     """Best-improvement single-cell moves on an exclusive partition ``(B, 4, R)``. Returns it and its welfare.
 
-    Each image moves on its own, so its result does not depend on the batch.
+    Blur deletion unless ``edit`` is given. Each image moves on its own, so its
+    result does not depend on the batch.
     """
+    edit = edit or blur_edit(x, grid_h, grid_w)
     batch, roles_count, units = roles.shape
     current = roles.clone()
     rows = torch.arange(batch, device=x.device).repeat_interleave(PLAYERS)
-    drops = _deletion_drops(model, x, ids, reference, rows, current[:, :PLAYERS].reshape(-1, units),
-                            grid_h, grid_w).view(batch, PLAYERS, -1)
+    drops = _deletion_drops(model, ids, reference, rows, current[:, :PLAYERS].reshape(-1, units),
+                            edit).view(batch, PLAYERS, -1)
     sizes = current[:, :PLAYERS].sum(dim=-1).to(x.dtype)
     welfare = _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
     active = omega.any(dim=-1).tolist()
@@ -445,8 +495,8 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
                             del_masks.append(mask)
                             owners.append((index, p))
         owner_rows = torch.tensor([c[0] for c in candidates], device=x.device)
-        new = _deletion_drops(model, x, ids, reference, torch.tensor(del_rows, device=x.device),
-                              torch.stack(del_masks), grid_h, grid_w)
+        new = _deletion_drops(model, ids, reference, torch.tensor(del_rows, device=x.device),
+                              torch.stack(del_masks), edit)
         cand_drops = drops[owner_rows].clone()
         cand_sizes = sizes[owner_rows].clone()
         for (index, p), value in zip(owners, new):

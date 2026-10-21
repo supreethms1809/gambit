@@ -255,7 +255,9 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     ``soft``: the payoff of the search's final plan on Omega. ``search``: of
     the hard plan the search ends at. ``hard``: of the final partition, after
     the polish. ``init``: of the step-0 partition. ``polish_changed`` is the
-    share of Omega cells the polish moved. ``same_as_init`` is 1 when
+    share of Omega cells the polish moved, and ``polish_welfare`` the final
+    partition's welfare under the polish's own deletion (blur, or ROAD for
+    DA13). ``same_as_init`` is 1 when
     the final partition equals step 0 on every Omega cell (D9). ``trapped`` is
     the share of Omega cells whose final role, U_k, U_l or S, started from a
     zero part (initial logit log eps). ``empty_share`` is the share labelled
@@ -285,6 +287,7 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     size = omega.sum(dim=-1).clamp_min(1).float()
     same = ((part.roles == part.initial_roles) | ~omega.unsqueeze(1)).all(dim=-1).all(dim=-1)
     out["same_as_init"] = same.float().cpu()
+    out["polish_welfare"] = part.welfare.float().cpu()
     moved = ((part.roles != part.search_roles).any(dim=1) & omega).sum(dim=-1).float()
     out["polish_changed"] = (moved / size).cpu()
     out["empty_share"] = (part.roles[:, 3].sum(dim=-1).float() / size).cpu()
