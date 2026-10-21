@@ -1,11 +1,11 @@
 """Run and score one version-2 decomposition cell.
 
-FORMULATION_DECOMPOSITION.md v2 sections 5, 6 and 8; EVAL_PLAN.md 13.5-13.8.
+FORMULATION_DECOMPOSITION.md version 2 sections 5, 6 and 8; EVAL_PLAN.md 13.5-13.8.
 
 Batch by batch: the reference evidence and Omega are computed once and every
 method divides that Omega. The scorer's null, its 95th percentile and the
 single-cell drops are measured once per image and shared by every method.
-One row per image x method x operator, under ``decomposition_v2``. A method
+One row per image x method x operator, under ``partition``. A method
 that raises is recorded as ``status="error"`` and the cell continues.
 """
 
@@ -21,7 +21,7 @@ import torch
 from core.types import HypothesisSet
 from evaluation.run_cell import CellSpec, PassCounter, _logits, _pick, _ranges, _summary, _write, device_memory_mb
 
-GAME = "decomposition_v2"
+GAME = "partition"
 ROLE_CHARS = "kls0"     # U_k, U_l, S, empty; "." is outside Omega
 PATCHES = ("ak", "al", "c")
 

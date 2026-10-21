@@ -1,4 +1,4 @@
-"""Descriptive measurements outside the method. FORMULATION_DECOMPOSITION.md v2 section 10, open decision 10.
+"""Descriptive measurements outside the method. FORMULATION_DECOMPOSITION.md version 2 section 10, open decision 10.
 
 **Co-location share.** At ResNet-50's last layer the head is a global average
 pool and a linear layer, so unit (r, c) contributes ``w_kc A_rc / R`` to z_k.

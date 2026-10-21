@@ -348,10 +348,10 @@ def partition(
     )
 
 
-def v1_roles(out: Decomposition, omega: torch.Tensor, area: float) -> torch.Tensor:
+def budget_roles(out: Decomposition, omega: torch.Tensor, area: float) -> torch.Tensor:
     """``(B, 4, R)`` bool: a version-1 plan read as roles (ablation DA10).
 
-    Each player takes its ``round(a R)`` cells of largest plan mass, as v1's
+    Each player takes its ``round(a R)`` cells of largest plan mass, as version 1's
     hard masks did; a cell two players want goes to the larger mass, and the
     other player takes its next cell. The roles may lie anywhere in the image.
     Omega cells no player takes are empty.

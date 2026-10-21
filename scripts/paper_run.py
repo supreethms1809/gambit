@@ -9,8 +9,8 @@ dataset × backbone × seed, scored as EVAL_PLAN.md defines, written as records.
     PYTHONPATH=. python scripts/paper_run.py --game decomposition --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 64 --areas 0.025,0.05,0.1
 
-    # decomposition version 2 (FORMULATION_DECOMPOSITION.md v2): a partition of Omega, no areas
-    PYTHONPATH=. python scripts/paper_run.py --game decomposition_v2 --dataset cifar10 \\
+    # decomposition version 2 (FORMULATION_DECOMPOSITION.md version 2): a partition of Omega, no areas
+    PYTHONPATH=. python scripts/paper_run.py --game partition --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all
 
 ``--split test`` is refused until EVAL_PLAN.md is frozen and ``--final`` and
@@ -66,7 +66,7 @@ def _list(value: str, every: tuple, core: tuple = ()) -> list[str]:
 
 def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--game", choices=["contrastive", "shift", "decomposition", "decomposition_v2"], required=True)
+    p.add_argument("--game", choices=["contrastive", "shift", "decomposition", "partition"], required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--seed", type=int, default=0)
@@ -102,7 +102,7 @@ def spec_from_args(args):
         methods = _list(args.methods, DECOMP_CORE + DECOMP_EXTENDED, DECOMP_CORE)
         ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
         candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
-    elif args.game == "decomposition_v2":
+    elif args.game == "partition":
         methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED, PARTITION_CORE)
         ablations = _list(args.ablations, tuple(PARTITION_ABLATIONS))
         candidates = _list(args.candidates, tuple(PARTITION_CANDIDATES))
@@ -113,7 +113,7 @@ def spec_from_args(args):
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
     operators = tuple(o.strip() for o in args.operators.split(","))
-    if args.game not in {"decomposition", "decomposition_v2"}:
+    if args.game not in {"decomposition", "partition"}:
         candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.backbone != "resnet50":
         for resnet_only in ("cve", "sc_cve"):

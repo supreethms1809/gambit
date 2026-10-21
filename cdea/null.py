@@ -63,7 +63,7 @@ def null_drops(
 
 
 # ---------------------------------------------------------------------------
-# Version 2: the size-matched null (FORMULATION_DECOMPOSITION.md v2 section 3.4).
+# Version 2: the size-matched null (FORMULATION_DECOMPOSITION.md version 2 section 3.4).
 # ``nu_j(n)`` is the mean drop over N seeded random n-cell masks from the whole
 # grid. The n-cell mask of row i is the top n cells of that row's seeded
 # scores, so the masks of one row are nested, and every image gets the same

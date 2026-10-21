@@ -1048,7 +1048,7 @@ def decomposition_method(name: str):
 
 
 # ---------------------------------------------------------------------------
-# Decomposition version 2 (FORMULATION_DECOMPOSITION.md v2). Every method
+# Decomposition version 2 (FORMULATION_DECOMPOSITION.md version 2). Every method
 # divides the same evidence region Omega of the pair (rank 0, rank 1) into the
 # roles U_k, U_l, S and empty. Omega and the reference evidence are computed
 # once per batch (``PartitionContext``) and passed to every method.
@@ -1070,7 +1070,7 @@ class PartitionMaps:
 
 @dataclass
 class PartitionRunConfig:
-    """One version-2 CDEA configuration. Defaults are FORMULATION_DECOMPOSITION.md v2 section 4."""
+    """One version-2 CDEA configuration. Defaults are FORMULATION_DECOMPOSITION.md version 2 section 4."""
 
     lr: float = 0.1
     steps: Optional[int] = None        # None: Knobs.cdea_steps
@@ -1080,7 +1080,7 @@ class PartitionRunConfig:
     draw_seed: int = 0
     null: bool = True
     independent: bool = False
-    kind: str = "partition"            # partition | gradient_partition (DA3) | v1 (DA10)
+    kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
 
 
 PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig]] = {
@@ -1094,7 +1094,7 @@ PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig
     "DA9_steps_25": lambda c: replace(c, steps=25),
     "DA9_steps_50": lambda c: replace(c, steps=50),
     "DA9_steps_200": lambda c: replace(c, steps=200),
-    "DA10_v1": lambda c: replace(c, kind="v1"),
+    "DA10_fixed_budgets": lambda c: replace(c, kind="fixed_budgets"),
 }
 
 # Val selection grid (EVAL_PLAN.md 13.7): 13.3's steps and lr.
@@ -1106,7 +1106,7 @@ PARTITION_CANDIDATES: dict[str, PartitionRunConfig] = {
 PARTITION_CORE = ("cdea", "subtract", "ig_minsplit", "occlusion_minsplit", "occlusion_partition",
                   "margin_gradcam_ref", "random_partition")
 PARTITION_EXTENDED = ("rise_minsplit", "extremal_minsplit", "chefer_minsplit")
-# Area of the per-class masks Extremal optimises before the rule splits them, and of v1's budgets (DA10).
+# Area of the per-class masks Extremal optimises before the rule splits them, and of version 1's budgets (DA10).
 PARTITION_AREA = 0.05
 
 
@@ -1133,13 +1133,13 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         from baselines.decomposition import gradient_partition
 
         return _labels_maps(gradient_partition(model, x, h.ids, gh, gw, ctx.omega))
-    if cfg.kind == "v1":
-        from cdea.decompose import DecomposeConfig, decompose, v1_roles
+    if cfg.kind == "fixed_budgets":
+        from cdea.decompose import DecomposeConfig, decompose, budget_roles
 
         steps = knobs.cdea_steps if cfg.steps is None else int(cfg.steps)
         out = decompose(model, x, h, gh, gw, PARTITION_AREA,
                         DecomposeConfig(steps=steps, backend=default_backend(backbone), ig_steps=knobs.ig_steps))
-        return PartitionMaps(roles=v1_roles(out, ctx.omega, PARTITION_AREA))
+        return PartitionMaps(roles=budget_roles(out, ctx.omega, PARTITION_AREA))
     if cfg.kind != "partition":
         raise ValueError(f"unknown kind {cfg.kind!r}")
     from cdea.decompose import PartitionConfig, partition

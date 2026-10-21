@@ -2,10 +2,10 @@
 
 **Status (2026-10-20).** Version 2, **DRAFT**. Not implemented, not signed off.
 - The code in `cdea/decompose.py` implements version 1. Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4.
-- Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No v2 number is read before the user signs off both.
-- Section 11 lists what changed from v1 and why. Section 12 lists the open decisions.
+- Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both.
+- Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
 
-The contrast game (`FORMULATION.md`) stays in the code unchanged. Its role in v2 is open decision 4.
+The contrast game (`FORMULATION.md`) stays in the code unchanged. Its role in version 2 is open decision 4.
 
 ## 1. Why
 
@@ -16,7 +16,7 @@ Version 1 drifted from this goal in three ways (review of 2026-10-20):
 - Players could take any cell of the image, so the output was not a division of the evidence that overlapped.
 - No measure of the overlap existed, before or after.
 
-Two facts shape v2.
+Two facts shape version 2.
 
 **Removing overlap is trivial, so it cannot be the success measure.**
 - Any rule that divides two maps gives unique parts that do not overlap. The min-split rule does it at K = 2: at every cell one of E_k − m and E_l − m is 0.
@@ -70,7 +70,7 @@ A partition of Ω into four roles: U_k, U_l, S and ∅ (no evidence for either c
 - **Null.** ν_j(n) is the mean of d_j over N seeded random n-cell masks drawn from the **whole grid**, not from Ω. One set of masks serves every image, and ν_j(0) = 0.
 - **Excess drop.** d̃_j(M) = d_j(M) − ν_j(|M|).
 
-The null comes from the whole grid so that it keeps its v1 meaning: the common-mode drop of deleting that many cells. A null drawn from Ω would measure "random evidence". A set with no effect on l would then read as d̃_l < 0, and the payoff would penalise it.
+The null comes from the whole grid so that it keeps its version 1 meaning: the common-mode drop of deleting that many cells. A null drawn from Ω would measure "random evidence". A set with no effect on l would then read as d̃_l < 0, and the payoff would penalise it.
 
 ### 3.5 Roles, defined by deletion
 
@@ -81,13 +81,13 @@ The null comes from the whole grid so that it keeps its v1 meaning: the common-m
 | S, shared | lowers both z_k and z_l |
 | ∅, neither | lowers neither |
 
-Suppressing l is still not unique evidence for k (D3, settled in v1). A region whose deletion raises z_l is penalised in u_k.
+Suppressing l is still not unique evidence for k (D3, settled in version 1). A region whose deletion raises z_l is penalised in u_k.
 
 ## 4. Method
 
 ### 4.1 Payoffs (`cdea/payoffs.py`)
 
-The payoffs are v1's, with the size-matched null:
+The payoffs are version 1's, with the size-matched null:
 - u_k = d̃_k(U_k) − |d̃_l(U_k)|_s
 - u_l = d̃_l(U_l) − |d̃_k(U_l)|_s
 - u_S = min_s(d̃_k(S), d̃_l(S))
@@ -100,13 +100,13 @@ The payoffs are v1's, with the size-matched null:
 - S = {a unique-k cell, a unique-l cell} gives min(Σ) > Σ min, so S looks shared.
 - A U_k whose cells push z_l in opposite directions looks pure.
 
-Fixed budgets made mixing bite in v1, because S had to be filled. Free sizes remove that pressure. Section 6.3 measures what is left.
+Fixed budgets made mixing bite in version 1, because S had to be filled. Free sizes remove that pressure. Section 6.3 measures what is left.
 
 ### 4.2 Plan and constraints
 
 - θ ∈ R^{4 × |Ω|}. The plan is a softmax over the four roles in every cell, so exclusivity holds by construction.
 - There are no row budgets, so there is no Sinkhorn step.
-- Binary draws: one categorical draw per cell, with a straight-through gradient. The boundary offsets are v1's (`FORMULATION.md` section 4.1).
+- Binary draws: one categorical draw per cell, with a straight-through gradient. The boundary offsets are version 1's (`FORMULATION.md` section 4.1).
 
 ### 4.3 Initialisation: the subtraction rule
 
@@ -125,7 +125,7 @@ The machinery is unchanged:
 - Adam;
 - a per-image sum loss, so results do not depend on the chunk;
 - one generator seeded by the draw seed, never by the batch;
-- 100 steps, lr 0.1, and the v1 selection grid;
+- 100 steps, lr 0.1, and the version 1 selection grid;
 - deletion by CDEA's blur.
 
 The null is computed once, before optimisation, and detached, for n = 0 … |Ω|. That costs N·|Ω| forward passes per image. On ViT-B/16 it is computed on a size grid and interpolated (open decision 9).
@@ -163,11 +163,11 @@ Rules never label a cell ∅.
 | Row | Source | Status |
 |---|---|---|
 | `subtract` | The reference evidence itself, through the rule. CDEA's step 0 | Core. The "before → after by subtraction" answer |
-| `ig_minsplit` | Captum IntegratedGradients, as v1 | Core |
-| `occlusion_minsplit` | Captum `Occlusion`, black, one cell, as v1 | Core |
-| `rise_minsplit`, `extremal_minsplit` | As v1 | Extended |
+| `ig_minsplit` | Captum IntegratedGradients, as version 1 | Core |
+| `occlusion_minsplit` | Captum `Occlusion`, black, one cell, as version 1 | Core |
+| `rise_minsplit`, `extremal_minsplit` | As version 1 | Extended |
 | `occlusion_partition` | Ours. The single-cell blur drops g_{j,r} (excess over ν(1)) give cell scores s_k = g_k − \|g_l\|, s_l = g_l − \|g_k\|, s_S = min(g_k, g_l). A cell takes its best role if that score is > 0, else ∅. With free sizes this per-cell rule is the exact optimum of the additive objective, so no linear programme is needed | Core. Decides the framing |
-| `gradient_partition` | The same, with the first-order g of v1's `gradient_assign` | Ablation DA3 |
+| `gradient_partition` | The same, with the first-order g of version 1's `gradient_assign` | Ablation DA3 |
 | `margin_gradcam_ref` | The margin map on Ω: positive cells go to U_k, negative cells to U_l, with no S | Reference |
 | `random_partition` | Each Ω cell takes a seeded uniform role | Floor |
 
@@ -180,7 +180,7 @@ Post-2021 rule rows are open decision 8.
 ### 6.1 Masks and removal
 
 - A role's mask is its cells, whole: nearest upsampling to pixels. The shared top-a adapter is not used.
-- Removal is ROAD (primary) or blur (robustness), with v1's seeds and offsets.
+- Removal is ROAD (primary) or blur (robustness), with version 1's seeds and offsets.
 - **The scorer's null.** For every n that occurs in an image, the scorer computes ν^sc_j(n) and its 95th percentile q_j(n) over 32 seeded random n-cell masks from the whole grid. They are computed once per image and shared by every method.
 - Drops are recorded for three classes: k, l and m.
 
@@ -249,7 +249,7 @@ O tertiles per dataset. The cut points come from val and are frozen with the pla
 
 ## 7. Ground truth: planted pairs (`evaluation/planted_cues.py`)
 
-Unchanged from v1: `PlantedPairCIFAR`, the three pairs, the training rule, grid placement, the sample rule and `verify_roles`. The checkpoints are v1's.
+Unchanged from version 1: `PlantedPairCIFAR`, the three pairs, the training rule, grid placement, the sample rule and `verify_roles`. The checkpoints are version 1's.
 
 One addition: report Ω coverage (6.7). A patch that the reference evidence misses cannot be labelled by any method, so it is a limit of the evidence, not of a method.
 
@@ -266,8 +266,8 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 
 - Ω construction: ρ and ties.
 - **Toy 1, additive.** Sizes are free. `subtract`, `occlusion_partition` and CDEA all return U_k = {1}, U_l = {2}, S = {3}, ∅ = {4}.
-- **Toy 2, suppression.** As v1.
-- **Toy 3, redundancy.** The pair {a, b} belongs in U_k. `occlusion_partition` misses it, because each cell alone is below a random cell. CDEA finds it. This is the key test, as in v1.
+- **Toy 2, suppression.** As version 1.
+- **Toy 3, redundancy.** The pair {a, b} belongs in U_k. `occlusion_partition` misses it, because each cell alone is below a random cell. CDEA finds it. This is the key test, as in version 1.
 - **Toy 4, mixing (new).** There is no shared cell, so S must stay empty, or MIX and the split halves must flag it.
 - **Toy 5, co-location (new).** One cell carries a k-only and an l-only feature. Every method that labels image cells calls it S. The test documents the limit in section 10.
 - The size-matched null, chunk invariance, exclusive categorical draws, the score definitions, and the confirmation rule against `verify_roles`.
@@ -280,12 +280,12 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 
   The share is the gap between them divided by the first. It measures how much "shared" evidence is really unique evidence in the same place. It is a planned descriptive measurement (open decision 10), not part of the method.
 - **Redundancy is the only reason for a search.** At ResNet-50's head, contributions add up exactly, so non-additivity can only come from the convolutional trunk. Measure it with the pairwise interaction I(a, b) = d({a, b}) − d(a) − d(b) on the top Ω cells (open decision 10).
-- **K = 2** (section 2). A K-class version would give each class subset T a role, with u_T = min_{j∈T} d̃_j − Σ_{j∉T} |d̃_j|. Unique evidence is the case |T| = 1. The v2 S is u_{k,l} without the outside penalty, which section 6.6 measures instead.
+- **K = 2** (section 2). A K-class version would give each class subset T a role, with u_T = min_{j∈T} d̃_j − Σ_{j∉T} |d̃_j|. Unique evidence is the case |T| = 1. The version 2 S is u_{k,l} without the outside penalty, which section 6.6 measures instead.
 - **The answer is relative to the reference evidence.** Ω comes from Grad-CAM (ResNet-50) or IG (ViT-B/16).
 
-## 11. Changes from v1
+## 11. Changes from version 1
 
-| Aspect | v1 (tag `decomp-declared`) | v2 | Why |
+| Aspect | version 1 (tag `decomp-declared`) | version 2 | Why |
 |---|---|---|---|
 | Question | Three fixed-size regions anywhere in the image | A partition of the evidence region Ω | The original goal: divide the overlapping evidence |
 | Sizes | a·R cells per player | Free; S may be empty | "How much is shared" becomes an answer |
@@ -297,9 +297,9 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 | SPEC and CD | CD reported as SPEC_k + SPEC_l | Not reported | They compare masks of different sizes |
 | Third class | Not scored | m is scored | Pair-specific or generic S; how often K = 2 falls short |
 | Additive comparator | `occlusion_assign` (a budgeted linear programme) | `occlusion_partition` (best role per cell) | No budgets |
-| v1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
+| version 1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
 
-Carried over from v1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). v1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
+Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
 
 ## 12. Open decisions
 
@@ -308,11 +308,11 @@ Carried over from v1's decisions (2026-10-14): logits as units (3), the suppress
 | 1 | ρ for Ω | 0.5, with 0.3 and 0.7 reported |
 | 2 | Reference evidence | Grad-CAM on ResNet-50 and IG on ViT-B/16. IG on ResNet-50 as a robustness row |
 | 3 | Mixing in S | Report MIX and the split halves. Add a penalty only if the dev read shows mixing |
-| 4 | DA2, the contrast game | Drop it from v2. It keeps fixed budgets, so it cannot divide Ω |
+| 4 | DA2, the contrast game | Drop it from version 2. It keeps fixed budgets, so it cannot divide Ω |
 | 5 | Primary natural-image metric | VR on the top overlap tertile. PUR + SV with the size-matched null as the secondary |
 | 6 | Strata | O tertiles per dataset, cut on val |
-| 7 | DA10 (v1 as an ablation) | Keep |
+| 7 | DA10 (version 1 as an ablation) | Keep |
 | 8 | Post-2021 rule rows | Chefer min-split on ViT-B/16 (its class maps exist). AttnLRP if time allows |
 | 9 | ViT-B/16 null cost | A size grid with linear interpolation |
 | 10 | Descriptive measurements outside the method | Run the co-location share and the pairwise interaction on dev val first. Both bear on the framing |
-| 11 | Sign-off | v2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any v2 number is read |
+| 11 | Sign-off | version 2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any version 2 number is read |

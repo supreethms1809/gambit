@@ -1,6 +1,6 @@
-"""Descriptive measurements for decomposition v2, before any method (PROGRESS.md plan R2).
+"""Descriptive measurements for decomposition version 2, before any method (PROGRESS.md plan R2).
 
-FORMULATION_DECOMPOSITION.md v2 sections 6.2, 6.6 and 10 (open decision 10).
+FORMULATION_DECOMPOSITION.md version 2 sections 6.2, 6.6 and 10 (open decision 10).
 Per image of a dataset's val sample: the overlap O and |Omega| at three rho,
 O inside Omega, the gap z_l - z_m (K-sufficiency), the co-location share at
 ResNet-50's last layer, and the pairwise interaction of the top Omega cells.
@@ -79,15 +79,15 @@ def measure(dataset: str, backbone: str, seed: int, split: str, n: int, model_so
                     for key in ("p", "p_pos", "q", "share", "share_pos"):
                         row[f"coloc_{key}_{name}"] = float(out[key][i])
             for j, cls in enumerate(("k", "l")):
-                interaction = inter["i"][i, :, j]
+                excess = inter["i"][i, :, j]
                 single = inter["single"][i, :, j]
-                valid = ~torch.isnan(interaction)
+                valid = ~torch.isnan(excess)
                 row[f"pairs_{cls}"] = int(valid.sum())
                 if bool(valid.any()):
-                    row[f"inter_mean_{cls}"] = float(interaction[valid].mean())
-                    row[f"inter_abs_{cls}"] = float(interaction[valid].abs().mean())
+                    row[f"inter_mean_{cls}"] = float(excess[valid].mean())
+                    row[f"inter_abs_{cls}"] = float(excess[valid].abs().mean())
                     row[f"single_abs_{cls}"] = float(single[valid].mean())
-                    row[f"inter_rel_{cls}"] = float(interaction[valid].abs().sum() / single[valid].sum().clamp_min(1e-6))
+                    row[f"inter_rel_{cls}"] = float(excess[valid].abs().sum() / single[valid].sum().clamp_min(1e-6))
             rows.append(row)
     return rows, loaded
 

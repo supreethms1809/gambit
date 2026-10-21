@@ -1,6 +1,6 @@
 """Decomposition version 2: Omega, the size-matched null, the partition, the rule rows and the scores.
 
-FORMULATION_DECOMPOSITION.md v2 section 9. The toys are the cell toys of
+FORMULATION_DECOMPOSITION.md version 2 section 9. The toys are the cell toys of
 ``test_decomposition.py``: each cell carries one feature (a checkerboard
 amplitude) that blur deletion removes. Omega is set by ``rho`` so that every
 cell the test names is in it.
@@ -379,12 +379,12 @@ def test_ablation_switches_run() -> None:
 
 
 def test_v1_plan_is_read_as_roles() -> None:
-    from cdea.decompose import DecomposeConfig, decompose, v1_roles
+    from cdea.decompose import DecomposeConfig, decompose, budget_roles
 
     model, x = additive_toy()
     h, evidence, omega = _setup(model, x, 0.5)
     out = decompose(model, x, h, *GRID, 2.0 / UNITS, DecomposeConfig(steps=20))
-    roles = v1_roles(out, omega, 2.0 / UNITS)
+    roles = budget_roles(out, omega, 2.0 / UNITS)
     assert roles[:, :3].sum(dim=-1).tolist() == [[2, 2, 2]]
     assert bool((roles.sum(dim=1) <= 1).all())
     assert torch.equal(roles[:, 3], omega & ~roles[:, :3].any(dim=1))
@@ -525,10 +525,10 @@ def test_planted_role_accuracy_and_coverage() -> None:
 def test_paper_run_parses_the_v2_game() -> None:
     from scripts.paper_run import parse, spec_from_args
 
-    spec = spec_from_args(parse(["--game", "decomposition_v2", "--dataset", "cifar10", "--methods", "all",
-                                 "--ablations", "DA10_v1", "--candidates", "all"]))
+    spec = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "all",
+                                 "--ablations", "DA10_fixed_budgets", "--candidates", "all"]))
     assert "chefer_minsplit" not in spec.methods and "cdea" in spec.methods
-    assert list(spec.ablations) == ["DA10_v1"] and len(spec.candidates) == 4
-    vit = spec_from_args(parse(["--game", "decomposition_v2", "--dataset", "cifar10", "--methods", "all",
+    assert list(spec.ablations) == ["DA10_fixed_budgets"] and len(spec.candidates) == 4
+    vit = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "all",
                                 "--backbone", "vit_b_16"]))
     assert "chefer_minsplit" in vit.methods

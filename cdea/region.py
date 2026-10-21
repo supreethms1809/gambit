@@ -1,4 +1,4 @@
-"""The evidence region and the subtraction rule. FORMULATION_DECOMPOSITION.md v2 sections 3.1, 3.2 and 5.
+"""The evidence region and the subtraction rule. FORMULATION_DECOMPOSITION.md version 2 sections 3.1, 3.2 and 5.
 
 ``E_k`` and ``E_l`` are per-class evidence on the R cells, clamped at 0 and
 sum-normalised. The overlap of a cell is ``o(r) = min(E_k(r), E_l(r))``. The
