@@ -13,7 +13,7 @@
 
 ## 1. Claims and how each is tested
 
-The paper's claims are the decomposition game's, in section 13.1:
+The paper's claims are the decomposition game's, in section 13.1. A re-scoped v2 (2026-10-20, DRAFT) proposes replacements in 13.5–13.8; until it is signed off, 13.1 stands:
 - D1 on planted pairs (family D-T);
 - D2 on natural images (family D-C);
 - the joint-search comparison, which decides the framing (13.4).
@@ -413,6 +413,18 @@ Then add a line reading `frozen: true` at the top of this file, commit, and tag 
 - Development runs on val started before the sign-off: the CIFAR-10 and HAM10000 dev cells, and the planted-pair val cells (`PROGRESS.md`). They serve the selections of 13.3. No win condition is read from them.
 - The test split was not read.
 
+**2026-10-20, re-scoped (DRAFT, not signed off).** The user re-scoped the decomposition to its original question: divide the overlapping per-class evidence, and check every label against the model (`FORMULATION_DECOMPOSITION.md` v2).
+- 13.1–13.4 describe v1. They stay as written, for the record.
+- v2's claims and tests are 13.5–13.8, a draft. No v2 number is read before the user signs off v2 and 13.5–13.8 together.
+
+Disclosures for v2:
+- v1 dev-val records were read before v2 was written. That includes:
+  - the user's limited runs, in which `occlusion_minsplit` and `occlusion_assign` scored ahead of CDEA on PUR + SV;
+  - one Stanford Dogs drop matrix.
+- The archived results of the first formulation (`results/medical_presentation/`, `results/paper_rerun/`) were read again.
+- v2 was designed after these reads. Its new metrics (13.6) did not exist when they were made.
+- The test split was not read.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |
@@ -476,3 +488,47 @@ Reported with intervals, untested:
 - **Neither D1 nor D2 holds:** the decomposition is reported as a negative result beside the evaluation-paper route. That route's contribution is the contrastive evaluation protocol. Its finding is that margin attribution matches or beats mask optimisation under it, together with the lesion-overlap negative result.
 
 ViT-B/16, blur, the other areas and the all-images set are robustness checks, reported as in section 7.
+
+### 13.5 v2 claims (DRAFT, 2026-10-20)
+
+| # | Claim | Metric | Compared against | Test |
+|---|---|---|---|---|
+| D0 | Per-class evidence overlaps often enough to matter | O per dataset, the share of images in the top tertile, and K-sufficiency (formulation 6.6) | — | Descriptive |
+| D1′ | On planted pairs, CDEA labels the planted roles better than subtraction | RA in Ω, on role-confirmed images | The `subtract` row and the best rule row, each tested on its own | Primary, family D-T |
+| D2′ | On natural images with high overlap, CDEA resolves more of the overlap, verifiably, than subtraction | VR on the top O tertile, ROAD | The best rule row | Primary, family D-C |
+| — | Joint search against per-cell measurement | RA and VR, CDEA − `occlusion_partition` | | Decides the framing (13.8) |
+
+Reported with intervals, untested:
+- the resolution shares (formulation 6.5) and the role sizes;
+- PUR, SV and BAL with the size-matched null, and their cell-level versions;
+- MIX and the split-half verdicts;
+- GEN_S, PSV and the third-class drops of U_k and U_l;
+- "RA, all" and Ω coverage;
+- every image and every tertile;
+- ρ ∈ {0.3, 0.7}, blur, ViT-B/16;
+- DA1, DA3–DA10.
+
+### 13.6 v2 metrics
+
+The definitions are in `FORMULATION_DECOMPOSITION.md` section 6.
+- **O and O_Ω** (6.2) describe the overlap before.
+- **VR** (6.5) is the share of the overlap inside Ω that ends in a confirmed role. A role is confirmed by `verify_roles`' rule at its own size (6.4).
+- **RA** (6.7) is the share of each planted patch's cells labelled with its role, averaged over A_k, A_l and C.
+- Scored masks are whole cells. The top-a adapter, the matched area and the 2.5% ceiling of 13.2 do not apply.
+
+### 13.7 v2 data, models and selection
+
+- **Data and checkpoints.** As in 13.3: planted pairs (ResNet-50 seeds 0–4, ViT-B/16 as the robustness row, n = 200 kept images per seed), and the 8 natural datasets on ResNet-50.
+- **CDEA.** Only steps and lr, on 13.3's grid. Chosen on dev val (CIFAR-10 and HAM10000, seed 0, n = 64) by mean VR over all images, the mean of the two datasets' means.
+- **Best rule row.** Chosen per dataset and backbone on that dataset's val by mean VR, and on planted val by RA in Ω.
+- **Strata.** The O tertile cut points come from each dataset's val sample and are frozen with the plan.
+- Fast-knob records never inform a choice. Nothing is chosen on test images.
+
+### 13.8 v2 tests and win conditions (DRAFT)
+
+- **Family D-T** (planted, ResNet-50). CDEA − `subtract`, and CDEA − the best rule row, on RA in Ω. The machinery is 13.4's: sign-flip within seed, the two-level bootstrap, and seeds pooled. **D1′ holds** if both comparisons give p < 0.05 with a mean above 0.
+- **Family D-C** (natural, ResNet-50). CDEA − the best rule row on VR, top tertile. Each dataset is the unit. Two-sided exact Wilcoxon over the 8 datasets. **D2′ holds** if it rejects with a positive median. There is a single comparison, so there is no Holm step.
+- **Joint search against `occlusion_partition`.** Both families, the same tests. The non-inferiority margin is δ = 0.05 on RA and on VR.
+  - On planted ResNet-50, a patch is one cell, so `occlusion_partition` sits near the ceiling by construction (as in 13.4). This comparison is read for non-inferiority only there.
+  - The framing rule of 13.4 applies, with `occlusion_partition` in place of `occlusion_assign`.
+- **Neither D1′ nor D2′ holds.** The decomposition is reported as a negative result, together with D0 and the descriptive measurements (formulation open decision 10).

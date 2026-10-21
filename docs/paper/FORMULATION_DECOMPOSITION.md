@@ -1,220 +1,318 @@
 # CDEA decomposition formulation
 
-**Status.** This is the method. Implemented in `cdea/decompose.py`, `cdea/null.py` and `cdea/_plan.py`, and merged to `main` on 2026-10-14. Development runs on val are in progress (`PROGRESS.md`). The test split has not been read. The evaluation is `EVAL_PLAN.md` section 13. Its win conditions were signed off on 2026-10-14 (tag `decomp-declared`).
+**Status (2026-10-20).** Version 2, **DRAFT**. Not implemented, not signed off.
+- The code in `cdea/decompose.py` implements version 1. Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4.
+- Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No v2 number is read before the user signs off both.
+- Section 11 lists what changed from v1 and why. Section 12 lists the open decisions.
 
-The contrast game (`FORMULATION.md`) stays in the code unchanged and becomes ablation DA2.
+The contrast game (`FORMULATION.md`) stays in the code unchanged. Its role in v2 is open decision 4.
 
 ## 1. Why
 
-The goal is the original one. Per-class evidence overlaps. The method splits it into evidence **unique** to each class and evidence **shared** between them, in a form that can be measured and shown.
+The goal is the original one. When the evidence for each class is computed separately, the two maps often overlap. In those images, CDEA separates the overlapping evidence into evidence **unique** to each class and evidence **shared** by both, and every label is checked against the model.
 
-The contrast game answers a different question:
-- Its payoffs are log-odds differences, so they mix "evidence for k" with "evidence against l".
-- Its shared player measures "evidence for the shortlist against the other classes", not "evidence common to the members".
-- A seed-0 val diagnostic of its optimiser (2026-10-13) showed:
-  - its objective does not track CD;
-  - CD itself is answered better by a direct search on the margin.
+Version 1 drifted from this goal in three ways (review of 2026-10-20):
+- Each player owned a fixed 5% of the image, so "how much is shared?" was an input, not an answer. An image with no shared evidence still got an S of 5%.
+- Players could take any cell of the image, so the output was not a division of the evidence that overlapped.
+- No measure of the overlap existed, before or after.
 
-## 2. The question, defined by intervention
+Two facts shape v2.
 
-Phase 1 uses one pair: k = rank 0, l = rank 1 (K = 2).
+**Removing overlap is trivial, so it cannot be the success measure.**
+- Any rule that divides two maps gives unique parts that do not overlap. The min-split rule does it at K = 2: at every cell one of E_k − m and E_l − m is 0.
+- Subtracting the strongest rival does it at any K.
+- The archived first formulation (tag `framing-v1`) reported a large overlap drop. It came from two things:
+  - a baseline that subtracted the *mean* of four rivals over the top 5;
+  - an objective that penalised the same overlap formula it was scored on.
 
-For a mask M and a class j:
-- **Drop.** d_j(M) = z_j(x) − z_j(x ⊖ M), in logits.
-- **Null.** ν_j(a) is the mean of d_j(R) over N = 8 seeded random masks R of area a. The seed never depends on the batch.
-- **Excess drop.** d̃_j(M) = d_j(M) − ν_j(a). This removes the common-mode drop: deleting almost anything lowers a confident logit.
+**What a rule cannot do is check its labels.** Subtraction calls every overlapping cell shared. An overlapping cell can be:
+1. evidence that both classes use;
+2. an artefact of the attribution map;
+3. redundant evidence that shows only when cells are deleted together;
+4. a k-feature and an l-feature sitting in the same cell.
 
-Three maps per image:
+Deleting the cell separates case 1 from case 2. A joint search is needed only for case 3. No method that labels image cells can resolve case 4 (section 10).
 
-| Map | Definition |
+## 2. Scope: one pair (K = 2)
+
+- k = rank 0, l = rank 1.
+- "Unique to k" means unique **against l**, not against every class.
+- Rank 2, written m, is scored but is not a player (section 6.6). It answers two questions:
+  - Is S specific to the pair, or generic evidence that raises other classes too?
+  - How often is a third class close enough that a pair is not the whole story?
+- K > 2 is future work (section 10).
+
+## 3. The question
+
+### 3.1 Reference evidence and the overlap
+
+- E_k and E_l are the per-class evidence of `_prior`: Grad-CAM on ResNet-50, and IG with the blur baseline on ViT-B/16. They live on the grid of R cells (7×7 or 14×14).
+- Ê_k and Ê_l are those maps clamped at 0 and sum-normalised.
+- **Overlap per cell:** o(r) = min(Ê_k(r), Ê_l(r)).
+- **Image overlap:** O = Σ_r o(r), in [0, 1].
+  - O = 0: the maps share nothing.
+  - O = 1: the maps are identical.
+  - O is the mass of the min-split's S.
+
+### 3.2 The evidence region Ω
+
+- C_j(ρ) is the smallest set of top cells of Ê_j that holds at least ρ of its mass. Ties go to the lower cell index.
+- Ω = C_k(ρ) ∪ C_l(ρ), with ρ = 0.5 (open decision 1).
+- Every method divides Ω and only Ω. Cells outside Ω are never deleted and never labelled.
+
+### 3.3 The output
+
+A partition of Ω into four roles: U_k, U_l, S and ∅ (no evidence for either class). Role sizes are free. Any role may be empty, including S.
+
+### 3.4 Drops and the null
+
+- **Drop.** d_j(M) = z_j(x) − z_j(x ⊖ M), in logits. n = |M| is the number of cells in M.
+- **Null.** ν_j(n) is the mean of d_j over N seeded random n-cell masks drawn from the **whole grid**, not from Ω. One set of masks serves every image, and ν_j(0) = 0.
+- **Excess drop.** d̃_j(M) = d_j(M) − ν_j(|M|).
+
+The null comes from the whole grid so that it keeps its v1 meaning: the common-mode drop of deleting that many cells. A null drawn from Ω would measure "random evidence". A set with no effect on l would then read as d̃_l < 0, and the payoff would penalise it.
+
+### 3.5 Roles, defined by deletion
+
+| Role | Deleting it … |
 |---|---|
-| U_k, unique to k | Deleting it lowers z_k and leaves z_l unchanged, in either direction |
-| U_l, unique to l | The same, with k and l swapped |
-| S, shared | Deleting it lowers both z_k and z_l |
+| U_k, unique to k | lowers z_k and leaves z_l unchanged, in either direction |
+| U_l, unique to l | the same, with k and l swapped |
+| S, shared | lowers both z_k and z_l |
+| ∅, neither | lowers neither |
 
-The ideal 3×2 matrix of excess drops:
+Suppressing l is still not unique evidence for k (D3, settled in v1). A region whose deletion raises z_l is penalised in u_k.
 
-```
-          d̃_k     d̃_l
-U_k      high      ≈ 0
-U_l      ≈ 0       high
-S        high      high
-```
+## 4. Method
 
-**Suppressing l is not unique evidence for k (D3, settled).** A region whose deletion raises z_l is penalised in u_k, not rewarded.
+### 4.1 Payoffs (`cdea/payoffs.py`)
 
-## 3. Method
+The payoffs are v1's, with the size-matched null:
+- u_k = d̃_k(U_k) − |d̃_l(U_k)|_s
+- u_l = d̃_l(U_l) − |d̃_k(U_l)|_s
+- u_S = min_s(d̃_k(S), d̃_l(S))
+- An empty role pays 0, and ∅ always pays 0.
+- The welfare is W = u_k + u_l + u_S, with no weights.
 
-### 3.1 Payoffs (`cdea/payoffs.py`)
+**Entry threshold.** ν grows with n. So adding a cell raises u_k only if its marginal drop beats a random cell's. The size-matched null is the entry threshold, and no sparsity weight is needed.
 
-All payoffs are in logit units.
-- |t|_s = sqrt(t² + ε²) and min_s(a, b) = (a + b)/2 − |a − b|_s/2, with ε = 1e-3 fixed.
-- u_k = d̃_k(A_k) − |d̃_l(A_k)|_s
-- u_l = d̃_l(A_l) − |d̃_k(A_l)|_s
-- u_S = min_s(d̃_k(A_S), d̃_l(A_S))
+**Known exploit (reported; open decision 3).** The set-level min and |·| reward mixing and cancellation:
+- S = {a unique-k cell, a unique-l cell} gives min(Σ) > Σ min, so S looks shared.
+- A U_k whose cells push z_l in opposite directions looks pure.
 
-The welfare is W = u_k + u_l + u_S. It has no weights: every term is a logit drop.
+Fixed budgets made mixing bite in v1, because S had to be filled. Free sizes remove that pressure. Section 6.3 measures what is left.
 
-Deletion is CDEA's blur, x ⊖ M = (1 − M̃) x + M̃ b(x). It uses the boundary-robust offsets of `FORMULATION.md` section 4.1 (s = ⌊½ unit side⌋).
+### 4.2 Plan and constraints
 
-### 3.2 Null (`cdea/null.py`)
+- θ ∈ R^{4 × |Ω|}. The plan is a softmax over the four roles in every cell, so exclusivity holds by construction.
+- There are no row budgets, so there is no Sinkhorn step.
+- Binary draws: one categorical draw per cell, with a straight-through gradient. The boundary offsets are v1's (`FORMULATION.md` section 4.1).
 
-- **Masks.** `null_unit_scores` draws N = 8 rows of seeded uniform cell scores (seed 0). `null_unit_masks` keeps the top a·R cells of each row, whole cells with the last one fractional (`top_mass`).
-- **One set for every image.** The same masks serve every image, so the null is chunk-invariant.
-- **When it is computed.** Once, before optimisation, under blur, and detached. It costs N forward passes per image per area.
-- **The scorer's null.** The scorer ranks the same cell scores through the shared adapter (bilinear upsampling, then top-a) and removes them with its own operator (section 5).
+### 4.3 Initialisation: the subtraction rule
 
-### 3.3 Constraints
-
-These are the constraints of `FORMULATION.md` section 5, with P = 3 players:
-- **Exclusivity:** every column sums to 1.
-- **Budgets:** every player owns a·R, and ∅ takes the rest.
-- **Feasibility:** 3a ≤ 1, which covers {2.5, 5, 10}%.
-
-The budgets are fixed, so S takes a·R even in an image with no shared evidence. That is accepted for phase 1, so that masks are compared with baselines at matched area. D8 reports how often it happens.
-
-### 3.4 Optimisation (`cdea/decompose.py`)
-
-- **Machinery.** It reuses `allocate()`'s machinery from `cdea/_plan.py`:
-  - a Sinkhorn plan (I = 20, log domain);
-  - binary draws with a straight-through gradient;
-  - boundary offsets;
-  - a per-image sum loss and Adam;
-  - one generator seeded by the draw seed, never by the batch.
-- **Cost.** Each step deletes three inputs per image, one per player.
-- **Defaults** (`DecomposeConfig`):
-
-| Setting | Default | Ablation |
-|---|---|---|
-| steps | 100 | DA9 |
-| lr | 0.1 | |
-| init | `minsplit` | DA4 uniform, DA5 mean |
-| backend | Grad-CAM on ResNet-50, IG (blur baseline) on ViT | |
-| binary masks | on | DA6 off |
-| boundary shift | on | DA7 off |
-| draw seed | 0 | |
-| null | on | DA8 off |
-| independent | off | DA1 on |
-
-### 3.5 Initialisation: the min-split prior
-
-E is the per-class evidence of `_prior`, clamped at 0 and sum-normalised per class. With m = min(E_k, E_l) per cell:
-- θ_k = log(E_k − m + ε)
-- θ_l = log(E_l − m + ε)
+With m = o(r) on Ω:
+- θ_k = log(Ê_k − m + ε)
+- θ_l = log(Ê_l − m + ε)
 - θ_S = log(m + ε)
-- θ_∅ = log(1/R)
+- θ_∅ = log ε
 - ε = 1e-6
 
-Step 0 is therefore the gradcam_minsplit row on ResNet-50, so the gain from optimisation is measured directly. The projected step-0 plan is kept (`Decomposition.initial`) for D9.
+The hard plan at step 0 is the subtraction partition (section 5). So the gain over subtraction is measured directly.
 
-### 3.6 Output
+### 4.4 Optimisation (`cdea/decompose.py`)
 
-U_k, U_l and S are soft maps on the grid: 7×7 on ResNet-50, 14×14 on ViT. They are scored through `baselines.adapter.budget_or_floor`, like every other method.
+The machinery is unchanged:
+- Adam;
+- a per-image sum loss, so results do not depend on the chunk;
+- one generator seeded by the draw seed, never by the batch;
+- 100 steps, lr 0.1, and the v1 selection grid;
+- deletion by CDEA's blur.
 
-## 4. Comparators (`baselines/decomposition.py`)
+The null is computed once, before optimisation, and detached, for n = 0 … |Ω|. That costs N·|Ω| forward passes per image. On ViT-B/16 it is computed on a size grid and interpolated (open decision 9).
 
-**Min-split rule.** Every per-class method runs unmodified, and one split rule turns its two class maps into three. Clamp at 0, sum-normalise each map, then S = min(E_k, E_l), U_k = E_k − S, U_l = E_l − S. The split is applied at the method's own resolution.
+### 4.5 Output
 
-| Row | Per-class source | Status |
+The hard partition: each Ω cell takes the role with the largest final plan entry.
+
+### 4.6 Ablations
+
+| Label | Change |
+|---|---|
+| DA1 | Independent roles: a Bernoulli per role and cell, so roles may overlap |
+| DA3 | `gradient_partition` (section 5) |
+| DA4 | Uniform initialisation |
+| DA5 | Mean initialisation |
+| DA6 | Fractional plan, scored at its argmax |
+| DA7 | Fixed boundary |
+| DA8 | No null |
+| DA9 | Steps 25, 50, 200 |
+| DA10 | **Version 1**: fixed 5% budgets anywhere in the image. Shows what the change of question costs or gains |
+| DA2 | Open decision 4 |
+
+## 5. Comparators (`baselines/decomposition.py`)
+
+Every comparator divides the same Ω.
+
+**Rule rows.**
+1. A per-class method runs unmodified.
+2. Its two maps are sum-pooled to the grid, clamped at 0, sum-normalised, and split by min-split.
+3. Each Ω cell takes the largest of the three parts: U_k from Ê_k − m, U_l from Ê_l − m, S from m.
+
+Rules never label a cell ∅.
+
+| Row | Source | Status |
 |---|---|---|
-| gradcam_minsplit | The repo's Grad-CAM region provider, cross-checked against pytorch-grad-cam in G0. It is CDEA's own prior, so step 0 equals this row | Core |
-| ig_minsplit | Captum IntegratedGradients, zero baseline, right Riemann sum, channel sum, pixels | Core |
-| occlusion_minsplit | Captum `Occlusion`, window and stride of one cell, zero baseline | Core |
-| occlusion_assign | Exact assignment of single-cell occlusion scores (below) | Core |
-| margin_gradcam_ref | `margin_gradcam_pair`: U_k and U_l only, with no S. A construction, not a published method | Core (reference) |
-| random_decomp | Seeded cell scores | Core (floor) |
-| rise_minsplit | Vendored official RISE `class_maps` | Extended |
-| extremal_minsplit | TorchRay class masks at the scored area | Extended |
+| `subtract` | The reference evidence itself, through the rule. CDEA's step 0 | Core. The "before → after by subtraction" answer |
+| `ig_minsplit` | Captum IntegratedGradients, as v1 | Core |
+| `occlusion_minsplit` | Captum `Occlusion`, black, one cell, as v1 | Core |
+| `rise_minsplit`, `extremal_minsplit` | As v1 | Extended |
+| `occlusion_partition` | Ours. The single-cell blur drops g_{j,r} (excess over ν(1)) give cell scores s_k = g_k − \|g_l\|, s_l = g_l − \|g_k\|, s_S = min(g_k, g_l). A cell takes its best role if that score is > 0, else ∅. With free sizes this per-cell rule is the exact optimum of the additive objective, so no linear programme is needed | Core. Decides the framing |
+| `gradient_partition` | The same, with the first-order g of v1's `gradient_assign` | Ablation DA3 |
+| `margin_gradcam_ref` | The margin map on Ω: positive cells go to U_k, negative cells to U_l, with no S | Reference |
+| `random_partition` | Each Ω cell takes a seeded uniform role | Floor |
 
-**Assignment comparators.** These decide whether the joint search adds anything over additive per-cell scores.
-- **Cell scores.** Each cell gets scores from g_{j,r}:
-  - s_k = g_k − |g_l|
-  - s_l = g_l − |g_k|
-  - s_S = min(g_k, g_l)
-- **The assignment.** Maximise Σ A_{p,r} s_{p,r}, with every row summing to a·R and every column at most 1. This is solved exactly as a linear programme (HiGHS, per image).
-- **occlusion_assign.** g_{j,r} is the excess drop when cell r alone is blur-deleted, with the null at one cell. That costs R + 1 forward passes, plus the null's.
-- **gradient_assign** (ablation DA3). g_{j,r} = ⟨∇z_j, (x − b(x)) ⊙ φ_r⟩. Its null is the mean over cells, which is the first-order expectation of a one-cell deletion.
+Post-2021 rule rows are open decision 8.
 
-**Framing rule.** If occlusion_assign matches CDEA within the declared margin (`EVAL_PLAN.md` section 13), the contribution is the definition, the scores and the ground truth, and the method is the assignment.
+**Framing rule (unchanged in spirit).** If `occlusion_partition` matches CDEA within the declared margin (`EVAL_PLAN.md` 13.8), the contribution is the question, the scores and the ground truth, and the method is the per-cell partition.
 
-## 5. Scores (`evaluation/scores.py`)
+## 6. Scores (`evaluation/scores.py`)
 
-**The drop matrix.** `drop_matrix(model, x, masks (B, P, H, W), class_ids) → (B, P, K)` generalises `deletion_matrix`, which is now its transpose. Removal is ROAD (primary) or blur (robustness), with the seeds and offsets of the contrastive game.
+### 6.1 Masks and removal
+
+- A role's mask is its cells, whole: nearest upsampling to pixels. The shared top-a adapter is not used.
+- Removal is ROAD (primary) or blur (robustness), with v1's seeds and offsets.
+- **The scorer's null.** For every n that occurs in an image, the scorer computes ν^sc_j(n) and its 95th percentile q_j(n) over 32 seeded random n-cell masks from the whole grid. They are computed once per image and shared by every method.
+- Drops are recorded for three classes: k, l and m.
+
+### 6.2 Before
+
+Per image: O, |Ω|, and O_Ω = Σ_{r∈Ω} o(r), the overlap inside the region every method divides.
+
+### 6.3 After: scores per role
 
 | Score | Definition | Reads as |
 |---|---|---|
-| SPEC_k, SPEC_l | D[U_k, k] − D[U_k, l], and the mirror (raw drops) | Unique specificity. SPEC_k + SPEC_l = CD (tested) |
-| PUR_k, PUR_l | d̃_k(U_k) − \|d̃_l(U_k)\|, and the mirror | Unique purity, the decomposition's unique criterion |
+| PUR_k, PUR_l | d̃_k(U_k) − \|d̃_l(U_k)\|, and the mirror | Unique purity |
 | SV | min(d̃_k(S), d̃_l(S)) | Shared validity |
 | BAL | \|d̃_k(S) − d̃_l(S)\| | Shared balance, lower is better |
-| SEP | SV − max(min_j d̃_j(U_k), min_j d̃_j(U_l)) | Whether S is more shared than the unique masks |
+| PUR^cell, SV^cell | The same formulas applied to each cell of the role deleted alone, with ν(1), and summed. That needs \|Ω\| single-cell ROAD deletions per image, shared by every method | Versions that mixing and cancellation cannot inflate |
+| MIX | SV − SV^cell | Large when S is a mixture of unique cells, or holds redundant evidence. Section 6.4 tells the two apart |
+| Sizes | \|U_k\|, \|U_l\|, \|S\|, \|∅\| in cells | How much is shared |
 
-On planted pairs, `mask_patch_confusion` gives each mask's mass on {A_k, A_l, C, rest} (precision) and the share of each patch covered (recall).
+A score on an empty role is NaN, and empty roles are counted.
 
-Records hold the raw 3×2 matrix, the scorer's null, every score, and the patch confusion. CDEA rows also hold the D2/D9 stage payoffs.
+### 6.4 Confirmation of each role
 
-## 6. Ground truth: planted pairs (`evaluation/planted_cues.py`)
+- count_j(M) means d_j(M) > q_j(|M|).
+- U_k is confirmed when count_k holds and count_l does not. U_l is the mirror.
+- S is confirmed when count_k and count_l both hold.
+- ∅ is confirmed when neither holds.
 
-- **The pairs.** `PlantedPairCIFAR` uses the CIFAR-10 pairs cat/dog, automobile/truck and deer/horse.
-- **Training rule.**
-  - A_k is a solid patch in the hue of class k, and appears in class-k training images only.
-  - A_l is the same for class l.
-  - C is the pair's stripe texture (diagonal, anti-diagonal or horizontal, period 8 px). It appears in both classes.
-  - Each patch appears with probability 0.9. Other classes get no patches.
-- **Patches.** They are 32 px, exactly one 7×7 cell at 224, placed on the grid in cells that do not touch. Random placement is the robustness condition.
-- **Test images.** A pair-class val image carries all three patches. The sample keeps, in seeded draw order, the images whose model top 2 is the pair. It orders A_k and A_l by the model's rank and counts every image tried.
-- **Role check** (`verify_roles`).
-  - Each patch is ROAD-deleted alone.
-  - A drop counts when it exceeds the 95th percentile of 32 random patch-sized squares.
-  - A_k is confirmed when its k drop counts and its l drop does not. A_l is the mirror. C is confirmed when both drops count.
-  - Every image stays in the records with its role flags. The read-out reports all images and the confirmed ones.
-- **Checkpoints.** They use the planted-patch recipe: a fine-tune, `scripts/train_backbone.py --dataset planted_pair`. **They are not trained.** Training needs the user's approval.
+This is `verify_roles`' rule applied to the method's own roles.
 
-## 7. Degenerate routes (`scripts/check_degenerate.py`)
+**Mixture or redundancy.** For an S with MIX > 0, split its cells into two seeded halves and delete each half.
+- A mixture gives a half that counts for one class only.
+- Redundancy gives halves that count for neither class.
 
-- **D1, D5.** The marginals are within 1e-3, as before (asserted inside Sinkhorn).
-- **D2** (gate). The soft-plan payoff minus the hard top-a payoff, under blur, for all three players, is at most 0.5 on average.
-- **D8** (reported). The share of images with SV ≤ 0 under blur, meaning S found no shared evidence.
-- **D9** (reported). The share of images whose final top cells equal the step-0 plan's, meaning the optimiser did nothing.
-- **Trapped support** (reported, decision 5). The share of final top cells where the min-split prior was 0. ε stays 1e-6, and no new constant is added.
+### 6.5 The headline: how the overlap was resolved
 
-## 8. Decisions (user, 2026-10-14: "go with the recommendations")
+Of the overlap inside Ω, the share that ends in each verdict:
+- **shared, confirmed:** Σ_{r∈S} o(r) / O_Ω, when S is confirmed;
+- **unique, confirmed:** the same sum over U_k and U_l, each counted when it is confirmed;
+- **neither, confirmed:** the same sum over ∅, when ∅ is confirmed;
+- **unconfirmed:** the rest.
 
-| # | Decision | Taken |
+**VR (verified resolution) = 1 − unconfirmed.**
+
+The before/after figure shows, per method and per overlap tertile, O before and these four shares after. For the `subtract` row it reads: "the rule called this share of the overlap shared, and this part of it was confirmed".
+
+### 6.6 Pair-specificity and the third class
+
+| Quantity | Definition | Reads as |
 |---|---|---|
-| 1 | K | 2 for phase 1 |
-| 2 | Unique evidence | Excludes suppression of the rival (\|d̃_l\| penalty). Settles D3 |
-| 3 | Units | Logits |
-| 4 | Budget | Fixed per player, at matched area. A pooled budget is phase 2 |
-| 5 | Trapped support | No recommendation was given. Taken: keep ε = 1e-6, and report D9 and the outside-prior share. It adds no constant, and the 2026-10-13 diagnostic found trapping minor (CIFAR-10) to absent (ImageNet) |
-| 6 | Masks | Binary draws by default. DA6 (fractional) is reported |
-| 7 | Planted pairs | No recommendation was given. Three pairs are implemented (cat/dog, automobile/truck, deer/horse), with grid placement. Training was approved on 2026-10-14 (`PROGRESS.md`) |
-| 8 | Win conditions and non-inferiority margin | No recommendation was given. Drafted in `EVAL_PLAN.md` section 13, and signed off by the user on 2026-10-14 as drafted |
-| 9 | The old CDEA and CD | The old CDEA is ablation DA2. CD is reported as SPEC_k + SPEC_l. Neither is the headline |
+| GEN_S | d̃_m(S) | Small: the shared evidence is specific to the pair. Large: it is generic, for example "dog" |
+| PSV | SV − max(0, d̃_m(S)) | Shared validity, counting only the pair-specific part |
+| d̃_m(U_k), d̃_m(U_l) | Drop of the third class | Unique against l; also unique against m? |
+| K-sufficiency | Share of images with z_l − z_m below 0.5, 1 and 2 logits | A property of the data, not of a method. How often a pair is not the whole story |
 
-## 9. Implementation choices, and properties found while implementing
+### 6.7 Planted pairs
 
-- **Null masks.** The null uses `top_mass` on seeded uniform scores: whole top cells, with the last one fractional, which is the shape of a hard plan. `hard_top_mass` is not used, because it gives a diffuse fractional mask, (s − τ) clamped to [0, 1] spread over many cells.
-- **The scorer's null.** The scorer ranks the null cell scores through the shared adapter, so its masks look like the scored masks. `random_floor` is not used, because it ranks a constant field and its tie-break scatters single pixels.
-- **The helper move.** `_row_targets`, `_independent_masks` and `_player_logits` moved to `cdea/_plan.py` along with the four named helpers. `allocate()` is unchanged (`tests/test_plan_refactor.py`).
-- **The null on a model without deletion artefacts.**
-  - ν then also removes the expected evidence that a random mask hits.
-  - On a 4-cell toy with three evidence cells, this made the unique and shared cells tie. With 16 cells the toys behave as specified.
-  - On real models, ν is mostly the common-mode drop it is meant to remove, but the readout reports DA8 (no null) beside the default.
-- **Method code hash.** `method_code_hash` covers every file under `CODE_ROOTS`, so the merge changed it. The seed-0 chain's records (hash `9d84e7f2`) no longer match the tree. Comparing them needs the branch-point hash given explicitly (`--expect-hash`), or a rerun.
+- **Ω coverage.** The share of planted patch cells inside Ω. It is a property of the reference evidence and is the same for every method.
+- **Role accuracy RA.** For each planted patch (A_k, A_l, C), the share of its cells labelled with its role. RA is the mean over the three patches.
+  - In "RA, all", patch cells outside Ω count as wrong.
+  - In "RA, in Ω", they are excluded.
+- **Confusion.** A 3 × 5 table: patch × {U_k, U_l, S, ∅, outside Ω}.
 
-## 10. Tests
+### 6.8 Overlap strata
 
-- `tests/test_decomposition.py`:
-  - toys 1–3 (additive, suppression, interaction);
-  - payoff units and the null;
-  - chunk invariance and exact CUDA repeats;
-  - the assignment LP against brute force.
-- `tests/test_decomposition_scores.py`:
-  - SPEC_k + SPEC_l = CD;
-  - `drop_matrix` against `deletion_matrix`;
-  - score definitions and patch confusion;
-  - runner rows;
-  - planted-pair geometry and frequencies, and the role check.
-- `tests/test_plan_refactor.py`: the `allocate()` guard.
-- **The key test** is interaction toy 3. z_k needs either of two cells, so deleting one alone does nothing. Single-cell occlusion assignment misses the pair, and the joint search finds it. Without this toy, the method claim would have no basis.
+O tertiles per dataset. The cut points come from val and are frozen with the plan. "High overlap" is the top tertile.
+
+## 7. Ground truth: planted pairs (`evaluation/planted_cues.py`)
+
+Unchanged from v1: `PlantedPairCIFAR`, the three pairs, the training rule, grid placement, the sample rule and `verify_roles`. The checkpoints are v1's.
+
+One addition: report Ω coverage (6.7). A patch that the reference evidence misses cannot be labelled by any method, so it is a limit of the evidence, not of a method.
+
+## 8. Degenerate routes (`scripts/check_degenerate.py`)
+
+- **D2 (gate).** The soft-plan payoff minus the hard-partition payoff, under blur, is at most 0.5 on average.
+- **D8 (reported).** The share of images whose S is empty, and the share whose S is non-empty but not confirmed.
+- **D9 (reported).** The share of images whose final partition equals step 0, the subtraction rule.
+- **MIX (reported).** Its distribution per method, with the split-half verdicts (6.4).
+- **Trapped roles (reported).** The share of final labels whose initial logit was log ε, for example S where m = 0.
+- D1 and D5, the Sinkhorn marginals, no longer apply: exclusivity holds by construction.
+
+## 9. Tests (written with the implementation)
+
+- Ω construction: ρ and ties.
+- **Toy 1, additive.** Sizes are free. `subtract`, `occlusion_partition` and CDEA all return U_k = {1}, U_l = {2}, S = {3}, ∅ = {4}.
+- **Toy 2, suppression.** As v1.
+- **Toy 3, redundancy.** The pair {a, b} belongs in U_k. `occlusion_partition` misses it, because each cell alone is below a random cell. CDEA finds it. This is the key test, as in v1.
+- **Toy 4, mixing (new).** There is no shared cell, so S must stay empty, or MIX and the split halves must flag it.
+- **Toy 5, co-location (new).** One cell carries a k-only and an l-only feature. Every method that labels image cells calls it S. The test documents the limit in section 10.
+- The size-matched null, chunk invariance, exclusive categorical draws, the score definitions, and the confirmation rule against `verify_roles`.
+
+## 10. Limits and what lies outside the method
+
+- **Co-located features (case 4).** No partition of image cells can split them. At ResNet-50's last layer an exact split exists by channel: unit (r, c) contributes w_kc·A_rc/49 to z_k and w_lc·A_rc/49 to z_l. The **co-location share** compares two totals:
+  - shared evidence computed per position, Σ_r min(c_k(r), c_l(r));
+  - the same computed per position and channel, Σ_{r,c} min(·).
+
+  The share is the gap between them divided by the first. It measures how much "shared" evidence is really unique evidence in the same place. It is a planned descriptive measurement (open decision 10), not part of the method.
+- **Redundancy is the only reason for a search.** At ResNet-50's head, contributions add up exactly, so non-additivity can only come from the convolutional trunk. Measure it with the pairwise interaction I(a, b) = d({a, b}) − d(a) − d(b) on the top Ω cells (open decision 10).
+- **K = 2** (section 2). A K-class version would give each class subset T a role, with u_T = min_{j∈T} d̃_j − Σ_{j∉T} |d̃_j|. Unique evidence is the case |T| = 1. The v2 S is u_{k,l} without the outside penalty, which section 6.6 measures instead.
+- **The answer is relative to the reference evidence.** Ω comes from Grad-CAM (ResNet-50) or IG (ViT-B/16).
+
+## 11. Changes from v1
+
+| Aspect | v1 (tag `decomp-declared`) | v2 | Why |
+|---|---|---|---|
+| Question | Three fixed-size regions anywhere in the image | A partition of the evidence region Ω | The original goal: divide the overlapping evidence |
+| Sizes | a·R cells per player | Free; S may be empty | "How much is shared" becomes an answer |
+| Roles | 3 | 4 (∅ added) | Evidence cells may serve neither class |
+| Null | ν(a) at one area | ν(n) at each role's size, from the whole grid | Free sizes |
+| Plan | Sinkhorn with row budgets | A softmax per cell | No budgets |
+| Scored masks | The top-a adapter at matched area | Whole cells, no adapter | A partition is already a set of masks |
+| Scores | SPEC, PUR, SV, BAL, SEP, RR@2.5% | O and O_Ω before; per-role scores with the size-matched null; cell-level scores; MIX; confirmations; VR and the resolution shares; the third class; RA | Measure overlap before and verified separation after, and expose mixing |
+| SPEC and CD | CD reported as SPEC_k + SPEC_l | Not reported | They compare masks of different sizes |
+| Third class | Not scored | m is scored | Pair-specific or generic S; how often K = 2 falls short |
+| Additive comparator | `occlusion_assign` (a budgeted linear programme) | `occlusion_partition` (best role per cell) | No budgets |
+| v1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
+
+Carried over from v1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). v1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
+
+## 12. Open decisions
+
+| # | Decision | Proposed |
+|---|---|---|
+| 1 | ρ for Ω | 0.5, with 0.3 and 0.7 reported |
+| 2 | Reference evidence | Grad-CAM on ResNet-50 and IG on ViT-B/16. IG on ResNet-50 as a robustness row |
+| 3 | Mixing in S | Report MIX and the split halves. Add a penalty only if the dev read shows mixing |
+| 4 | DA2, the contrast game | Drop it from v2. It keeps fixed budgets, so it cannot divide Ω |
+| 5 | Primary natural-image metric | VR on the top overlap tertile. PUR + SV with the size-matched null as the secondary |
+| 6 | Strata | O tertiles per dataset, cut on val |
+| 7 | DA10 (v1 as an ablation) | Keep |
+| 8 | Post-2021 rule rows | Chefer min-split on ViT-B/16 (its class maps exist). AttnLRP if time allows |
+| 9 | ViT-B/16 null cost | A size grid with linear interpolation |
+| 10 | Descriptive measurements outside the method | Run the co-location share and the pairwise interaction on dev val first. Both bear on the framing |
+| 11 | Sign-off | v2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any v2 number is read |
