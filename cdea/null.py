@@ -12,6 +12,7 @@ same cell scores (``null_unit_scores``).
 
 from __future__ import annotations
 
+import math
 from typing import Callable, Optional
 
 import torch
@@ -82,12 +83,18 @@ def size_masks(units: int, sizes, n: int = N_NULL, seed: int = NULL_SEED) -> tor
     return masks
 
 
-def null_size_grid(top: int) -> list[int]:
+def null_size_grid(top: int, units: int) -> list[int]:
     """Sizes at which the ViT-B/16 null is measured, then interpolated (open decision 9).
 
-    Every size up to 8, then every 4th, and the top size.
+    Every size up to 8, then every 4th up to the first one at or past ``top``
+    (at most ``units``). The points below an image's largest size do not
+    depend on the batch's ``top``, so neither does its null.
     """
-    return sorted(set(range(min(top, 8) + 1)) | set(range(8, top + 1, 4)) | {int(top)})
+    grid = set(range(min(int(top), 8) + 1))
+    if top > 8:
+        last = min(int(units), 4 * math.ceil(top / 4))
+        grid |= set(range(12, last + 1, 4)) | {last}
+    return sorted(grid)
 
 
 def size_null(
@@ -104,13 +111,14 @@ def size_null(
 ) -> torch.Tensor:
     """``(B, J, top + 1)`` table of ``nu_j(s)`` for ``s = 0 .. top``, under blur deletion. Detached.
 
-    ``sizes`` measures only those sizes (0 and ``top`` included) and fills the
-    rest by linear interpolation; ``None`` measures every size.
+    ``sizes`` measures only those sizes (0 included; they must reach ``top``)
+    and fills the rest by linear interpolation; ``None`` measures every size.
     """
     edit = edit or (lambda images, mask: delete(images, mask, grid_h, grid_w))
     units = grid_h * grid_w
-    measured = list(range(top + 1)) if sizes is None else sorted(set(sizes) | {0, int(top)})
-    measured = [s for s in measured if s <= top]
+    measured = list(range(top + 1)) if sizes is None else sorted({int(s) for s in sizes} | {0})
+    if measured[-1] < top:
+        raise ValueError("the measured sizes must reach the largest size")
     masks = size_masks(units, measured, n, seed).to(device=x.device, dtype=x.dtype)
     ids = ids.long()
     batch = x.shape[0]
@@ -124,7 +132,7 @@ def size_null(
             flat = masks[index].repeat_interleave(batch, dim=0)
             deleted = model(edit(images, flat)).gather(1, ids.repeat(n, 1))
             values[..., index] = (full.repeat(n, 1) - deleted).view(n, batch, -1).mean(dim=0)
-    if len(measured) == top + 1:
+    if measured == list(range(top + 1)):
         return values.detach()
     grid = torch.tensor(measured, dtype=x.dtype, device=x.device)
     return interpolate_sizes(values, grid, top).detach()
