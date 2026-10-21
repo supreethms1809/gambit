@@ -13,7 +13,7 @@ percentile bootstrap intervals over images, and the 13.7 selection.
 Only rows whose ``method_code_hash`` matches the tree count, unless
 ``--any-hash``. Fast-knob rows never count unless ``--fast``.
 
-    PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/v2_local/cells
+    PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/partition_local/cells
 """
 
 from __future__ import annotations

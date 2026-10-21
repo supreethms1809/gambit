@@ -8,7 +8,7 @@ Forward passes and the reference evidence only.
 
     PYTHONPATH=. python scripts/decomp_descriptive.py --dataset cifar10 --n 64 \\
         --checkpoint results/paper/smoke_checkpoints/cifar10_resnet50_pt_lp_ep15_lr0.001_imagenet_seed0.pt \\
-        --out results/paper/smoke/v2_local/descriptive
+        --out results/paper/smoke/partition_local/descriptive
 """
 
 from __future__ import annotations

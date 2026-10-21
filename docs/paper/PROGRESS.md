@@ -218,13 +218,13 @@ Not part of this plan unless reopened:
   - **The ∅ rule.** ∅ is now confirmed by an absence test. The old rule is kept as `vr_lenient`.
   - **The polish.** CDEA's search is now followed by a discrete polish. DA11 is the search alone; DA12 is the polish alone.
   - The original-spec HAM10000 cell was stopped before it wrote records. So no HAM10000 method row was read before the fixes.
-  - Records: `results/paper/smoke/v2_local/cells_fixed/val/partition/{cifar10,ham10000}/resnet50/seed0`, in the worktree `.claude/worktrees/decomp-v2`, not under `main`. Same command as below, plus DA11 and DA12.
-  - Read with `PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/v2_local/cells_fixed`, with `--operator road` and `--operator blur`.
+  - Records: `results/paper/smoke/partition_local/cells_fixed/val/partition/{cifar10,ham10000}/resnet50/seed0`, in the branch's worktree under `.claude/worktrees/`, not under `main`. Same command as below, plus DA11 and DA12.
+  - Read with `PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/partition_local/cells_fixed`, with `--operator road` and `--operator blur`.
   - The read is summarised in the session that ran it. Its open questions are open decision 9.
-- **2026-10-20, version 2 implemented and read locally.** Branch `paper/decomp-partition`, worktree `.claude/worktrees/decomp-v2`. The user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
+- **2026-10-20, version 2 implemented and read locally.** Branch `paper/decomp-partition`, in its own worktree under `.claude/worktrees/`. The user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
   - Checkpoints: the local linear probes, `results/paper/smoke_checkpoints/{cifar10,ham10000}_resnet50_pt_lp_ep15_lr0.001_imagenet_seed0.pt`, via `--model-source checkpoint`. `--model-source smoke` is an ImageNet backbone with a random head. A first descriptive read used it by mistake, and was discarded.
-  - Descriptive (R2): `PYTHONPATH=. python scripts/decomp_descriptive.py --dataset {cifar10,ham10000} --n 64 --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/v2_local/descriptive`.
-  - Cells: `PYTHONPATH=. python scripts/paper_run.py --game partition --dataset {cifar10,ham10000} --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/v2_local/cells --image-batch 8`. Only CIFAR-10 finished and was read; it led to the fixes above.
+  - Descriptive (R2): `PYTHONPATH=. python scripts/decomp_descriptive.py --dataset {cifar10,ham10000} --n 64 --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/partition_local/descriptive`.
+  - Cells: `PYTHONPATH=. python scripts/paper_run.py --game partition --dataset {cifar10,ham10000} --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/partition_local/cells --image-batch 8`. Only CIFAR-10 finished and was read; it led to the fixes above.
   - Formulation section 13 lists the implementation's choices and its disagreements with the text. That includes the straight-through drift below step 0 that led to the polish.
   - Version tokens are banned in code and `docs/paper` (`tests/test_scope.py`). The game is therefore `--game partition`, and the draft documents say "version 1" and "version 2".
 
