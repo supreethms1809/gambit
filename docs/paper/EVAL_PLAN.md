@@ -415,14 +415,22 @@ Then add a line reading `frozen: true` at the top of this file, commit, and tag 
 
 **2026-10-20, re-scoped (DRAFT, not signed off).** The user re-scoped the decomposition to its original question: divide the overlapping per-class evidence, and check every label against the model (`FORMULATION_DECOMPOSITION.md` version 2).
 - 13.1–13.4 describe version 1. They stay as written, for the record.
-- version 2's claims and tests are 13.5–13.8, a draft. No version 2 number is read before the user signs off version 2 and 13.5–13.8 together.
+- Version 2's claims and tests are 13.5–13.8, a draft. No version 2 number is read before the user signs off version 2 and 13.5–13.8 together.
 
 Disclosures for version 2:
-- version 1 dev-val records were read before version 2 was written. That includes:
+- Version 1 dev-val records were read before version 2 was written. That includes:
   - the user's limited runs, in which `occlusion_minsplit` and `occlusion_assign` scored ahead of CDEA on PUR + SV;
   - one Stanford Dogs drop matrix.
 - The archived results of the first formulation (`results/medical_presentation/`, `results/paper_rerun/`) were read again.
-- version 2 was designed after these reads. Its new metrics (13.6) did not exist when they were made.
+- Version 2 was designed after these reads. Its new metrics (13.6) did not exist when they were made.
+- The test split was not read.
+
+**2026-10-20, a local read before the sign-off.** At the user's request, version 2 was implemented (branch `paper/decomp-partition`) and run on dev val on the Mac, before 13.5–13.8 were signed off.
+- **Checkpoints.** The local linear-probe ResNet-50s (`results/paper/smoke_checkpoints`, CIFAR-10 and HAM10000, seed 0), not the paper checkpoints.
+- **What was read.**
+  - the descriptive measurements of plan R2;
+  - the version 2 cells, n = 64 per dataset: the core rows, the 13.7 grid, DA3, DA8 and DA10.
+- **Not run.** The planted pairs: there is no local planted-pair checkpoint.
 - The test split was not read.
 
 ### 13.1 Claims

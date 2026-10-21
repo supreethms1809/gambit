@@ -16,7 +16,7 @@ Results are not typed here. Name the command and the records it read.
 
 On the GH200:
 - **First, read open decision 9 (version 2 re-scope).**
-  - If the user has signed off version 2, hold the decomposition phases (`dev`, `planted-val`, `natural-val`). version 1 records will not match the version 2 hash.
+  - If the user has signed off version 2, hold the decomposition phases (`dev`, `planted-val`, `natural-val`). Version 1 records will not match the version 2 hash.
   - The shift phases are unaffected.
 0. The 2026-10-20 review fixes and the B7 review's fixes (log) moved the method hash to `d69b1ac6` and the knobs hash to `38f5d7c0`. No earlier record counts. ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
 1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
@@ -185,7 +185,7 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 7. **RISE mask count.** The harness runs 4000 masks with the val grid {2000, 4000}. That is the RISE paper's VGG-16 count; its ResNet-50 setting is 8000 (`BASELINES.md`). Either add 8000 to the grid or keep 4000 and say so in the paper.
 8. **The adapter floor is scattered pixels.** `baselines.adapter.random_floor`, used for failed rows and constant maps, ranks a map of ones, so every pixel ties and the tie-break picks scattered pixels, not cells. ROAD fills scattered pixels far better than a cell (mean fill error 0.032 against 0.104 at 5%), so a floored row likely drops less than the cell-shaped null and scores below chance. Either draw it from seeded cell scores, as the floor methods and the null do, or keep it and report the floored share (both read-outs print it).
 
-9. **version 2 re-scope (2026-10-20).** The decomposition's question was re-scoped (`FORMULATION_DECOMPOSITION.md` version 2):
+9. **Version 2 re-scope (2026-10-20).** The decomposition's question was re-scoped (`FORMULATION_DECOMPOSITION.md` version 2):
    - divide the evidence region Ω with free role sizes;
    - measure the overlap before and the verified separation after;
    - keep K = 2, and score the third class.

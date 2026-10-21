@@ -1,8 +1,8 @@
 # CDEA decomposition formulation
 
-**Status (2026-10-20).** Version 2, **DRAFT**. Not implemented, not signed off.
-- The code in `cdea/decompose.py` implements version 1. Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4.
-- Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both.
+**Status (2026-10-20).** Version 2, **DRAFT**. Implemented on branch `paper/decomp-partition` (section 13). Not signed off.
+- On `main`, `cdea/decompose.py` implements version 1 (`decompose`). Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4. The branch adds version 2 (`partition`) beside it.
+- Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both. On 2026-10-20 the user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
 - Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
 
 The contrast game (`FORMULATION.md`) stays in the code unchanged. Its role in version 2 is open decision 4.
@@ -285,7 +285,7 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 
 ## 11. Changes from version 1
 
-| Aspect | version 1 (tag `decomp-declared`) | version 2 | Why |
+| Aspect | Version 1 (tag `decomp-declared`) | Version 2 | Why |
 |---|---|---|---|
 | Question | Three fixed-size regions anywhere in the image | A partition of the evidence region Ω | The original goal: divide the overlapping evidence |
 | Sizes | a·R cells per player | Free; S may be empty | "How much is shared" becomes an answer |
@@ -297,9 +297,9 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 | SPEC and CD | CD reported as SPEC_k + SPEC_l | Not reported | They compare masks of different sizes |
 | Third class | Not scored | m is scored | Pair-specific or generic S; how often K = 2 falls short |
 | Additive comparator | `occlusion_assign` (a budgeted linear programme) | `occlusion_partition` (best role per cell) | No budgets |
-| version 1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
+| Version 1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
 
-Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
+Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). Version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
 
 ## 12. Open decisions
 
@@ -315,4 +315,42 @@ Carried over from version 1's decisions (2026-10-14): logits as units (3), the s
 | 8 | Post-2021 rule rows | Chefer min-split on ViT-B/16 (its class maps exist). AttnLRP if time allows |
 | 9 | ViT-B/16 null cost | A size grid with linear interpolation |
 | 10 | Descriptive measurements outside the method | Run the co-location share and the pairwise interaction on dev val first. Both bear on the framing |
-| 11 | Sign-off | version 2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any version 2 number is read |
+| 11 | Sign-off | Version 2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any version 2 number is read |
+
+## 13. Implementation notes (2026-10-20, branch `paper/decomp-partition`)
+
+The code follows sections 3 to 9 except where noted here.
+- **Method.** `cdea/region.py` (Ω and the rule), `cdea/null.py` (`size_null`) and `cdea/decompose.py` (`partition`).
+- **Comparators.** `baselines/decomposition.py`.
+- **Scores.** `evaluation/scores.py` (`partition_scores`).
+- **Runner and readouts.** `evaluation/run_partition.py` (`paper_run.py --game partition`), `scripts/partition_readout.py` and `scripts/decomp_descriptive.py`.
+- **Tests.** `tests/test_partition.py`.
+
+Choices the text leaves open:
+- **Null masks.** Row i's n-cell mask is the top n cells of seeded score row i, so the masks of one row are nested in n. CDEA's null (N = 8) is measured under blur. The scorer's (32 masks) is measured under each scoring operator, for each image only at the sizes its roles and halves need.
+- **Entry threshold.** ν is linear between whole sizes. Its gradient in a role's size is the step to the next size.
+- **An empty role** pays −ε_s (1e-3) in the smoothed payoff, not 0, so the gradient through the deletion survives.
+- **Split halves.** One seeded permutation of the role's cells, the first half the larger. The verdicts are:
+  - mixture: a half counts for one class only;
+  - redundant: neither half counts;
+  - shared: both halves count for both;
+  - unclear: anything else.
+- **Overlapping roles (DA1).** VR counts a cell once, in the first confirmed role of S, U_k, U_l, ∅.
+- **DA10.** Each version 1 player takes its round(a·R) cells of largest plan mass (2 at 5% on 7×7), with no cell taken twice. Read by argmax instead, version 1's plan leaves almost every cell unallocated.
+- **`margin_gradcam_ref`.** pytorch-grad-cam clamps and rescales each map, so the sign is read from the two margin maps, of z_k − z_l and of z_l − z_k.
+- **Rule rows** pool the raw class maps to the grid before they clamp (section 5, step 2).
+
+Where the text and the implementation disagree:
+- **Toy 1** asks `subtract` for ∅ = {4}. Rules never label ∅, and a cell with no evidence lies outside Ω. The test sets ρ = 1, so Ω holds the three evidence cells.
+  - An added artefact toy covers ∅: evidence on a cell whose deletion changes nothing.
+  - `occlusion_partition` and CDEA label that cell ∅; `subtract` labels it U_k.
+- **The straight-through search can end below its own step 0.** Two strict xfails record it.
+  - With the whole-grid null, a pure U_k has d̃_l = −ν_l < 0. There |d̃_l| has slope −1, so to first order l-evidence looks like a gain for U_k.
+  - On toy 1 at lr 0.1 the shared cell moves to U_k, and the hard welfare falls from 2.625 at step 0 to 2.0.
+  - On toy 5 the co-located cell moves to U_l.
+  - The cells record the blur welfare of the hard partition at step 0 and at the end (`payoff_init_*`, `payoff_hard_*`).
+- **Toy 4.** With no shared cell, CDEA parks a weak k cell in S.
+  - S and ∅ both start at log ε, and Adam moves both alike.
+  - That S has one cell, so neither MIX nor the halves can flag it. The scorer does not confirm it (D8).
+- **Co-location share.** As written, P nets each position's channels before the min. On the dev models it falls far below 0, because Q is several times P. A positive-part version, in [0, 1], is reported beside it (`evaluation/descriptive.py`).
+
