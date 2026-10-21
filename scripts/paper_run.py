@@ -5,9 +5,13 @@ dataset × backbone × seed, scored as EVAL_PLAN.md defines, written as records.
     PYTHONPATH=. python scripts/paper_run.py --game contrastive --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 200 --methods all --ablations all
 
-    # decomposition (FORMULATION_DECOMPOSITION.md), three areas
+    # decomposition version 1 (tag decomp-declared), three areas
     PYTHONPATH=. python scripts/paper_run.py --game decomposition --dataset cifar10 \\
         --backbone resnet50 --seed 0 --split val --n 64 --areas 0.025,0.05,0.1
+
+    # decomposition version 2 (FORMULATION_DECOMPOSITION.md v2): a partition of Omega, no areas
+    PYTHONPATH=. python scripts/paper_run.py --game decomposition_v2 --dataset cifar10 \\
+        --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all
 
 ``--split test`` is refused until EVAL_PLAN.md is frozen and ``--final`` and
 ``--config-hash`` are given; ``--final`` also refuses a dirty tree.
@@ -33,6 +37,10 @@ from evaluation.run_methods import (  # noqa: E402
     DECOMP_CORE,
     DECOMP_EXTENDED,
     FAST,
+    PARTITION_ABLATIONS,
+    PARTITION_CANDIDATES,
+    PARTITION_CORE,
+    PARTITION_EXTENDED,
     SHIFT_ABLATIONS,
     SHIFT_CANDIDATES,
     SHIFT_CORE,
@@ -58,7 +66,7 @@ def _list(value: str, every: tuple, core: tuple = ()) -> list[str]:
 
 def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--game", choices=["contrastive", "shift", "decomposition"], required=True)
+    p.add_argument("--game", choices=["contrastive", "shift", "decomposition", "decomposition_v2"], required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--seed", type=int, default=0)
@@ -94,12 +102,18 @@ def spec_from_args(args):
         methods = _list(args.methods, DECOMP_CORE + DECOMP_EXTENDED, DECOMP_CORE)
         ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
         candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
+    elif args.game == "decomposition_v2":
+        methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED, PARTITION_CORE)
+        ablations = _list(args.ablations, tuple(PARTITION_ABLATIONS))
+        candidates = _list(args.candidates, tuple(PARTITION_CANDIDATES))
+        if not args.backbone.startswith("vit") and "chefer_minsplit" in methods:
+            methods.remove("chefer_minsplit")   # Chefer is ViT only (open decision 8)
     else:
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
     operators = tuple(o.strip() for o in args.operators.split(","))
-    if args.game != "decomposition":
+    if args.game not in {"decomposition", "decomposition_v2"}:
         candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
     if args.backbone != "resnet50":
         for resnet_only in ("cve", "sc_cve"):
@@ -121,6 +135,7 @@ def run(spec, device_name: str = "auto"):
     from core.device import get_device
     from core.reporting import refuse_final_if_dirty
     from evaluation.run_cell import records_root, run_contrastive, run_decomposition, run_shift
+    from evaluation.run_partition import GAME, run_partition
 
     refuse_final_if_dirty(spec.final)
     records_root(spec)
@@ -134,6 +149,8 @@ def run(spec, device_name: str = "auto"):
         return run_shift(spec, device)
     if spec.game == "decomposition":
         return run_decomposition(spec, device)
+    if spec.game == GAME:
+        return run_partition(spec, device)
     return run_contrastive(spec, device)
 
 
