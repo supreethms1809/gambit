@@ -1045,3 +1045,214 @@ def decomposition_method(name: str):
         "rise_minsplit": rise_minsplit,
         "extremal_minsplit": extremal_minsplit,
     }[name]
+
+
+# ---------------------------------------------------------------------------
+# Decomposition version 2 (FORMULATION_DECOMPOSITION.md version 2). Every method
+# divides the same evidence region Omega of the pair (rank 0, rank 1) into the
+# roles U_k, U_l, S and empty. Omega and the reference evidence are computed
+# once per batch (``PartitionContext``) and passed to every method.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PartitionContext:
+    evidence: torch.Tensor                    # (B, 2, R) normalised reference evidence
+    omega: torch.Tensor                       # (B, R) bool
+    rows: list                                # sample positions of the batch
+    grid: tuple[int, int]
+
+
+@dataclass
+class PartitionMaps:
+    roles: torch.Tensor                       # (B, 4, R) bool: U_k, U_l, S, empty
+    extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class PartitionRunConfig:
+    """One version-2 CDEA configuration. Defaults are FORMULATION_DECOMPOSITION.md version 2 section 4."""
+
+    lr: float = 0.1
+    steps: Optional[int] = None        # None: Knobs.cdea_steps
+    init: str = "subtract"             # subtract | mean (DA5) | uniform (DA4)
+    binary_masks: bool = True
+    boundary_shift: bool = True
+    draw_seed: int = 0
+    null: bool = True
+    independent: bool = False
+    polish: bool = True                # False is ablation DA11
+    kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
+
+
+PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig]] = {
+    "DA1_independent": lambda c: replace(c, independent=True),
+    "DA3_gradient_partition": lambda c: replace(c, kind="gradient_partition"),
+    "DA4_uniform_init": lambda c: replace(c, init="uniform"),
+    "DA5_mean_init": lambda c: replace(c, init="mean"),
+    "DA6_fractional": lambda c: replace(c, binary_masks=False),
+    "DA7_fixed_boundary": lambda c: replace(c, boundary_shift=False),
+    "DA8_no_null": lambda c: replace(c, null=False),
+    "DA9_steps_25": lambda c: replace(c, steps=25),
+    "DA9_steps_50": lambda c: replace(c, steps=50),
+    "DA9_steps_200": lambda c: replace(c, steps=200),
+    "DA10_fixed_budgets": lambda c: replace(c, kind="fixed_budgets"),
+    # The optimiser (section 4.4): the straight-through search alone, and the polish alone from step 0.
+    "DA11_no_polish": lambda c: replace(c, polish=False),
+    "DA12_polish_only": lambda c: replace(c, steps=0),
+}
+
+# Val selection grid (EVAL_PLAN.md 13.7): 13.3's steps and lr.
+PARTITION_CANDIDATES: dict[str, PartitionRunConfig] = {
+    f"cdea@lr{lr:g}_t{steps}": PartitionRunConfig(lr=lr, steps=steps)
+    for steps in (50, 100) for lr in (0.05, 0.2)
+}
+
+PARTITION_CORE = ("cdea", "subtract", "ig_minsplit", "occlusion_minsplit", "occlusion_partition",
+                  "margin_gradcam_ref", "random_partition")
+PARTITION_EXTENDED = ("rise_minsplit", "extremal_minsplit", "chefer_minsplit")
+# Area of the per-class masks Extremal optimises before the rule splits them, and of version 1's budgets (DA10).
+PARTITION_AREA = 0.05
+
+
+def _labels_maps(labels: torch.Tensor, **extra) -> PartitionMaps:
+    from cdea.region import roles_from_labels
+
+    return PartitionMaps(roles=roles_from_labels(labels), extra=extra)
+
+
+def partition_reference(model, x, h, backbone, knobs) -> torch.Tensor:
+    """``(B, 2, R)`` the reference evidence of section 3.1: Grad-CAM on ResNet-50, IG (blur baseline) on ViT."""
+    from cdea.decompose import reference_evidence
+
+    gh, gw = grid_of(backbone)
+    pair = HypothesisSet(ids=h.ids[:, :2], mask=h.mask[:, :2])
+    return reference_evidence(model, x, pair, gh, gw, default_backend(backbone), knobs.ig_steps)
+
+
+def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
+                   cfg: Optional[PartitionRunConfig] = None) -> PartitionMaps:
+    cfg = cfg or PartitionRunConfig()
+    gh, gw = ctx.grid
+    if cfg.kind == "gradient_partition":
+        from baselines.decomposition import gradient_partition
+
+        return _labels_maps(gradient_partition(model, x, h.ids, gh, gw, ctx.omega))
+    if cfg.kind == "fixed_budgets":
+        from cdea.decompose import DecomposeConfig, decompose, budget_roles
+
+        steps = knobs.cdea_steps if cfg.steps is None else int(cfg.steps)
+        out = decompose(model, x, h, gh, gw, PARTITION_AREA,
+                        DecomposeConfig(steps=steps, backend=default_backend(backbone), ig_steps=knobs.ig_steps))
+        return PartitionMaps(roles=budget_roles(out, ctx.omega, PARTITION_AREA))
+    if cfg.kind != "partition":
+        raise ValueError(f"unknown kind {cfg.kind!r}")
+    from cdea.decompose import PartitionConfig, partition
+
+    resolved = PartitionConfig(
+        steps=knobs.cdea_steps if cfg.steps is None else int(cfg.steps),
+        lr=float(cfg.lr),
+        init=cfg.init,
+        backend=default_backend(backbone),
+        ig_steps=knobs.ig_steps,
+        binary_masks=cfg.binary_masks,
+        boundary_shift=cfg.boundary_shift,
+        draw_seed=cfg.draw_seed,
+        null=cfg.null,
+        null_grid=backbone.startswith("vit"),
+        independent=cfg.independent,
+        polish=cfg.polish,
+    )
+    out = partition(model, x, h, gh, gw, resolved, evidence=ctx.evidence)
+    return PartitionMaps(roles=out.roles, extra={"partition": out})
+
+
+def subtract_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    """The reference evidence through the rule: CDEA's step 0."""
+    from cdea.region import rule_labels, rule_parts
+
+    return _labels_maps(rule_labels(rule_parts(ctx.evidence), ctx.omega))
+
+
+def ig_minsplit_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    from baselines.decomposition import captum_ig, rule_partition
+
+    steps = max(2, knobs.ig_steps)
+    maps = [captum_ig(model, x, h.ids[:, j], steps) for j in (0, 1)]
+    return _labels_maps(rule_partition(maps[0], maps[1], ctx.omega, *ctx.grid))
+
+
+def occlusion_minsplit_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    from baselines.decomposition import captum_occlusion, rule_partition
+
+    maps = [captum_occlusion(model, x, h.ids[:, j], *ctx.grid) for j in (0, 1)]
+    return _labels_maps(rule_partition(maps[0], maps[1], ctx.omega, *ctx.grid))
+
+
+def rise_minsplit_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext, seed: int = 0) -> PartitionMaps:
+    from baselines.decomposition import rule_partition
+    from baselines.rise import class_maps
+
+    kw = dict(n_masks=knobs.rise_masks, s=knobs.rise_cell, seed=seed)
+    maps = [torch.stack([class_maps(model, x[i:i + 1], int(h.ids[i, j]), **kw)[0] for i in range(x.shape[0])])
+            for j in (0, 1)]
+    return _labels_maps(rule_partition(maps[0], maps[1], ctx.omega, *ctx.grid))
+
+
+def extremal_minsplit_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    from baselines.decomposition import rule_partition
+
+    pair = extremal_class_pair(model, x, h, backbone, knobs, device, area=PARTITION_AREA)
+    return _labels_maps(rule_partition(pair.k, pair.l, ctx.omega, *ctx.grid))
+
+
+def chefer_minsplit_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    """Open decision 8: Chefer's class maps (ViT-B/16) through the rule."""
+    from baselines.decomposition import rule_partition
+
+    if not backbone.startswith("vit"):
+        raise ValueError("Chefer's relevance is ViT only")
+    pair = chefer_class_pair(model, x, h, backbone, knobs, device)
+    return _labels_maps(rule_partition(pair.k, pair.l, ctx.omega, *ctx.grid))
+
+
+def occlusion_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    from baselines.decomposition import occlusion_partition
+
+    return _labels_maps(occlusion_partition(model, x, h.ids, *ctx.grid, ctx.omega))
+
+
+def margin_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    """Reference row: the sign of the margin map on Omega. No S.
+
+    pytorch-grad-cam clamps and rescales each map, so the sign is read from
+    the two margin maps, of z_k - z_l and of z_l - z_k.
+    """
+    from baselines.decomposition import grid_evidence, margin_partition
+
+    pair = margin_gradcam_pair(model, x, h, backbone, knobs, device)
+    signed = grid_evidence(pair.k, *ctx.grid) - grid_evidence(pair.l, *ctx.grid)
+    return _labels_maps(margin_partition(signed, ctx.omega, *ctx.grid))
+
+
+def random_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext, seed: int = 0) -> PartitionMaps:
+    from baselines.decomposition import random_partition
+
+    return _labels_maps(random_partition(ctx.omega, list(ctx.rows), floor_generator(seed)))
+
+
+PARTITION_SEEDED = {"random_partition", "rise_minsplit"}
+
+
+def partition_method(name: str):
+    return {
+        "cdea": cdea_partition,
+        "subtract": subtract_partition,
+        "ig_minsplit": ig_minsplit_partition,
+        "occlusion_minsplit": occlusion_minsplit_partition,
+        "occlusion_partition": occlusion_partition_maps,
+        "margin_gradcam_ref": margin_partition_maps,
+        "random_partition": random_partition_maps,
+        "rise_minsplit": rise_minsplit_partition,
+        "extremal_minsplit": extremal_minsplit_partition,
+        "chefer_minsplit": chefer_minsplit_partition,
+    }[name]

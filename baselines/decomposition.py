@@ -17,6 +17,18 @@ allocation of three a·R budgets to exclusive cells as a linear programme:
 
 If occlusion_assign matches CDEA, the joint search adds nothing over additive
 per-cell scores, and the paper's method is the assignment.
+
+Version 2 (FORMULATION_DECOMPOSITION.md section 5) divides the evidence region
+Omega instead, with free role sizes:
+
+    rule rows          the two class maps sum-pooled to the grid, clamped,
+                       sum-normalised; each Omega cell takes the largest of
+                       E_k - m, E_l - m and m (``cdea.region.rule_labels``)
+    occlusion_partition, gradient_partition
+                       a cell takes its best of s_k, s_l, s_S if that score is
+                       above 0, else the empty role. With free sizes this is
+                       the exact optimum of the additive objective.
+    random_partition   each Omega cell takes a seeded uniform role
 """
 
 from __future__ import annotations
@@ -27,6 +39,7 @@ import torch.nn as nn
 
 from core.eval_mode import eval_mode
 from core.grid import deletion_baseline, delete, pool_sum
+from cdea.region import NEITHER, OUTSIDE, normalise, rule_labels, rule_parts
 
 
 def _normalise(evidence: torch.Tensor) -> torch.Tensor:
@@ -174,3 +187,61 @@ def captum_ig(model: nn.Module, x: torch.Tensor, class_idx: torch.Tensor, steps:
             method="riemann_right", internal_batch_size=x.shape[0],
         )
     return attr.detach().sum(dim=1)
+
+
+# ---------------------------------------------------------------------------
+# Version 2: partitions of Omega
+# ---------------------------------------------------------------------------
+
+def grid_evidence(e: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+    """``(B, R)`` cell map: a pixel map ``(B, H, W)`` is sum-pooled; a cell map passes through."""
+    if e.ndim == 3:
+        return pool_sum(e, grid_h, grid_w)
+    if e.ndim != 2 or e.shape[-1] != grid_h * grid_w:
+        raise ValueError("evidence must be (batch, H, W) pixels or (batch, R) cells")
+    return e
+
+
+def rule_partition(e_k: torch.Tensor, e_l: torch.Tensor, omega: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+    """``(B, R)`` labels: the two maps pooled to the grid, clamped, normalised, and split by the rule on Omega."""
+    evidence = normalise(torch.stack([grid_evidence(e_k, grid_h, grid_w), grid_evidence(e_l, grid_h, grid_w)], dim=1))
+    return rule_labels(rule_parts(evidence.to(omega.device)), omega)
+
+
+def cell_partition(g: torch.Tensor, omega: torch.Tensor) -> torch.Tensor:
+    """``(B, R)`` labels from ``(B, 2, R)`` per-cell excess drops: the best cell score if above 0, else empty."""
+    scores = cell_scores(g.to(omega.device))
+    best, role = scores.max(dim=1)
+    labels = torch.where(best > 0, role, torch.full_like(role, NEITHER))
+    return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))
+
+
+def occlusion_partition(model, x, ids, grid_h: int, grid_w: int, omega: torch.Tensor,
+                        g: torch.Tensor | None = None) -> torch.Tensor:
+    """Single-cell blur drops, excess over the null of one cell, through ``cell_partition``."""
+    g = occlusion_drops(model, x, ids, grid_h, grid_w) if g is None else g
+    return cell_partition(g, omega)
+
+
+def gradient_partition(model, x, ids, grid_h: int, grid_w: int, omega: torch.Tensor,
+                       g: torch.Tensor | None = None) -> torch.Tensor:
+    """First-order cell drops through ``cell_partition`` (ablation DA3)."""
+    g = gradient_drops(model, x, ids, grid_h, grid_w) if g is None else g
+    return cell_partition(g, omega)
+
+
+def margin_partition(margin: torch.Tensor, omega: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+    """``(B, R)`` labels of the margin map on Omega: positive cells U_k, negative U_l, zero empty; no S."""
+    cells = grid_evidence(margin, grid_h, grid_w).to(omega.device)
+    labels = torch.full_like(cells, NEITHER, dtype=torch.long)
+    labels = torch.where(cells > 0, torch.zeros_like(labels), labels)
+    labels = torch.where(cells < 0, torch.ones_like(labels), labels)
+    return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))
+
+
+def random_partition(omega: torch.Tensor, rows: list[int], generator: torch.Generator) -> torch.Tensor:
+    """``(B, R)`` labels: a uniform role per Omega cell. Row ``i`` of the draw belongs to sample position ``i``,
+    so an image's roles do not depend on the chunk."""
+    table = torch.randint(0, 4, (max(rows) + 1, omega.shape[-1]), generator=generator)
+    labels = table[torch.tensor(rows)].to(omega.device)
+    return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))

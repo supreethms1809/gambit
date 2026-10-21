@@ -15,6 +15,9 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
+- **First, read open decision 9 (version 2 re-scope).**
+  - If the user has signed off version 2, hold the decomposition phases (`dev`, `planted-val`, `natural-val`). Version 1 records will not match the version 2 hash.
+  - The shift phases are unaffected.
 0. The 2026-10-20 review fixes and the B7 review's fixes (log) moved the method hash to `d69b1ac6` and the knobs hash to `38f5d7c0`. No earlier record counts. ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
 1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
    - `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism;
@@ -40,6 +43,7 @@ On the GH200:
   - On `main`: the decomposition method, its runner (`paper_run.py --game decomposition`) and the planted-pair dataset with `verify_roles`.
   - Also on `main`: `scripts/decomp_readout.py` (RR, val-only selection, the candidate ranking and family D-T statistics) and D2/D8/D9 in `scripts/check_degenerate.py`.
 - **Tags.** `framing-v1` and `decomp-declared` (on `80caf2a`) exist. `eval-plan-frozen`, `g0-baselines` and `final-runs` do not.
+- **Formulation.** `FORMULATION_DECOMPOSITION.md` is version 2, a DRAFT written on 2026-10-20 and not signed off. It is implemented on branch `paper/decomp-partition` (not merged; method hash there `251951b4`), with two changes made after the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4). `main` implements version 1 (tag `decomp-declared`). See plan R and open decision 9.
 - **Plan.** `EVAL_PLAN.md` is not frozen, and the test split is locked. Section 13.4 reads "signed off" and is tagged, but the user asked to keep it a draft (open decision 1).
 - **Checkpoints** (on the GH200).
 
@@ -124,6 +128,26 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 - [ ] G2. A fresh session, one that did not write the results, audits them and eye-checks a sample of masks on every dataset.
 - [ ] G3. Write the paper from `FRAMING.md`. Use `PAPER_LESSONS_AND_WRITING_GUIDE.md` as the checklist.
 
+**R. Re-scope to version 2 (2026-10-20, `FORMULATION_DECOMPOSITION.md` version 2, `EVAL_PLAN.md` 13.5–13.8)**
+- [ ] R1. The user signs off version 2 and 13.5–13.8, or amends them. Settle the formulation's open decisions (section 12) first.
+- [x] R2. Descriptive measurements on dev val, before the version 2 implementation (formulation open decision 10). Both need only forward passes on existing checkpoints:
+  - the co-location share at ResNet-50's last layer;
+  - the pairwise interaction on the top Ω cells.
+
+  Done on the Mac on 2026-10-20 with the local linear probes, not the paper checkpoints (log). Repeat on the GH200 with the paper checkpoints.
+- [x] R3. Implement version 2 (branch `paper/decomp-partition`; the files differ from the list below: `cdea/region.py`, `evaluation/run_partition.py`, `scripts/partition_readout.py`):
+  - Ω and the size-matched null (`cdea/null.py`);
+  - the four-role per-cell plan (`cdea/decompose.py`);
+  - the rule partitions, `occlusion_partition`, `gradient_partition` and `random_partition` (`baselines/decomposition.py`);
+  - whole-cell scoring with the k, l and m columns, the cell-level scores, MIX and the confirmations (`evaluation/scores.py`, `evaluation/run_cell.py`);
+  - VR, the resolution shares, RA and the tertiles (`scripts/decomp_readout.py`);
+  - D8, D9 and the trapped roles (`scripts/check_degenerate.py`).
+- [x] R4. Tests: formulation section 9, including the mixing and co-location toys (`tests/test_partition.py`).
+- [ ] R5. Rerun the dev and planted val cells at the version 2 hash. Make the version 2 selection (13.7).
+  - A local dev read (CIFAR-10 and HAM10000, local probes) is in the log. It is not R5: the hash, the checkpoints and the planted pairs are the GH200's.
+  - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only`. Planted pairs: `--dataset planted_pair`.
+- [ ] R6. Bring `PAPER_NOTES.md`, the guide (`docs/guide/`) and the project's CVPR outline in line with version 2. Done after R1, so that they follow the signed-off text.
+
 ## Shift paper
 
 A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented on 2026-10-14 and ready for the val gate. The test split stays locked.
@@ -165,6 +189,22 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 7. **RISE mask count.** The harness runs 4000 masks with the val grid {2000, 4000}. That is the RISE paper's VGG-16 count; its ResNet-50 setting is 8000 (`BASELINES.md`). Either add 8000 to the grid or keep 4000 and say so in the paper.
 8. **The adapter floor is scattered pixels.** `baselines.adapter.random_floor`, used for failed rows and constant maps, ranks a map of ones, so every pixel ties and the tie-break picks scattered pixels, not cells. ROAD fills scattered pixels far better than a cell (mean fill error 0.032 against 0.104 at 5%), so a floored row likely drops less than the cell-shaped null and scores below chance. Either draw it from seeded cell scores, as the floor methods and the null do, or keep it and report the floored share (both read-outs print it).
 
+9. **Version 2 re-scope (2026-10-20).** The decomposition's question was re-scoped (`FORMULATION_DECOMPOSITION.md` version 2):
+   - divide the evidence region Ω with free role sizes;
+   - measure the overlap before and the verified separation after;
+   - keep K = 2, and score the third class.
+
+   Both documents are drafts. Decide:
+   - the formulation's open decisions (section 12);
+   - whether to sign off 13.5–13.8;
+   - whether the CVPR timeline (paper deadline Nov 16) allows R3–R5 before the freeze, or the venue changes.
+
+   Until then, version 1 (13.1–13.4) stands.
+
+   On 2026-10-20 and 21 the user asked for version 2 to be built and read locally before the sign-off (log). The sign-off now covers the two changes that read led to: the polish and the ∅ rule. Two questions are open:
+   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD.
+   - Should the ∅ absence test stay at the 5th percentile? Under ROAD almost no ∅ passes it, so VR now counts the unique and shared roles alone.
+
 ## Parked
 
 Not part of this plan unless reopened:
@@ -174,6 +214,21 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-21, version 2 fixed and read again (local).** After the CIFAR-10 read (below), the user asked for two fixes, made on `paper/decomp-partition` (hash `251951b4`):
+  - **The ∅ rule.** ∅ is now confirmed by an absence test. The old rule is kept as `vr_lenient`.
+  - **The polish.** CDEA's search is now followed by a discrete polish. DA11 is the search alone; DA12 is the polish alone.
+  - The original-spec HAM10000 cell was stopped before it wrote records. So no HAM10000 method row was read before the fixes.
+  - Records: `results/paper/smoke/partition_local/cells_fixed/val/partition/{cifar10,ham10000}/resnet50/seed0`, in the branch's worktree under `.claude/worktrees/`, not under `main`. Same command as below, plus DA11 and DA12.
+  - Read with `PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/partition_local/cells_fixed`, with `--operator road` and `--operator blur`.
+  - The read is summarised in the session that ran it. Its open questions are open decision 9.
+- **2026-10-20, version 2 implemented and read locally.** Branch `paper/decomp-partition`, in its own worktree under `.claude/worktrees/`. The user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
+  - Checkpoints: the local linear probes, `results/paper/smoke_checkpoints/{cifar10,ham10000}_resnet50_pt_lp_ep15_lr0.001_imagenet_seed0.pt`, via `--model-source checkpoint`. `--model-source smoke` is an ImageNet backbone with a random head. A first descriptive read used it by mistake, and was discarded.
+  - Descriptive (R2): `PYTHONPATH=. python scripts/decomp_descriptive.py --dataset {cifar10,ham10000} --n 64 --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/partition_local/descriptive`.
+  - Cells: `PYTHONPATH=. python scripts/paper_run.py --game partition --dataset {cifar10,ham10000} --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/partition_local/cells --image-batch 8`. Only CIFAR-10 finished and was read; it led to the fixes above.
+  - Formulation section 13 lists the implementation's choices and its disagreements with the text. That includes the straight-through drift below step 0 that led to the polish.
+  - Version tokens are banned in code and `docs/paper` (`tests/test_scope.py`). The game is therefore `--game partition`, and the draft documents say "version 1" and "version 2".
+
+- **2026-10-20, version 2 re-scope (docs only).** `FORMULATION_DECOMPOSITION.md` was rewritten as version 2, a DRAFT; version 1 is at tag `decomp-declared`. `EVAL_PLAN.md` gained a dated re-scope entry with disclosures, and the draft sections 13.5–13.8; 13.1–13.4 are unchanged. Plan R and open decision 9 were added. No code changed, and no cell was run.
 - **2026-10-20, B7 review of PR #40.** A fresh session reviewed the baseline changes. `extremal_shift` as deletion, Chefer's `start_layer` and the converged ROAD fill are sound, and count as reviewed. Fixed on branch `paper/review-pr40-fixes`; the method hash moved from `e910f251` to `d69b1ac6`.
   - **CVE `edit_share`.** The fill past the edits is the bilinear halo around them, then scattered tie-break pixels, not seeded untouched cells. `edit_share` is now the scored mask's share on edited cells (two edits at 5%: 0.74, where the old count gave 0.82), and the dossier and plan say what the fill is.
   - **Floor seed.** At seed 0 the shift floor, `random_decomp` and `random_pair` drew the null's own scores. They now draw from `floor_generator` (stream `1000 · seed + 7`).

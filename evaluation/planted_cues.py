@@ -379,7 +379,7 @@ def verify_roles(model, x: torch.Tensor, patches: torch.Tensor, ids: torch.Tenso
     l drop does not; A_l the mirror; C when both count.
     """
     from evaluation.removal import ROAD
-    from evaluation.scores import _remove
+    from evaluation.scores import _remove, role_confirmed
 
     ids = ids[:, :2].long()
     batch, _, height, width = x.shape
@@ -403,7 +403,6 @@ def verify_roles(model, x: torch.Tensor, patches: torch.Tensor, ids: torch.Tenso
             counts = [drop(patches[:, slot].to(x.device)) > threshold for slot in range(3)]
     finally:
         model.train(was_training)
-    a_k = counts[0][:, 0] & ~counts[0][:, 1]
-    a_l = counts[1][:, 1] & ~counts[1][:, 0]
-    shared = counts[2][:, 0] & counts[2][:, 1]
-    return torch.stack([a_k, a_l, shared], dim=1).cpu()
+    # The patches stand in for the roles U_k, U_l and S; the empty role has no patch.
+    no_patch = torch.zeros_like(counts[0])
+    return role_confirmed(torch.stack(counts + [no_patch], dim=1))[:, :3].cpu()

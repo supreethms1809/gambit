@@ -104,7 +104,9 @@ def class_drops(logits_full: torch.Tensor, logits_deleted: torch.Tensor, ids: to
 def decomposition_payoffs(drops: torch.Tensor, null: torch.Tensor | None = None) -> torch.Tensor:
     """``(u_k, u_l, u_S)`` from the ``(B, 3, 2)`` drops of players U_k, U_l, S on classes k, l.
 
-    With ``null`` ``(B, 2)``, each drop becomes the excess drop ``d - nu``.
+    With ``null``, each drop becomes the excess drop ``d - nu``. A ``(B, 2)``
+    null is one area's (version 1); a ``(B, 3, 2)`` null is each player's own,
+    at its size (version 2).
       u_k = d~_k(A_k) - |d~_l(A_k)|_s
       u_l = d~_l(A_l) - |d~_k(A_l)|_s
       u_S = min_s(d~_k(A_S), d~_l(A_S))
@@ -112,7 +114,10 @@ def decomposition_payoffs(drops: torch.Tensor, null: torch.Tensor | None = None)
     """
     if drops.ndim != 3 or drops.shape[1:] != (3, 2):
         raise ValueError("drops must be (batch, 3 players, 2 classes)")
-    excess = drops if null is None else drops - null.unsqueeze(1)
+    if null is None:
+        excess = drops
+    else:
+        excess = drops - (null if null.ndim == 3 else null.unsqueeze(1))
     u_k = excess[:, 0, 0] - smooth_abs(excess[:, 0, 1])
     u_l = excess[:, 1, 1] - smooth_abs(excess[:, 1, 0])
     u_s = smooth_min(excess[:, 2, 0], excess[:, 2, 1])
