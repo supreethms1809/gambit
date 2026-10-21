@@ -433,6 +433,11 @@ Disclosures for version 2:
 - **Not run.** The planted pairs: there is no local planted-pair checkpoint.
 - The test split was not read.
 
+**2026-10-21, changes after that read.** The user asked for two fixes after reading the CIFAR-10 cell. The HAM10000 cell was still running and unread.
+- **The ∅ rule (formulation 6.4).** ∅ is now confirmed only when its deletion lowers both classes less than 95% of random sets of its size. Before, "counts for neither" sufficed, and a random partition matched the subtraction rule on VR. The old rule is reported as `vr_lenient`.
+- **The polish (formulation 4.4).** CDEA ended below its own step 0 in 45% of images. A discrete single-cell polish now follows the search. DA11 (the search alone) and DA12 (the polish alone) are reported.
+- Both changes were made with the CIFAR-10 numbers in view, so the CIFAR-10 and HAM10000 dev cells are not a test of them. Planted pairs and the other datasets are.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |

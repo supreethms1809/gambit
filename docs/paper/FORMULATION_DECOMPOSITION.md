@@ -1,6 +1,6 @@
 # CDEA decomposition formulation
 
-**Status (2026-10-20).** Version 2, **DRAFT**. Implemented on branch `paper/decomp-partition` (section 13). Not signed off.
+**Status (2026-10-21).** Version 2, **DRAFT**. Implemented on branch `paper/decomp-partition` (section 13). Not signed off. Two changes followed the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4).
 - On `main`, `cdea/decompose.py` implements version 1 (`decompose`). Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4. The branch adds version 2 (`partition`) beside it.
 - Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both. On 2026-10-20 the user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
 - Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
@@ -130,9 +130,15 @@ The machinery is unchanged:
 
 The null is computed once, before optimisation, and detached, for n = 0 … |Ω|. That costs N·|Ω| forward passes per image. On ViT-B/16 it is computed on a size grid and interpolated (open decision 9).
 
+**Polish (added 2026-10-21, after the CIFAR-10 dev read).** The straight-through gradient is a first-order estimate. At a kink of a payoff, a whole cell's move can change the payoff against its gradient. A pure U_k has d̃_l = −ν_l < 0, where |d̃_l| has slope −1, so to first order l-evidence looks like a gain for U_k. On CIFAR-10 dev val the search ended below its own step 0 in 45% of images.
+- After the search, the polish starts from the better of two hard partitions: the one the search ends at, and step 0.
+- It then makes the single-cell role move that most raises the exact welfare of the hard partition, and repeats until no move raises it.
+- The welfare is the search's objective without the boundary offsets: blur deletion of whole cells, each role net of its null at its size.
+- The result is never below step 0. Each move costs about 6·|Ω| forward passes per image, without gradients.
+
 ### 4.5 Output
 
-The hard partition: each Ω cell takes the role with the largest final plan entry.
+The hard partition after the polish. Before 2026-10-21 it was the search's: each Ω cell took the role with the largest final plan entry (now DA11).
 
 ### 4.6 Ablations
 
@@ -147,6 +153,8 @@ The hard partition: each Ω cell takes the role with the largest final plan entr
 | DA8 | No null |
 | DA9 | Steps 25, 50, 200 |
 | DA10 | **Version 1**: fixed 5% budgets anywhere in the image. Shows what the change of question costs or gains |
+| DA11 | No polish: the search's hard plan, the output before 2026-10-21 |
+| DA12 | The polish alone, from step 0 (no search). Shows what the search adds |
 | DA2 | Open decision 4 |
 
 ## 5. Comparators (`baselines/decomposition.py`)
@@ -206,9 +214,14 @@ A score on an empty role is NaN, and empty roles are counted.
 - count_j(M) means d_j(M) > q_j(|M|).
 - U_k is confirmed when count_k holds and count_l does not. U_l is the mirror.
 - S is confirmed when count_k and count_l both hold.
-- ∅ is confirmed when neither holds.
+- absent_j(M) means d_j(M) < q^5_j(|M|), the 5th percentile of the same random drops. ∅ is confirmed when absent_k and absent_l both hold: deleting it lowers both classes less than 95% of random sets of its size.
 
-This is `verify_roles`' rule applied to the method's own roles.
+The unique and shared rules are `verify_roles`' rule applied to the method's own roles.
+
+**Changed 2026-10-21, after the CIFAR-10 dev read.**
+- ∅ was confirmed when neither count held. That is a failure to reject, which a random set of cells passes about 90% of the time.
+- On that read a random partition earned as much VR as the subtraction rule, mostly from its ∅. Methods that label cells ∅ gained VR that the rule rows, which never label ∅, could not.
+- The earlier rule is still reported, as the `*_lenient` columns.
 
 **Mixture or redundancy.** For an S with MIX > 0, split its cells into two seeded halves and delete each half.
 - A mixture gives a half that counts for one class only.
@@ -222,7 +235,7 @@ Of the overlap inside Ω, the share that ends in each verdict:
 - **neither, confirmed:** the same sum over ∅, when ∅ is confirmed;
 - **unconfirmed:** the rest.
 
-**VR (verified resolution) = 1 − unconfirmed.**
+**VR (verified resolution) = 1 − unconfirmed.** It uses the ∅ rule of section 6.4; `vr_lenient` uses the earlier one.
 
 The before/after figure shows, per method and per overlap tertile, O before and these four shares after. For the `subtract` row it reads: "the rule called this share of the overlap shared, and this part of it was confirmed".
 
@@ -344,13 +357,11 @@ Where the text and the implementation disagree:
 - **Toy 1** asks `subtract` for ∅ = {4}. Rules never label ∅, and a cell with no evidence lies outside Ω. The test sets ρ = 1, so Ω holds the three evidence cells.
   - An added artefact toy covers ∅: evidence on a cell whose deletion changes nothing.
   - `occlusion_partition` and CDEA label that cell ∅; `subtract` labels it U_k.
-- **The straight-through search can end below its own step 0.** Two strict xfails record it.
+- **The straight-through search can end below its own step 0.** This led to the polish (section 4.4).
   - With the whole-grid null, a pure U_k has d̃_l = −ν_l < 0. There |d̃_l| has slope −1, so to first order l-evidence looks like a gain for U_k.
-  - On toy 1 at lr 0.1 the shared cell moves to U_k, and the hard welfare falls from 2.625 at step 0 to 2.0.
-  - On toy 5 the co-located cell moves to U_l.
-  - The cells record the blur welfare of the hard partition at step 0 and at the end (`payoff_init_*`, `payoff_hard_*`).
-- **Toy 4.** With no shared cell, CDEA parks a weak k cell in S.
-  - S and ∅ both start at log ε, and Adam moves both alike.
-  - That S has one cell, so neither MIX nor the halves can flag it. The scorer does not confirm it (D8).
+  - On toy 1 at lr 0.1 the search alone (DA11) moves the shared cell to U_k, and the hard welfare falls from 2.625 at step 0 to 2.0. On toy 5 the co-located cell moves to U_l.
+  - With the polish, both toys give the formulation's roles.
+  - The cells record the blur welfare of the step-0, search and final partitions (`payoff_init_*`, `payoff_search_*`, `payoff_hard_*`) and the share of Ω the polish moved.
+- **Toy 4.** With no shared cell, the search alone parks a weak k cell in S. S and ∅ both start at log ε, and Adam moves both alike. The polish takes it back out, so S stays empty.
 - **Co-location share.** As written, P nets each position's channels before the min. On the dev models it falls far below 0, because Q is several times P. A positive-part version, in [0, 1], is reported beside it (`evaluation/descriptive.py`).
 
