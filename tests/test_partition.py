@@ -613,3 +613,59 @@ def test_readout_reports_a_small_record_set(capsys) -> None:
     assert mean == 2.0 and lo <= mean <= hi and n == 3
     frame = pd.DataFrame(rows)
     assert paired(frame, "cdea", "cdea", "vr")[0] == 0.0
+
+
+# DA13: the polish under ROAD ----------------------------------------------------
+
+def test_the_edit_null_with_blur_is_the_size_null() -> None:
+    from cdea.decompose import blur_edit, edit_null
+
+    model, x = additive_toy()
+    x2 = torch.cat([x, toy_image(torch.linspace(0, 1, UNITS))])
+    ids = _pair(model, x2).ids
+    reference = model(x2).detach()
+    with torch.no_grad():
+        table = edit_null(model, ids, reference, blur_edit(x2, *GRID), 2, UNITS, 6, 8, 0)
+        sparse = edit_null(model, ids, reference, blur_edit(x2, *GRID), 2, UNITS, 6, 8, 0, sizes=[0, 2, 6])
+    assert torch.allclose(table, size_null(model, x2, ids, *GRID, 6), atol=1e-6)
+    assert torch.allclose(sparse, size_null(model, x2, ids, *GRID, 6, sizes=[0, 2, 6]), atol=1e-6)
+
+
+def test_the_road_polish_never_ends_below_its_own_step_zero_and_ignores_the_batch() -> None:
+    from cdea.decompose import edit_null, role_welfare
+    from evaluation.run_methods import road_polish_edit
+
+    model, x = additive_toy()
+    x2 = torch.cat([x, toy_image(torch.linspace(0.2, 1, UNITS))])
+    h2 = _pair(model, x2)
+    cfg = PartitionConfig(steps=4, rho=1.0)
+    edit = road_polish_edit(x2, 0, 0, GRID)
+    whole = partition(model, x2, h2, *GRID, cfg, polish_edit=edit)
+    part = partition(model, x2[1:], HypothesisSet(ids=h2.ids[1:], mask=h2.mask[1:]), *GRID, cfg,
+                     polish_edit=road_polish_edit(x2[1:], 1, 0, GRID))
+    assert torch.equal(whole.roles[1:], part.roles)
+    reference = model(x2).detach()
+    with torch.no_grad():
+        top = int(whole.omega.sum(dim=-1).max())
+        table = edit_null(model, h2.ids, reference, edit, 2, UNITS, top, 8, 0)
+        start = role_welfare(model, x2, h2.ids, reference, whole.initial_roles, table, True, *GRID, edit)
+        final = role_welfare(model, x2, h2.ids, reference, whole.roles, table, True, *GRID, edit)
+    assert bool((whole.welfare >= start - 1e-5).all())
+    assert torch.allclose(whole.welfare, final, atol=1e-5)
+    # The search is blur in both; only the polish changed.
+    blur = partition(model, x2, h2, *GRID, cfg)
+    assert torch.equal(blur.search_roles, whole.search_roles)
+
+
+def test_the_polish_noise_never_is_the_scorers() -> None:
+    from evaluation.run_methods import polish_noise_seed
+
+    assert all(polish_noise_seed(seed) != 1000 * other for seed in range(20) for other in range(40))
+
+
+def test_paper_run_takes_the_road_polish_ablation() -> None:
+    from scripts.paper_run import parse, spec_from_args
+
+    spec = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "none",
+                                 "--ablations", "DA13_road_polish"]))
+    assert list(spec.ablations) == ["DA13_road_polish"]
