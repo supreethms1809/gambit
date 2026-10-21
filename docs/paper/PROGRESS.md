@@ -43,7 +43,7 @@ On the GH200:
   - On `main`: the decomposition method, its runner (`paper_run.py --game decomposition`) and the planted-pair dataset with `verify_roles`.
   - Also on `main`: `scripts/decomp_readout.py` (RR, val-only selection, the candidate ranking and family D-T statistics) and D2/D8/D9 in `scripts/check_degenerate.py`.
 - **Tags.** `framing-v1` and `decomp-declared` (on `80caf2a`) exist. `eval-plan-frozen`, `g0-baselines` and `final-runs` do not.
-- **Formulation.** `FORMULATION_DECOMPOSITION.md` is version 2, a DRAFT written on 2026-10-20 and not implemented. The code implements version 1 (tag `decomp-declared`). See plan R and open decision 9.
+- **Formulation.** `FORMULATION_DECOMPOSITION.md` is version 2, a DRAFT written on 2026-10-20 and not signed off. It is implemented on branch `paper/decomp-partition` (not merged; method hash there `251951b4`), with two changes made after the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4). `main` implements version 1 (tag `decomp-declared`). See plan R and open decision 9.
 - **Plan.** `EVAL_PLAN.md` is not frozen, and the test split is locked. Section 13.4 reads "signed off" and is tagged, but the user asked to keep it a draft (open decision 1).
 - **Checkpoints** (on the GH200).
 
@@ -130,18 +130,22 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 
 **R. Re-scope to version 2 (2026-10-20, `FORMULATION_DECOMPOSITION.md` version 2, `EVAL_PLAN.md` 13.5–13.8)**
 - [ ] R1. The user signs off version 2 and 13.5–13.8, or amends them. Settle the formulation's open decisions (section 12) first.
-- [ ] R2. Descriptive measurements on dev val, before the version 2 implementation (formulation open decision 10). Both need only forward passes on existing checkpoints:
+- [x] R2. Descriptive measurements on dev val, before the version 2 implementation (formulation open decision 10). Both need only forward passes on existing checkpoints:
   - the co-location share at ResNet-50's last layer;
   - the pairwise interaction on the top Ω cells.
-- [ ] R3. Implement version 2:
+
+  Done on the Mac on 2026-10-20 with the local linear probes, not the paper checkpoints (log). Repeat on the GH200 with the paper checkpoints.
+- [x] R3. Implement version 2 (branch `paper/decomp-partition`; the files differ from the list below: `cdea/region.py`, `evaluation/run_partition.py`, `scripts/partition_readout.py`):
   - Ω and the size-matched null (`cdea/null.py`);
   - the four-role per-cell plan (`cdea/decompose.py`);
   - the rule partitions, `occlusion_partition`, `gradient_partition` and `random_partition` (`baselines/decomposition.py`);
   - whole-cell scoring with the k, l and m columns, the cell-level scores, MIX and the confirmations (`evaluation/scores.py`, `evaluation/run_cell.py`);
   - VR, the resolution shares, RA and the tertiles (`scripts/decomp_readout.py`);
   - D8, D9 and the trapped roles (`scripts/check_degenerate.py`).
-- [ ] R4. Tests: formulation section 9, including the mixing and co-location toys.
+- [x] R4. Tests: formulation section 9, including the mixing and co-location toys (`tests/test_partition.py`).
 - [ ] R5. Rerun the dev and planted val cells at the version 2 hash. Make the version 2 selection (13.7).
+  - A local dev read (CIFAR-10 and HAM10000, local probes) is in the log. It is not R5: the hash, the checkpoints and the planted pairs are the GH200's.
+  - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only`. Planted pairs: `--dataset planted_pair`.
 - [ ] R6. Bring `PAPER_NOTES.md`, the guide (`docs/guide/`) and the project's CVPR outline in line with version 2. Done after R1, so that they follow the signed-off text.
 
 ## Shift paper
@@ -197,6 +201,10 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 
    Until then, version 1 (13.1–13.4) stands.
 
+   On 2026-10-20 and 21 the user asked for version 2 to be built and read locally before the sign-off (log). The sign-off now covers the two changes that read led to: the polish and the ∅ rule. Two questions are open:
+   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD.
+   - Should the ∅ absence test stay at the 5th percentile? Under ROAD almost no ∅ passes it, so VR now counts the unique and shared roles alone.
+
 ## Parked
 
 Not part of this plan unless reopened:
@@ -205,6 +213,20 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-21, version 2 fixed and read again (local).** After the CIFAR-10 read (below), the user asked for two fixes, made on `paper/decomp-partition` (hash `251951b4`):
+  - **The ∅ rule.** ∅ is now confirmed by an absence test. The old rule is kept as `vr_lenient`.
+  - **The polish.** CDEA's search is now followed by a discrete polish. DA11 is the search alone; DA12 is the polish alone.
+  - The original-spec HAM10000 cell was stopped before it wrote records. So no HAM10000 method row was read before the fixes.
+  - Records: `results/paper/smoke/v2_local/cells_fixed/val/partition/{cifar10,ham10000}/resnet50/seed0`, in the worktree `.claude/worktrees/decomp-v2`, not under `main`. Same command as below, plus DA11 and DA12.
+  - Read with `PYTHONPATH=. python scripts/partition_readout.py --root results/paper/smoke/v2_local/cells_fixed`, with `--operator road` and `--operator blur`.
+  - The read is summarised in the session that ran it. Its open questions are open decision 9.
+- **2026-10-20, version 2 implemented and read locally.** Branch `paper/decomp-partition`, worktree `.claude/worktrees/decomp-v2`. The user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
+  - Checkpoints: the local linear probes, `results/paper/smoke_checkpoints/{cifar10,ham10000}_resnet50_pt_lp_ep15_lr0.001_imagenet_seed0.pt`, via `--model-source checkpoint`. `--model-source smoke` is an ImageNet backbone with a random head. A first descriptive read used it by mistake, and was discarded.
+  - Descriptive (R2): `PYTHONPATH=. python scripts/decomp_descriptive.py --dataset {cifar10,ham10000} --n 64 --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/v2_local/descriptive`.
+  - Cells: `PYTHONPATH=. python scripts/paper_run.py --game partition --dataset {cifar10,ham10000} --backbone resnet50 --seed 0 --split val --n 64 --methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets --model-source checkpoint --checkpoint <probe> --out results/paper/smoke/v2_local/cells --image-batch 8`. Only CIFAR-10 finished and was read; it led to the fixes above.
+  - Formulation section 13 lists the implementation's choices and its disagreements with the text. That includes the straight-through drift below step 0 that led to the polish.
+  - Version tokens are banned in code and `docs/paper` (`tests/test_scope.py`). The game is therefore `--game partition`, and the draft documents say "version 1" and "version 2".
 
 - **2026-10-20, version 2 re-scope (docs only).** `FORMULATION_DECOMPOSITION.md` was rewritten as version 2, a DRAFT; version 1 is at tag `decomp-declared`. `EVAL_PLAN.md` gained a dated re-scope entry with disclosures, and the draft sections 13.5–13.8; 13.1–13.4 are unchanged. Plan R and open decision 9 were added. No code changed, and no cell was run.
 - **2026-10-20, B7 review of PR #40.** A fresh session reviewed the baseline changes. `extremal_shift` as deletion, Chefer's `start_layer` and the converged ROAD fill are sound, and count as reviewed. Fixed on branch `paper/review-pr40-fixes`; the method hash moved from `e910f251` to `d69b1ac6`.
