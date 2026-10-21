@@ -521,7 +521,7 @@ Reported with intervals, untested:
 - "RA, all" and Ω coverage;
 - every image and every tertile;
 - ρ ∈ {0.3, 0.7}, blur, ViT-B/16;
-- DA1, DA3–DA10.
+- DA1, DA3–DA13.
 
 ### 13.6 version 2 metrics
 

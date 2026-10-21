@@ -145,7 +145,7 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
 - [x] R4. Tests: formulation section 9, including the mixing and co-location toys (`tests/test_partition.py`).
 - [ ] R5. Rerun the dev and planted val cells at the version 2 hash. Make the version 2 selection (13.7).
   - A local dev read (CIFAR-10 and HAM10000, local probes) is in the log. It is not R5: the hash, the checkpoints and the planted pairs are the GH200's.
-  - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only`. Planted pairs: `--dataset planted_pair`.
+  - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only,DA13_road_polish`. Planted pairs: `--dataset planted_pair`. DA13 costs about 19 s per image on the Mac, against about 4 s for the default CDEA.
 - [ ] R6. Bring `PAPER_NOTES.md`, the guide (`docs/guide/`) and the project's CVPR outline in line with version 2. Done after R1, so that they follow the signed-off text.
 
 ## Shift paper
@@ -202,7 +202,7 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
    Until then, version 1 (13.1–13.4) stands.
 
    On 2026-10-20 and 21 the user asked for version 2 to be built and read locally before the sign-off (log). The sign-off now covers the two changes that read led to: the polish and the ∅ rule. Two questions are open:
-   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD.
+   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD. DA13 (the polish under ROAD) is on the branch `paper/decomp-road-polish` to answer it on the GH200.
    - Should the ∅ absence test stay at the 5th percentile? Under ROAD almost no ∅ passes it, so VR now counts the unique and shared roles alone.
 
 ## Parked
@@ -213,6 +213,10 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-21, version 2 merged; DA13 added.** `paper/decomp-partition` was merged into `main` as PR #42 (`daed9c2`). The polish under ROAD is ablation DA13, on `paper/decomp-road-polish`.
+  - It was smoke-run on two CIFAR-10 val images (local probe, `results/paper/smoke/partition_da13_check`). It runs without errors at about 19 s per image on the Mac.
+  - DA13 has not been read on a full cell.
 
 - **2026-10-21, version 2 fixed and read again (local).** After the CIFAR-10 read (below), the user asked for two fixes, made on `paper/decomp-partition` (hash `251951b4`):
   - **The ∅ rule.** ∅ is now confirmed by an absence test. The old rule is kept as `vr_lenient`.

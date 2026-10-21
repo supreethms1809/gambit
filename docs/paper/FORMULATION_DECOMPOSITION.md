@@ -135,6 +135,10 @@ The null is computed once, before optimisation, and detached, for n = 0 … |Ω|
 - It then makes the single-cell role move that most raises the exact welfare of the hard partition, and repeats until no move raises it.
 - The welfare is the search's objective without the boundary offsets: blur deletion of whole cells, each role net of its null at its size.
 - The result is never below step 0. Each move costs about 6·|Ω| forward passes per image, without gradients.
+- **DA13 (added 2026-10-21).** The same polish, but it deletes with ROAD's converged fill, and uses a null measured that way. The search stays on blur.
+  - The ROAD noise comes from its own stream (1000·seed + 500), never the scorer's (1000·seed).
+  - It tests whether CDEA's gap between blur VR and ROAD VR comes from the operator.
+  - A ROAD win under DA13 is partly circular, as a blur win is now: the method then optimises what the scorer checks.
 
 ### 4.5 Output
 
@@ -155,6 +159,7 @@ The hard partition after the polish. Before 2026-10-21 it was the search's: each
 | DA10 | **Version 1**: fixed 5% budgets anywhere in the image. Shows what the change of question costs or gains |
 | DA11 | No polish: the search's hard plan, the output before 2026-10-21 |
 | DA12 | The polish alone, from step 0 (no search). Shows what the search adds |
+| DA13 | The polish under ROAD's fill instead of blur (section 4.4) |
 | DA2 | Open decision 4 |
 
 ## 5. Comparators (`baselines/decomposition.py`)
