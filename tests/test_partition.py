@@ -532,3 +532,39 @@ def test_paper_run_parses_the_v2_game() -> None:
     vit = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "all",
                                 "--backbone", "vit_b_16"]))
     assert "chefer_minsplit" in vit.methods
+
+
+def test_readout_reports_a_small_record_set(capsys) -> None:
+    import numpy as np
+    import pandas as pd
+
+    from scripts.partition_readout import boot_ci, paired, report
+
+    rng = np.random.default_rng(0)
+    rows = []
+    for image in range(12):
+        for method, shift in (("cdea", 0.1), ("subtract", 0.0), ("occlusion_partition", 0.05)):
+            row = {"dataset": "toy", "backbone": "resnet50", "operator": "road", "image_index": image,
+                   "method": method, "overlap": image / 12, "overlap_omega": 0.1, "omega_size": 10,
+                   "z_k_full": 3.0, "z_l_full": 2.0, "z_m_full": 1.5, "correct": 1,
+                   "vr": float(np.clip(rng.uniform(0, 1) + shift, 0, 1)), "split_verdict": "mixture"}
+            for name in ("res_shared", "res_unique", "res_neither", "pur_k", "pur_l", "sv", "pur_cell_k",
+                         "pur_cell_l", "sv_cell", "mix", "gen_s", "confirmed_uk", "confirmed_ul", "confirmed_s",
+                         "confirmed_none"):
+                row[name] = float(rng.uniform())
+            for name in ("size_uk", "size_ul", "size_s", "size_none"):
+                row[name] = float(rng.integers(0, 4))
+            if method == "cdea":
+                for stage in ("soft", "hard", "init"):
+                    for player in ("uk", "ul", "s"):
+                        row[f"payoff_{stage}_{player}"] = float(rng.normal())
+                row.update(same_as_init=0.0, trapped=0.1, empty_share=0.2)
+            rows.append(row)
+    selection = report(pd.DataFrame(rows), "road")
+    printed = capsys.readouterr().out
+    assert "CDEA - subtract" in printed and "D2 soft-hard" in printed
+    assert list(selection) == ["cdea"]
+    mean, lo, hi, n = boot_ci([1.0, 2.0, 3.0])
+    assert mean == 2.0 and lo <= mean <= hi and n == 3
+    frame = pd.DataFrame(rows)
+    assert paired(frame, "cdea", "cdea", "vr")[0] == 0.0
