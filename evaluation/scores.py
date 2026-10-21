@@ -686,3 +686,254 @@ def shift_scores(
     if prob_drops is not None and null_prob is not None:
         out["delta_d_prob"] = prob_drops[:, 1] - null_prob
     return out
+
+
+# ---------------------------------------------------------------------------
+# Decomposition version 2 (FORMULATION_DECOMPOSITION.md section 6). Roles are
+# ordered U_k, U_l, S, empty; classes k, l and m (rank 2). A role's mask is its
+# cells, whole. Drops are raw logit drops; the null and its 95th percentile are
+# measured at each role's own size, from random cells of the whole grid.
+# ---------------------------------------------------------------------------
+
+SCORER_NULL = 32      # random n-cell masks per size (section 6.1)
+SPLIT_SEED = 0        # the seeded halves of section 6.4
+REMOVAL_BATCH = 64    # (image, mask) pairs per forward pass; scores do not depend on it
+ROLE_NAMES = ("uk", "ul", "s", "none")
+VERDICTS = ("", "mixture", "redundant", "shared", "unclear")
+
+
+def noise_rows(x: torch.Tensor, seed: int, offset: int = 0) -> torch.Tensor:
+    """``(B, C, H, W)``: the standard normal rows ``_remove`` draws for these images."""
+    from evaluation.masks import advance_generator
+
+    generator = torch.Generator(device="cpu").manual_seed(int(seed))
+    advance_generator(generator, int(offset), tuple(x.shape[1:]), normal=True)
+    return torch.randn(x.shape, generator=generator, device="cpu")
+
+
+def removal_drops(model: nn.Module, x: torch.Tensor, cells: torch.Tensor, ids: torch.Tensor, operator: str,
+                  grid: tuple[int, int], seed: int = 0, offset: int = 0, batch: int = REMOVAL_BATCH) -> torch.Tensor:
+    """``(B, M, J)`` raw drop of each class when each whole-cell mask is removed.
+
+    ``cells`` is ``(B, M, R)`` or ``(M, R)`` (the same masks for every image).
+    ROAD gives every mask of an image that image's own noise rows, so a mask
+    scores as ``_remove`` with the same ``seed`` and ``offset`` would score it.
+    An empty mask removes nothing and drops 0 without a forward pass.
+    """
+    from core.grid import deletion_baseline, upsample_units
+    from evaluation.removal import ROAD, noisy_linear_impute
+
+    if cells.ndim == 2:
+        cells = cells.unsqueeze(0).expand(x.shape[0], -1, -1)
+    images, masks = x.shape[0], cells.shape[1]
+    ids = ids.long()
+    out = torch.zeros(images, masks, ids.shape[1], device=x.device, dtype=x.dtype)
+    if masks == 0:
+        return out
+    height, width = x.shape[-2:]
+    draws = noise_rows(x, seed, offset) if operator == "road" else None
+    occupied = cells.reshape(images, masks, -1).sum(dim=-1) > 0
+    pairs = [(b, m) for b in range(images) for m in range(masks) if bool(occupied[b, m])]
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            full = model(x).gather(1, ids)
+            for start in range(0, len(pairs), int(batch)):
+                part = pairs[start:start + int(batch)]
+                rows = torch.tensor([b for b, _ in part], device=x.device)
+                unit = torch.stack([cells[b, m] for b, m in part]).to(device=x.device, dtype=x.dtype)
+                pixel = upsample_units(unit, grid[0], grid[1], height, width)
+                source = x[rows]
+                if operator == "road":
+                    draw = draws[rows.cpu()]
+                    edited = noisy_linear_impute(source, 1.0 - pixel, ROAD["iters"], ROAD["noise"], None, draw=draw)
+                elif operator == "blur":
+                    edited = source * (1 - pixel) + deletion_baseline(source, grid[0], grid[1]) * pixel
+                else:
+                    raise ValueError(f"unknown removal operator {operator!r}")
+                drop = full[rows] - model(edited).gather(1, ids[rows])
+                for (b, m), value in zip(part, drop):
+                    out[b, m] = value
+    finally:
+        _restore(model, was_training)
+    return out
+
+
+def scored_size_null(model: nn.Module, x: torch.Tensor, ids: torch.Tensor, grid: tuple[int, int], sizes,
+                     operator: str, seed: int = 0, offset: int = 0, n: int = SCORER_NULL,
+                     null_seed: int = 0) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
+    """``{s: (mean, q95)}``, each ``(B, J)``: the drop over ``n`` random s-cell masks of the whole grid.
+
+    The masks are ``cdea.null.size_masks``: the same for every image and nested
+    in s. ``sizes`` is one set for every image, or one set per image; an image
+    is measured only at its own sizes and is NaN at the others.
+    """
+    from cdea.null import size_masks
+
+    batch = x.shape[0]
+    per_image = [set(sizes)] * batch if isinstance(sizes, (set, frozenset)) else [set(s) for s in sizes]
+    per_image = [{int(s) for s in wanted if int(s) > 0} for wanted in per_image]
+    union = sorted(set().union(*per_image))
+    if not union:
+        return {}
+    shared = size_masks(grid[0] * grid[1], union, n, null_seed)
+    masks = shared.unsqueeze(0).repeat(batch, 1, 1, 1)
+    for b, wanted in enumerate(per_image):
+        for i, s in enumerate(union):
+            if s not in wanted:
+                masks[b, i] = 0.0
+    drops = removal_drops(model, x, masks.reshape(batch, len(union) * n, -1), ids, operator, grid, seed, offset)
+    drops = drops.view(batch, len(union), n, -1)
+    mean = drops.mean(dim=2)
+    q95 = torch.quantile(drops, 0.95, dim=2)
+    for b, wanted in enumerate(per_image):
+        for i, s in enumerate(union):
+            if s not in wanted:
+                mean[b, i] = float("nan")
+                q95[b, i] = float("nan")
+    return {s: (mean[:, i], q95[:, i]) for i, s in enumerate(union)}
+
+
+def split_halves(cells: torch.Tensor) -> torch.Tensor:
+    """``(2, R)`` bool: the cells of one role split into two seeded halves, the first the larger.
+
+    The permutation depends only on the role's size, so an image's halves do not depend on the batch.
+    """
+    index = torch.nonzero(cells, as_tuple=False).flatten()
+    generator = torch.Generator(device="cpu").manual_seed(SPLIT_SEED)
+    order = index[torch.randperm(index.numel(), generator=generator).to(index.device)]
+    first = (index.numel() + 1) // 2
+    halves = torch.zeros(2, cells.shape[-1], dtype=torch.bool, device=cells.device)
+    halves[0, order[:first]] = True
+    halves[1, order[first:]] = True
+    return halves
+
+
+def role_confirmed(count: torch.Tensor) -> torch.Tensor:
+    """``(..., 4)`` bool from ``(..., 4, 2)`` counts on k and l: section 6.4, ``verify_roles``' rule.
+
+    U_k: counts for k and not l. U_l: the mirror. S: both. Empty: neither.
+    """
+    k, l = count[..., 0], count[..., 1]
+    return torch.stack([k[..., 0] & ~l[..., 0], l[..., 1] & ~k[..., 1], k[..., 2] & l[..., 2],
+                        ~k[..., 3] & ~l[..., 3]], dim=-1)
+
+
+def half_verdict(count: torch.Tensor) -> int:
+    """Index into ``VERDICTS`` from the ``(2, 2)`` counts of two halves on k and l.
+
+    A half that counts for one class only: mixture. Both halves count for
+    neither: redundancy. Both count for both: shared. Otherwise unclear.
+    """
+    one = [bool(c[0]) != bool(c[1]) for c in count]
+    if any(one):
+        return 1
+    if not count.any():
+        return 2
+    if count.all():
+        return 3
+    return 4
+
+
+def resolution_shares(roles: torch.Tensor, confirmed: torch.Tensor, overlap: torch.Tensor,
+                      omega: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Section 6.5. The share of the overlap inside Omega that ends in each confirmed verdict, and VR.
+
+    A cell in several confirmed roles (only ablation DA1 has overlapping roles)
+    counts once, in the first of S, U_k, U_l, empty. NaN when Omega holds no overlap.
+    """
+    total = (overlap * omega).sum(dim=-1)
+    remaining = omega.clone()
+    share = {}
+    for role in (2, 0, 1, 3):
+        take = roles[:, role] & confirmed[:, role].unsqueeze(-1) & remaining
+        share[role] = (overlap * take).sum(dim=-1)
+        remaining = remaining & ~take
+    nan = torch.full_like(total, float("nan"))
+    shared = torch.where(total > 0, share[2] / total.clamp_min(1e-12), nan)
+    unique = torch.where(total > 0, (share[0] + share[1]) / total.clamp_min(1e-12), nan)
+    neither = torch.where(total > 0, share[3] / total.clamp_min(1e-12), nan)
+    unconfirmed = 1.0 - shared - unique - neither
+    return {"res_shared": shared, "res_unique": unique, "res_neither": neither,
+            "res_unconfirmed": unconfirmed, "vr": 1.0 - unconfirmed}
+
+
+def partition_scores(drops: torch.Tensor, null: torch.Tensor, q95: torch.Tensor, sizes: torch.Tensor,
+                     cell_excess: torch.Tensor, roles: torch.Tensor, overlap: torch.Tensor,
+                     omega: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Per-image version-2 scores (sections 6.3 to 6.6).
+
+    ``drops``, ``null`` and ``q95`` are ``(B, 4, 3)``: each role's raw drop of
+    k, l and m, and the scorer's null and its 95th percentile at the role's
+    size. ``sizes`` is ``(B, 4)``. ``cell_excess`` is ``(B, 3, R)``: each cell
+    deleted alone, minus the null of one cell. A score on an empty role is NaN.
+    """
+    e = drops - null
+    empty = sizes <= 0
+    nan = float("nan")
+
+    def on(role: int, value: torch.Tensor) -> torch.Tensor:
+        return torch.where(empty[:, role], torch.full_like(value, nan), value)
+
+    g = torch.nan_to_num(cell_excess, nan=0.0)
+    member = roles.to(g.dtype)
+    pur_cell_k = (member[:, 0] * (g[:, 0] - g[:, 1].abs())).sum(dim=-1)
+    pur_cell_l = (member[:, 1] * (g[:, 1] - g[:, 0].abs())).sum(dim=-1)
+    sv_cell = (member[:, 2] * torch.minimum(g[:, 0], g[:, 1])).sum(dim=-1)
+    sv = torch.minimum(e[:, 2, 0], e[:, 2, 1])
+    count = drops > q95
+    confirmed = role_confirmed(count[..., :2]) & ~empty
+    out = {
+        "pur_k": on(0, e[:, 0, 0] - e[:, 0, 1].abs()),
+        "pur_l": on(1, e[:, 1, 1] - e[:, 1, 0].abs()),
+        "sv": on(2, sv),
+        "bal": on(2, (e[:, 2, 0] - e[:, 2, 1]).abs()),
+        "pur_cell_k": on(0, pur_cell_k),
+        "pur_cell_l": on(1, pur_cell_l),
+        "sv_cell": on(2, sv_cell),
+        "mix": on(2, sv - sv_cell),
+        "gen_s": on(2, e[:, 2, 2]),
+        "psv": on(2, sv - e[:, 2, 2].clamp_min(0)),
+        "dm_uk": on(0, e[:, 0, 2]),
+        "dm_ul": on(1, e[:, 1, 2]),
+    }
+    for role, name in enumerate(ROLE_NAMES):
+        out[f"size_{name}"] = sizes[:, role].to(drops.dtype)
+        out[f"confirmed_{name}"] = torch.where(empty[:, role], torch.full_like(sizes[:, role], nan, dtype=drops.dtype),
+                                               confirmed[:, role].to(drops.dtype))
+        for j, cls in enumerate(("k", "l", "m")):
+            out[f"d_{name}_{cls}"] = on(role, drops[:, role, j])
+            out[f"nu_{name}_{cls}"] = on(role, null[:, role, j])
+            out[f"q_{name}_{cls}"] = on(role, q95[:, role, j])
+    out.update(resolution_shares(roles, confirmed, overlap, omega))
+    return out
+
+
+def planted_role_scores(roles: torch.Tensor, patch_cells: torch.Tensor, omega: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Section 6.7. ``patch_cells`` is ``(B, 3, R)`` bool for A_k, A_l and C, whose roles are U_k, U_l and S.
+
+    Omega coverage, RA over all patch cells (cells outside Omega count as
+    wrong), RA in Omega, and the 3 x 5 confusion (patch x U_k, U_l, S, empty,
+    outside Omega) as shares of each patch's cells.
+    """
+    patch = patch_cells.to(roles.device)
+    size = patch.sum(dim=-1).to(torch.float32)
+    inside = (patch & omega.unsqueeze(1)).sum(dim=-1).to(torch.float32)
+    nan = torch.full_like(size, float("nan"))
+    correct = torch.stack([(patch[:, t] & roles[:, t]).sum(dim=-1) for t in range(3)], dim=1).to(torch.float32)
+    ra_all = torch.where(size > 0, correct / size.clamp_min(1), nan)
+    ra_in = torch.where(inside > 0, correct / inside.clamp_min(1), nan)
+    out = {
+        "omega_coverage": inside.sum(dim=-1) / size.sum(dim=-1).clamp_min(1),
+        "ra_all": ra_all.nanmean(dim=-1),
+        "ra_in": ra_in.nanmean(dim=-1),
+    }
+    columns = [roles[:, r] for r in range(4)] + [~omega]
+    for t, target in enumerate(("ak", "al", "c")):
+        out[f"ra_all_{target}"] = ra_all[:, t]
+        out[f"ra_in_{target}"] = ra_in[:, t]
+        for c, column in enumerate(ROLE_NAMES + ("outside",)):
+            hits = (patch[:, t] & columns[c]).sum(dim=-1).to(torch.float32)
+            out[f"conf_{target}_{column}"] = torch.where(size[:, t] > 0, hits / size[:, t].clamp_min(1), nan[:, t])
+    return out

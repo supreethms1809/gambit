@@ -44,7 +44,8 @@ def noisy_linear_impute(
     keep: torch.Tensor,
     iters: Optional[int],
     noise: float,
-    gen: torch.Generator,
+    gen: Optional[torch.Generator],
+    draw: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Fill ``keep == 0`` pixels as ROAD's ``NoisyLinearImputer`` does.
 
@@ -66,7 +67,9 @@ def noisy_linear_impute(
     ``keep`` is ``(B, 1, H, W)`` and is read as binary at 0.5. ``x`` is
     ``(B, C, H, W)`` in ``[0, 1]``. Gaussian noise of std ``noise`` is then
     added to removed pixels, as in ROAD, and the image is clamped to
-    ``[0, 1]``. An image with no kept pixel stays black.
+    ``[0, 1]``. An image with no kept pixel stays black. ``draw`` replaces the
+    standard normal draw from ``gen``: the scorer passes each image's own rows
+    when it removes many masks from copies of one image at once.
     """
     known = (keep > 0.5).to(dtype=x.dtype)
     hole = 1.0 - known
@@ -103,6 +106,7 @@ def noisy_linear_impute(
             raise RuntimeError(f"ROAD fill did not converge in {ROAD_MAX_ITER} steps")
     current = x * known + hole * fill
     if noise > 0:
-        draw = torch.randn(current.shape, generator=gen, device="cpu").to(current.device)
-        current = current + draw * noise * hole
+        if draw is None:
+            draw = torch.randn(current.shape, generator=gen, device="cpu")
+        current = current + draw.to(current.device, current.dtype) * noise * hole
     return current.clamp(0, 1)
