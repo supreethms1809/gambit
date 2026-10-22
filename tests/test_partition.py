@@ -669,3 +669,35 @@ def test_paper_run_takes_the_road_polish_ablation() -> None:
     spec = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "none",
                                  "--ablations", "DA13_road_polish"]))
     assert list(spec.ablations) == ["DA13_road_polish"]
+
+
+# The welfare's maximum (2026-10-22, formulation section 13) ---------------------
+
+AK, AL, C_PATCH = 0, 3, 12
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Formulation section 13: when deleting A_k raises z_l by more than about half of C's l-drop, moving C "
+    "into U_k cancels part of |d~_l(U_k)| and the exact welfare prefers that wrong partition. A payoff that "
+    "cannot be paid by cancellation would make this pass."))
+def test_the_welfare_prefers_the_true_partition_when_a_unique_patch_suppresses_the_rival() -> None:
+    from cdea.decompose import role_welfare
+
+    weight = _cells((0, AK, 1.0), (1, AK, -0.9), (1, AL, 1.0), (0, C_PATCH, 1.0), (1, C_PATCH, 1.0))
+    model = CellToy(weight, torch.tensor([0.5, 0.0, -5.0])).eval()
+    x = toy_image(torch.ones(UNITS))
+    h = _pair(model, x)
+    full = model(x).detach()
+    table = size_null(model, x, h.ids, *GRID, 3)
+    true = torch.zeros(1, 4, UNITS, dtype=torch.bool)
+    true[0, U_K, AK] = true[0, U_L, AL] = true[0, SHARED, C_PATCH] = True
+    cancel = torch.zeros(1, 4, UNITS, dtype=torch.bool)
+    cancel[0, U_K, [AK, C_PATCH]] = True
+    cancel[0, U_L, AL] = True
+    cancel[0, NEITHER, :] = False
+    for use_null in (True, False):
+        w_true = float(role_welfare(model, x, h.ids, full, true, table, use_null, *GRID))
+        w_cancel = float(role_welfare(model, x, h.ids, full, cancel, table, use_null, *GRID))
+        assert w_true > w_cancel
+    _, _, cdea = _labels(model, x, 1.0)
+    assert int(cdea.labels[0, C_PATCH]) == SHARED

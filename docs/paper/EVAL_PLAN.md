@@ -440,6 +440,22 @@ Disclosures for version 2:
 - The original-spec HAM10000 cell was stopped before it wrote records, so no HAM10000 method row was read before the changes. Its rerun is a weak check of them: one dataset, the same people choosing.
 - The planted pairs and the other datasets are the test.
 
+**2026-10-22, the GH200 dev-val read, before the sign-off.** 13.5–13.8 were not signed off when it was read.
+- **What was read.** The readout of 13 val cells, each under ROAD and blur:
+  - planted pairs on ResNet-50, seeds 0–4;
+  - planted pairs on ViT-B/16, seeds 0–1;
+  - six natural-image cells at seed 0: ImageNet on both backbones, Stanford Dogs, CIFAR-10, CIFAR-100 and CUB.
+
+  The tables read were `cells.tsv`, `comparisons.tsv` and `methods.tsv`, under `/tmp/partition_full_numbers/` on the GH200. The cells' summaries record the code hash.
+- **What it showed.**
+  - On role-confirmed planted images, CDEA's role accuracy is below the subtraction rule, its own step 0, in every planted cell. The polish and DA13 lower it further.
+  - Under ROAD, no natural cell shows CDEA ahead of the best rule on VR in the top tertile. Every interval includes 0 but one, and that one is negative.
+  - Across methods, VR does not follow role accuracy on the planted pairs.
+  - The planted ResNet-50 benchmark is saturated: the subtraction rule is near its ceiling.
+- **Diagnosis.** The welfare, not the optimiser, is at fault: section 4.1's "known exploit" pays on planted data, and formulation section 13 records the mechanism.
+- **Not read.** The planted test split is unread. A re-declared D1′ can still be confirmatory on it after the freeze.
+- **Any change made in response is post hoc.** That covers the payoff, the benchmark and the metric. Each needs a dated entry here before it is evaluated.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |
