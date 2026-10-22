@@ -479,6 +479,14 @@ Disclosures for version 2:
 - **Already seen.** The CIFAR-10 and HAM10000 images are among the 64 read on 2026-10-20.
 - **Unread data.** The planted test split is unread.
 
+**2026-10-22, the archived first formulation scored with the current metrics (local).** At the user's request, the λ-penalty method of tag `framing-v1` was scored with the partition game's metrics.
+- **The method.** It is on branch `archive/framing-v1`, and ran unchanged with its plan defaults (`scripts/dump_pair_maps.py` there).
+- **The images.** The same 10 CIFAR-10 and HAM10000 val images and checkpoints as the entry above. Its rank-0 and rank-1 classes matched `main`'s on every image.
+- **The row.** Its masks were read as roles on Ω by the `precomputed_maps` row. Each cell takes the largest of the k, l and shared masks, and is empty where no mask covers it or another hypothesis's mask is larger.
+- **The comparison.** CDEA, the core comparators and DA10 were rescored beside it; their rows reproduced the entry above exactly.
+- **Not comparable on its own terms.** The archived method answers a different question: unique against the top 5, with fixed one-cell masses and a contrastive objective. These numbers say how its maps fare under this game's tests, not how it did under its own.
+- **Unread data.** The planted test split is unread.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |

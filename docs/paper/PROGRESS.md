@@ -231,6 +231,11 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-22, the archived first formulation scored with the current metrics (local, 10 images).**
+  - Tag `framing-v1` now also has the branch `archive/framing-v1`, checked out in its own worktree. Its `scripts/dump_pair_maps.py` runs the λ-penalty method unchanged and writes k, l, shared and other-rank masks for a sample exported from `main`.
+  - `main`'s branch `paper/decomp-precomputed-row` adds the `precomputed_maps` row and `paper_run.py --precomputed-dir`.
+  - Cells: CIFAR-10 and HAM10000 on ResNet-50, with the `precomputed_maps` row, CDEA, the core comparators and DA10. Records are under `results/paper/smoke/partition_precomputed_10` in that branch's worktree. `EVAL_PLAN.md` discloses the read.
+
 - **2026-10-22, local read of the drafted payoff (10 images per cell).** The user asked for it before 13.9's sign-off; `EVAL_PLAN.md` discloses it.
   - Command: `paper_run.py --game partition --n 10 --ablations DA14_set_cross,DA15_cell_abs --model-source checkpoint --out results/paper/smoke/partition_local_10`, at hash `eea2f74d`.
   - Finished and read: CIFAR-10 and HAM10000 on ResNet-50 (local probes), and brain tumor on ViT-B/16 (an older fine-tune).
