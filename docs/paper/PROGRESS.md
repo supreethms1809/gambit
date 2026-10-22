@@ -147,6 +147,11 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
   - A local dev read (CIFAR-10 and HAM10000, local probes) is in the log. It is not R5: the hash, the checkpoints and the planted pairs are the GH200's.
   - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only,DA13_road_polish`. Planted pairs: `--dataset planted_pair`. DA13 costs about 19 s per image on the Mac, against about 4 s for the default CDEA.
 - [ ] R6. Bring `PAPER_NOTES.md`, the guide (`docs/guide/`) and the project's CVPR outline in line with version 2. Done after R1, so that they follow the signed-off text.
+- [ ] R7. Route (a): the user signs off `EVAL_PLAN.md` 13.9 and formulation open decision 12, or amends them. Nothing is scored with the drafted payoff before then.
+- [ ] R8. Specify D1″b's harder planted condition in a dated `EVAL_PLAN.md` entry, then implement it. Its val split may be read for `subtract` and `occlusion_partition` alone, to confirm the rule falls below ceiling.
+- [ ] R9. Rerun the planted val cells at the new hash, ResNet-50 seeds 0–4. Choose steps and lr by RA in Ω (13.9).
+- [ ] R10. Check the after-metric gate of 13.9 on planted val, on the `subtract` and `occlusion_partition` rows, before any natural-image read.
+- [ ] R11. Freeze, then read the planted test split and D1″b's test split once.
 
 ## Shift paper
 
@@ -207,6 +212,11 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 
    Either way, VR must be replaced, or validated against planted ground truth. Any such change is post hoc and needs a dated `EVAL_PLAN.md` entry first.
 
+   **2026-10-22: the user chose (a).** The drafted payoff and `EVAL_PLAN.md` 13.9 are on `paper/decomp-cell-penalty` (plan R7–R11). To decide at sign-off:
+   - formulation open decision 12: φ is one-sided, which drops D3's penalty on raising the other class;
+   - 13.9's claims, margins, gate and order;
+   - whether the CVPR timeline (paper deadline Nov 16) allows R8–R11.
+
    On 2026-10-20 and 21 the user asked for version 2 to be built and read locally before the sign-off (log). The sign-off now covers the two changes that read led to: the polish and the ∅ rule. Two questions are open:
    - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD. Answered on 2026-10-22: DA13 (the polish under ROAD) lowers planted role accuracy more than the blur polish does, so the operator is not the cause.
    - Should the ∅ absence test stay at the 5th percentile? Under ROAD almost no ∅ passes it, so VR now counts the unique and shared roles alone.
@@ -219,6 +229,12 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-22, route (a) drafted.** Branch `paper/decomp-cell-penalty`, which contains the GH200-read commit of PR #44.
+  - **The payoff.** Formulation section 4.1 charges each unique role's cross-class effect per cell, φ(t) = max(0, t). DA14 is version 2's payoff, and DA15 the two-sided cell penalty.
+  - **Toy 6 (planted suppression).** The set payoff and the two-sided penalty fail it in different ways; the one-sided payoff keeps the planted roles at every suppression strength.
+  - **The plan.** `EVAL_PLAN.md` gains a dated entry and the draft section 13.9, which re-declares the claims (D1″a and D1″b), withdraws VR as primary, gates any after-metric on planted val, and selects by RA.
+  - No image was scored with the new payoff.
 
 - **2026-10-22, GH200 dev-val read of version 2, before the sign-off.** The user ran 13 val cells under ROAD and blur: planted pairs on ResNet-50 (seeds 0–4) and ViT-B/16 (seeds 0–1), and six natural cells at seed 0. The readout tables are `cells.tsv`, `comparisons.tsv` and `methods.tsv`, under `/tmp/partition_full_numbers/` on the GH200. The user's written analysis was read in this session.
   - `EVAL_PLAN.md` discloses the read.
