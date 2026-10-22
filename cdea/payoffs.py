@@ -181,3 +181,22 @@ def partition_payoffs(drops: torch.Tensor, null: torch.Tensor | None, kind: str,
     u_l = excess[:, 1, 1] - penalty[:, 1]
     u_s = smooth_min(excess[:, 2, 0], excess[:, 2, 1])
     return torch.stack([u_k, u_l, u_s], dim=1)
+
+
+# ---------------------------------------------------------------------------
+# The shared rule (FORMULATION_DECOMPOSITION.md sections 3.5 and 4.1, drafted
+# 2026-10-22). S is "lowers both", read per cell. Under the cell penalty alone
+# a cell that lowers both classes still goes to U_k when its k drop is more
+# than twice its l drop, and on planted pairs the polish moved C there. So a
+# cell whose single-cell excess drops of k and l are both above the margin may
+# not join U_k or U_l, and any other cell may not join S: closing only the
+# first half lets a unique cell join S to lift the set-level min's weaker side.
+# The welfare still picks between the open roles and the empty one.
+# ---------------------------------------------------------------------------
+
+def shared_cells(cell_excess: torch.Tensor, omega: torch.Tensor, margin: float = 0.0) -> torch.Tensor:
+    """``(B, R)`` bool: the Omega cells whose deletion alone lowers both z_k and z_l by more than ``margin``.
+
+    ``cell_excess`` is ``(B, 2, R)``: ``g_k`` and ``g_l``, excess over the null of one cell.
+    """
+    return omega & (cell_excess[:, 0] > float(margin)) & (cell_excess[:, 1] > float(margin))

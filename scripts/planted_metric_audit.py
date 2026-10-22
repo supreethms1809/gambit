@@ -11,7 +11,11 @@ This prints, per method, what RA in Omega leaves out:
   of images with it inside Omega, and its accuracy inside and overall;
 - RA on the images with all three patches inside Omega, the only ones where
   RA in Omega judges every role;
-- |Omega|, and how many of its cells carry no patch (RA judges none of them).
+- |Omega|, and how many of its cells carry no patch (RA judges none of them);
+- each patch's accuracy over all its cells on the role-confirmed images, the
+  headline the user chose on 2026-10-22 (C's, beside RA over all patch cells).
+
+``--dataset planted_pair_adjacent`` reads D1''b's harder condition.
 
     PYTHONPATH=. python scripts/planted_metric_audit.py --root results/paper/cells --backbone resnet50
 """
@@ -30,12 +34,12 @@ GAME = "partition"
 PATCHES = ("ak", "al", "c")
 
 
-def load(root: Path, split: str, backbone: str, operator: str):
+def load(root: Path, split: str, backbone: str, operator: str, dataset: str = "planted_pair"):
     import pandas as pd
 
-    paths = sorted((root / split / GAME / "planted_pair" / backbone).glob("seed*/records.csv.gz"))
+    paths = sorted((root / split / GAME / dataset / backbone).glob("seed*/records.csv.gz"))
     if not paths:
-        raise SystemExit(f"no planted-pair records under {root / split / GAME / 'planted_pair' / backbone}")
+        raise SystemExit(f"no planted-pair records under {root / split / GAME / dataset / backbone}")
     df = pd.concat([pd.read_csv(path) for path in paths], ignore_index=True)
     df = df[(df["operator"] == operator) & (df["fast"] == 0)]
     confirmed = (df["role_ak"] == 1) & (df["role_al"] == 1) & (df["role_c"] == 1)
@@ -46,7 +50,7 @@ def audit(df) -> list[str]:
     lines = []
     header = (f"{'method':28s} {'n':>4s} {'conf':>5s} {'RAin':>6s} {'RAall':>6s} {'RAin|c':>7s} {'RAall|c':>8s} "
               f"{'cover':>6s} {'all3in':>7s} {'RA|3in':>7s} " + " ".join(f"{t + ' in':>6s} {t + ' ok':>6s}" for t in PATCHES)
-              + f" {'|Om|':>5s} {'other':>6s}")
+              + f" {'|Om|':>5s} {'other':>6s} " + " ".join(f"{t + ' ok|c':>7s}" for t in PATCHES))
     lines.append(header)
     for method, g in df.groupby("method", sort=True):
         c = g[g["confirmed"]]
@@ -59,10 +63,12 @@ def audit(df) -> list[str]:
             f"{method:28s} {len(g):4d} {len(c):5d} {g['ra_in'].mean():6.3f} {g['ra_all'].mean():6.3f} "
             f"{c['ra_in'].mean():7.3f} {c['ra_all'].mean():8.3f} {g['omega_coverage'].mean():6.2f} "
             f"{all_in.mean():7.2f} {g.loc[all_in, 'ra_in'].mean():7.3f} " + " ".join(cells)
-            + f" {g['omega_size'].mean():5.1f} {(g['omega_size'] - 3 * g['omega_coverage']).mean():6.1f}")
+            + f" {g['omega_size'].mean():5.1f} {(g['omega_size'] - 3 * g['omega_coverage']).mean():6.1f} "
+            + " ".join(f"{c[f'ra_all_{t}'].mean():7.2f}" for t in PATCHES))
     lines.append("RAin|c and RAall|c: on images whose three roles were confirmed. all3in: share of images with every patch "
                  "inside Omega; RA|3in: RA on those. '<patch> in': share of images with the patch inside Omega; "
-                 "'<patch> ok': its RA over all images, outside counted wrong. other: Omega cells with no patch.")
+                 "'<patch> ok': its RA over all images, outside counted wrong. other: Omega cells with no patch. "
+                 "'<patch> ok|c': the same on the role-confirmed images.")
     return lines
 
 
@@ -72,8 +78,9 @@ def main(argv=None) -> None:
     p.add_argument("--split", default="val", choices=["val"])
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--operator", default="road", choices=["road", "blur"])
+    p.add_argument("--dataset", default="planted_pair", choices=["planted_pair", "planted_pair_adjacent"])
     args = p.parse_args(argv)
-    print("\n".join(audit(load(Path(args.root), args.split, args.backbone, args.operator))))
+    print("\n".join(audit(load(Path(args.root), args.split, args.backbone, args.operator, args.dataset))))
 
 
 if __name__ == "__main__":

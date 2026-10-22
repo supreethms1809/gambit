@@ -261,7 +261,12 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     the final partition equals step 0 on every Omega cell (D9). ``trapped`` is
     the share of Omega cells whose final role, U_k, U_l or S, started from a
     zero part (initial logit log eps). ``empty_share`` is the share labelled
-    empty, which starts at log eps everywhere.
+    empty, which starts at log eps everywhere. ``shared_rule_share`` is the
+    share of Omega that lowers both classes, the only cells the shared rule
+    lets into S and keeps out of U_k and U_l (NaN without the rule).
+    ``shared_rule_moved`` is the share whose subtraction label the rule
+    closes: a cell that lowers both labelled unique, or one that does not
+    labelled S.
     """
     from cdea._plan import _player_logits
     from cdea.null import null_at
@@ -281,7 +286,7 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
         for stage, masks in views.items():
             edited = _player_logits(model, x, masks, grid[0], grid[1], False, None)
             null = null_at(part.null.to(x.device), masks.sum(dim=-1))
-            penalty = None if part.cell_excess is None else cross_penalty(masks, part.cell_excess, part.payoff)
+            penalty = None if part.payoff == "set" else cross_penalty(masks, part.cell_excess, part.payoff)
             payoff = partition_payoffs(class_drops(full, edited, ids), null, part.payoff, penalty)
             for p, player in enumerate(("uk", "ul", "s")):
                 out[f"payoff_{stage}_{player}"] = payoff[:, p].float().cpu()
@@ -292,6 +297,17 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     moved = ((part.roles != part.search_roles).any(dim=1) & omega).sum(dim=-1).float()
     out["polish_changed"] = (moved / size).cpu()
     out["empty_share"] = (part.roles[:, 3].sum(dim=-1).float() / size).cpu()
+    if part.shared is None:
+        out["shared_rule_share"] = torch.full((x.shape[0],), float("nan"))
+        out["shared_rule_moved"] = torch.full((x.shape[0],), float("nan"))
+    else:
+        out["shared_rule_share"] = (part.shared.sum(dim=-1).float() / size).cpu()
+        if part.init_parts is None:
+            out["shared_rule_moved"] = torch.full((x.shape[0],), float("nan"))
+        else:
+            unique = part.init_parts.argmax(dim=1) < 2
+            moved = omega & ((part.shared & unique) | (~part.shared & ~unique))
+            out["shared_rule_moved"] = (moved.sum(dim=-1).float() / size).cpu()
     if part.init_parts is None:
         out["trapped"] = torch.full((x.shape[0],), float("nan"))
     else:

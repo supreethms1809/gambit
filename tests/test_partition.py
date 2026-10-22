@@ -113,10 +113,12 @@ def test_additive_toy_cdea_keeps_the_shared_cell() -> None:
 def test_the_search_alone_drifts_below_step_zero_and_the_polish_recovers() -> None:
     """Section 4.4. A pure U_k has d~_l = -nu_l < 0, where |d~_l| has slope -1, so to first order l-evidence
     looks like a gain for U_k. At lr 0.1 the straight-through search moves the shared cell to U_k and ends
-    below step 0 (2.0 against 2.625). The polish starts from the better of the two and never goes below it."""
+    below step 0 (2.0 against 2.625). The polish starts from the better of the two and never goes below it.
+    The shared rule would keep the shared cell out of U_k, so it is off here: the test is of the search."""
     model, x = additive_toy()
     h, evidence, _ = _setup(model, x, 1.0)
-    alone = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, polish=False, payoff="set"), evidence=evidence)
+    alone = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, polish=False, payoff="set", shared_rule=False),
+                      evidence=evidence)
     assert int(alone.labels[0, SHARED_CELL]) == U_K
     from cdea.decompose import role_welfare
 
@@ -124,7 +126,8 @@ def test_the_search_alone_drifts_below_step_zero_and_the_polish_recovers() -> No
     def welfare(roles):
         return float(role_welfare(model, x, h.ids, full, roles, alone.null, True, *GRID))
     assert welfare(alone.search_roles) < welfare(alone.initial_roles) - 0.5
-    polished = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff="set"), evidence=evidence)
+    polished = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff="set", shared_rule=False),
+                         evidence=evidence)
     assert float(polished.welfare) >= welfare(polished.initial_roles) - 1e-6
     assert float(polished.welfare) == pytest.approx(welfare(polished.roles), abs=1e-5)
 
@@ -641,6 +644,20 @@ def test_readout_reports_a_small_record_set(capsys) -> None:
     assert paired(frame, "cdea", "cdea", "vr")[0] == 0.0
 
 
+
+def test_readout_keeps_images_of_different_seeds_apart() -> None:
+    import pandas as pd
+
+    from scripts.partition_readout import paired, per_image
+
+    rows = [{"seed": seed, "image_index": 0, "method": method, "vr": vr, "overlap": 0.1 * seed,
+             "overlap_omega": 0.0, "omega_size": 5, "z_k_full": 1.0, "z_l_full": 0.0, "z_m_full": 0.0, "correct": 1}
+            for seed, (a, b) in enumerate([(1.0, 0.0), (0.5, 0.5)]) for method, vr in (("cdea", a), ("subtract", b))]
+    frame = pd.DataFrame(rows)
+    assert len(per_image(frame)) == 2
+    mean, _, _, n = paired(frame, "cdea", "subtract", "vr")
+    assert n == 2 and mean == 0.5
+
 # DA13: the polish under ROAD ----------------------------------------------------
 
 def test_the_edit_null_with_blur_is_the_size_null() -> None:
@@ -841,3 +858,57 @@ def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
     main(["--root", str(tmp_path)])
     printed = capsys.readouterr().out
     assert "subtract" in printed and "RAin|c" in printed
+
+
+# The shared rule (2026-10-22, formulation sections 3.5 and 4.1) -----------------
+
+def _lopsided_toy(ratio: float = 3.0):
+    """C lowers both classes, k by ``ratio`` times l: past the cell penalty's 2:1 line."""
+    weight = _cells((0, AK, 1.0), (1, AL, 1.0), (0, C_PATCH, ratio), (1, C_PATCH, 1.0))
+    return CellToy(weight, torch.tensor([0.5, 0.0, -5.0])).eval(), toy_image(torch.ones(UNITS))
+
+
+def test_a_cell_that_lowers_both_classes_is_shared_whatever_its_ratio() -> None:
+    """Without the rule (DA16) the one-sided cell penalty sends C to U_k: it gains 3 there and pays 1, against
+    min(3, 1) = 1 in S. With the rule, C may not be unique, and CDEA and ``occlusion_partition`` call it S.
+    A_l lowers z_l only, so it may not join S. With the unique half of the rule alone it did: it lifts
+    min(d~_k(S), d~_l(S)) by about what it earns in U_l, the set-level min's mixing."""
+    from cdea.payoffs import shared_cells
+
+    model, x = _lopsided_toy()
+    h, evidence, omega = _setup(model, x, 1.0)
+    cells = [AK, AL, C_PATCH]
+    without = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, shared_rule=False), evidence=evidence)
+    assert int(without.labels[0, C_PATCH]) == U_K
+    assert without.shared is None
+    with_rule = partition(model, x, h, *GRID, PartitionConfig(rho=1.0), evidence=evidence)
+    assert [int(with_rule.labels[0, c]) for c in cells] == [U_K, U_L, SHARED]
+    assert with_rule.shared[0].nonzero().flatten().tolist() == [C_PATCH]
+    assert torch.equal(with_rule.shared, shared_cells(with_rule.cell_excess, with_rule.omega))
+    g = with_rule.cell_excess
+    assert int(cell_partition(g, omega, shared_rule=False)[0, C_PATCH]) == U_K
+    assert [int(cell_partition(g, omega)[0, c]) for c in cells] == [U_K, U_L, SHARED]
+
+
+def test_the_shared_rule_holds_at_every_stage_and_under_every_payoff() -> None:
+    """Step 0, the search's end and the polished partition all obey the rule, for the set payoff (DA14) and the
+    two-sided penalty (DA15) too: cells that lower both stay out of U_k and U_l, and the others out of S."""
+    from cdea.decompose import closed_roles
+
+    model, x = _lopsided_toy()
+    h, evidence, _ = _setup(model, x, 1.0)
+    for payoff in ("cell_positive", "set", "cell_abs"):
+        for steps in (0, 30):
+            out = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, steps=steps, payoff=payoff),
+                            evidence=evidence)
+            closed = closed_roles(out.shared) & out.omega.unsqueeze(1)
+            for roles in (out.initial_roles, out.search_roles, out.roles):
+                assert not (roles & closed).any(), payoff
+            assert float(out.plan[closed].abs().max()) == 0.0
+
+
+def test_the_no_shared_rule_ablation_reaches_the_partition() -> None:
+    from evaluation.run_methods import PARTITION_ABLATIONS, PartitionRunConfig
+
+    assert PartitionRunConfig().shared_rule
+    assert not PARTITION_ABLATIONS["DA16_no_shared_rule"](PartitionRunConfig()).shared_rule

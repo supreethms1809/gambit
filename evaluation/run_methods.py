@@ -1083,6 +1083,7 @@ class PartitionRunConfig:
     polish: bool = True                # False is ablation DA11
     polish_operator: str = "blur"      # blur | road (ablation DA13)
     payoff: str = "cell_positive"      # cell_positive | set (DA14) | cell_abs (DA15)
+    shared_rule: bool = True           # False is ablation DA16
     kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
 
 
@@ -1107,6 +1108,9 @@ PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig
     # evaluated it, and the two-sided cell penalty.
     "DA14_set_cross": lambda c: replace(c, payoff="set"),
     "DA15_cell_abs": lambda c: replace(c, payoff="cell_abs"),
+    # The shared rule (sections 3.5 and 4.1, drafted 2026-10-22): without it, a cell that lowers both
+    # classes may still join U_k or U_l. This is the default the 2026-10-22 queue read.
+    "DA16_no_shared_rule": lambda c: replace(c, shared_rule=False),
 }
 
 
@@ -1197,6 +1201,7 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         independent=cfg.independent,
         polish=cfg.polish,
         payoff=cfg.payoff,
+        shared_rule=cfg.shared_rule,
     )
     if cfg.polish_operator not in {"blur", "road"}:
         raise ValueError(f"unknown polish operator {cfg.polish_operator!r}")
