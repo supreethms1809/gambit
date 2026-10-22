@@ -102,6 +102,8 @@ The payoffs are version 1's, with the size-matched null:
 
 Fixed budgets made mixing bite in version 1, because S had to be filled. Free sizes remove that pressure. Section 6.3 measures what is left.
 
+*2026-10-22: free sizes do not remove the cancellation in U_k. On planted pairs the exact welfare prefers a wrong partition (section 13).*
+
 ### 4.2 Plan and constraints
 
 - θ ∈ R^{4 × |Ω|}. The plan is a softmax over the four roles in every cell, so exclusivity holds by construction.
@@ -368,5 +370,10 @@ Where the text and the implementation disagree:
   - With the polish, both toys give the formulation's roles.
   - The cells record the blur welfare of the step-0, search and final partitions (`payoff_init_*`, `payoff_search_*`, `payoff_hard_*`) and the share of Ω the polish moved.
 - **Toy 4.** With no shared cell, the search alone parks a weak k cell in S. S and ∅ both start at log ε, and Adam moves both alike. The polish takes it back out, so S stays empty.
+- **The welfare's maximum is not the true partition (2026-10-22, GH200 planted read).** This is the known exploit of section 4.1, and it pays in the exact welfare. It is not a first-order artefact, so the polish of section 4.4 makes it worse.
+  - Suppose deleting A_k raises z_l, so d_l(A_k) < 0. The null pushes d̃_l(A_k) lower still.
+  - Then moving C from S into U_k cancels part of |d̃_l(U_k)| and adds d̃_k(C). That gains more than C pays in S, min(d̃_k, d̃_l).
+  - On a toy, with z_k = f_Ak + f_C and z_l = −s·f_Ak + f_Al + f_C, the switch happens at s ≈ 0.5, with or without the null. CDEA follows the welfare and puts C in U_k (`tests/test_partition.py`, a strict xfail).
+  - On planted data, S ends empty in most images, and the polish lowers role accuracy below step 0.
 - **Co-location share.** As written, P nets each position's channels before the min. On the dev models it falls far below 0, because Q is several times P. A positive-part version, in [0, 1], is reported beside it (`evaluation/descriptive.py`).
 

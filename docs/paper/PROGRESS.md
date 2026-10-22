@@ -201,8 +201,14 @@ A separate paper: `SHIFT_FORMULATION.md` and `SHIFT_EVAL_PLAN.md`. Implemented o
 
    Until then, version 1 (13.1–13.4) stands.
 
+   **2026-10-22, after the GH200 dev-val read (log).** On the planted pairs, the welfare's maximum is not the true partition (formulation section 13), and VR does not follow role accuracy. The choice is between:
+   - (a) a payoff that cancellation cannot pay, such as a cell-level cross-class penalty with a set-level gain. It would be re-declared, and tested on the planted test split after the freeze. It needs a harder benchmark: the planted ResNet-50 one is saturated.
+   - (b) the framing rule of 13.8: the question, the benchmark and the measurement are the contribution, and the rule is the method. This also needs a harder benchmark and a valid "after" metric.
+
+   Either way, VR must be replaced, or validated against planted ground truth. Any such change is post hoc and needs a dated `EVAL_PLAN.md` entry first.
+
    On 2026-10-20 and 21 the user asked for version 2 to be built and read locally before the sign-off (log). The sign-off now covers the two changes that read led to: the polish and the ∅ rule. Two questions are open:
-   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD. DA13 (the polish under ROAD) is on the branch `paper/decomp-road-polish` to answer it on the GH200.
+   - Should CDEA polish under ROAD as well as blur? Its VR gains under its own blur are two to three times those under ROAD. Answered on 2026-10-22: DA13 (the polish under ROAD) lowers planted role accuracy more than the blur polish does, so the operator is not the cause.
    - Should the ∅ absence test stay at the 5th percentile? Under ROAD almost no ∅ passes it, so VR now counts the unique and shared roles alone.
 
 ## Parked
@@ -213,6 +219,15 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-22, GH200 dev-val read of version 2, before the sign-off.** The user ran 13 val cells under ROAD and blur: planted pairs on ResNet-50 (seeds 0–4) and ViT-B/16 (seeds 0–1), and six natural cells at seed 0. The readout tables are `cells.tsv`, `comparisons.tsv` and `methods.tsv`, under `/tmp/partition_full_numbers/` on the GH200. The user's written analysis was read in this session.
+  - `EVAL_PLAN.md` discloses the read.
+  - Formulation section 13 records the welfare's flaw.
+  - `tests/test_partition.py` reproduces it on a toy, as a strict xfail.
+  - Open decision 9 now holds the choice the read leaves.
+  - Two checks are still open:
+    - per planted image, C's final role (`conf_c_*` in the records);
+    - the sign of d_l(A_k) under ROAD. Patch drops are not recorded, so this one needs a forward pass on the planted checkpoint.
 
 - **2026-10-21, version 2 merged; DA13 added.** `paper/decomp-partition` was merged into `main` as PR #42 (`daed9c2`). The polish under ROAD is ablation DA13, on `paper/decomp-road-polish`.
   - It was smoke-run on two CIFAR-10 val images (local probe, `results/paper/smoke/partition_da13_check`). It runs without errors at about 19 s per image on the Mac.
