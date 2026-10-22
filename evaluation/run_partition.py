@@ -250,7 +250,7 @@ def _score_batch(model, x, ids, ctx, maps, spec, sample, offset, code_hash, knob
 
 
 def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
-    """D2, D9 and trapped-role inputs for a version-2 plan, under blur, with CDEA's own blur null by size.
+    """D2, D9 and trapped-role inputs for a version 2 plan, under blur, with CDEA's own blur null and payoff.
 
     ``soft``: the payoff of the search's final plan on Omega. ``search``: of
     the hard plan the search ends at. ``hard``: of the final partition, after
@@ -265,7 +265,7 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
     """
     from cdea._plan import _player_logits
     from cdea.null import null_at
-    from cdea.payoffs import class_drops, decomposition_payoffs
+    from cdea.payoffs import class_drops, cross_penalty, partition_payoffs
 
     omega = part.omega
     inside = omega.to(x.dtype).unsqueeze(1)
@@ -281,7 +281,8 @@ def _stage_payoffs(model, x, ids, part, grid) -> dict[str, torch.Tensor]:
         for stage, masks in views.items():
             edited = _player_logits(model, x, masks, grid[0], grid[1], False, None)
             null = null_at(part.null.to(x.device), masks.sum(dim=-1))
-            payoff = decomposition_payoffs(class_drops(full, edited, ids), null)
+            penalty = None if part.cell_excess is None else cross_penalty(masks, part.cell_excess, part.payoff)
+            payoff = partition_payoffs(class_drops(full, edited, ids), null, part.payoff, penalty)
             for p, player in enumerate(("uk", "ul", "s")):
                 out[f"payoff_{stage}_{player}"] = payoff[:, p].float().cpu()
     size = omega.sum(dim=-1).clamp_min(1).float()

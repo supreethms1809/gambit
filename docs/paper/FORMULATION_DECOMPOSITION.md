@@ -1,6 +1,9 @@
 # CDEA decomposition formulation
 
-**Status (2026-10-21).** Version 2, **DRAFT**. Implemented on branch `paper/decomp-partition` (section 13). Not signed off. Two changes followed the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4).
+**Status (2026-10-22).** Version 2, **DRAFT**. Implemented on `main` (section 13). Not signed off.
+- Two changes followed the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4).
+- After the GH200 dev read, the user chose route (a): the payoff of section 4.1 is redrafted with a cell-level cross penalty, on branch `paper/decomp-cell-penalty`. It has not been evaluated on any image. `EVAL_PLAN.md` 13.9 re-declares the claims for it.
+- Open decision 12 is settled: the cell penalty is one-sided.
 - On `main`, `cdea/decompose.py` implements version 1 (`decompose`). Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4. The branch adds version 2 (`partition`) beside it.
 - Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both. On 2026-10-20 the user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
 - Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
@@ -76,23 +79,36 @@ The null comes from the whole grid so that it keeps its version 1 meaning: the c
 
 | Role | Deleting it … |
 |---|---|
-| U_k, unique to k | lowers z_k and leaves z_l unchanged, in either direction |
+| U_k, unique to k | lowers z_k and does not lower z_l (settled 2026-10-22, open decision 12; until then, "leaves z_l unchanged, in either direction") |
 | U_l, unique to l | the same, with k and l swapped |
 | S, shared | lowers both z_k and z_l |
 | ∅, neither | lowers neither |
 
-Suppressing l is still not unique evidence for k (D3, settled in version 1). A region whose deletion raises z_l is penalised in u_k.
+Suppressing l is still not unique evidence for k (D3, settled in version 1).
+- Under the payoff of section 4.1 a region that only suppresses l earns no gain, so it stays out of U_k.
+- Until 2026-10-22 a region whose deletion raises z_l was also penalised in u_k. The user dropped that half of D3 on 2026-10-22 (open decision 12).
+- The planted benchmark labels such a region unique: A_k, a k-only patch confirmed by `verify_roles`' one-sided rule, often raises z_l when deleted.
 
 ## 4. Method
 
 ### 4.1 Payoffs (`cdea/payoffs.py`)
 
-The payoffs are version 1's, with the size-matched null:
-- u_k = d̃_k(U_k) − |d̃_l(U_k)|_s
-- u_l = d̃_l(U_l) − |d̃_k(U_l)|_s
+**Drafted 2026-10-22 (route a, not yet evaluated).** The cross-class term of each unique role moves from the set to the cell. The gains stay set-level:
+- u_k = d̃_k(U_k) − Σ_{r∈U_k} φ(g_l(r))
+- u_l = d̃_l(U_l) − Σ_{r∈U_l} φ(g_k(r))
 - u_S = min_s(d̃_k(S), d̃_l(S))
+- g_j(r) = d_j({r}) − ν_j(1) is the excess drop of z_j when cell r alone is deleted, under CDEA's blur. It is measured once per image, for the Ω cells.
+- φ(t) = max(0, t): a cell is charged for lowering the other class, not for raising it. The user settled this on 2026-10-22 (open decision 12). φ(t) = |t| is ablation DA15.
 - An empty role pays 0, and ∅ always pays 0.
 - The welfare is W = u_k + u_l + u_S, with no weights.
+
+Version 2's payoffs are ablation DA14: u_k = d̃_k(U_k) − |d̃_l(U_k)|_s, and the mirror. The GH200 dev read evaluated those, and section 13 records why they fail.
+
+**Why per cell.** Each cell's effect on the other class is charged on its own, so cells cannot cancel inside an absolute value.
+- A shared cell C in U_k now pays φ(g_l(C)). That roughly equals what it would earn in S, so it is no longer bought into U_k by an A_k that raises z_l.
+- The gain d̃_k(U_k) stays set-level, so cells that matter only together (redundancy, toy 3) still pay together.
+- The cell term is linear in the plan, so its gradient is exact, and the polish updates it move by move.
+- Up to the nulls, a cell that lowers both classes goes to S unless one of its drops is more than twice the other. That is the subtraction rule's threshold.
 
 **Entry threshold.** ν grows with n. So adding a cell raises u_k only if its marginal drop beats a random cell's. The size-matched null is the entry threshold, and no sparsity weight is needed.
 
@@ -102,7 +118,7 @@ The payoffs are version 1's, with the size-matched null:
 
 Fixed budgets made mixing bite in version 1, because S had to be filled. Free sizes remove that pressure. Section 6.3 measures what is left.
 
-*2026-10-22: free sizes do not remove the cancellation in U_k. On planted pairs the exact welfare prefers a wrong partition (section 13).*
+*2026-10-22: free sizes do not remove the cancellation in U_k. On planted pairs the exact welfare prefers a wrong partition (section 13). The drafted payoff closes the cancellation in U_k. Mixing in S is still possible in principle, because u_S keeps the set-level min; MIX and the split halves still measure it.*
 
 ### 4.2 Plan and constraints
 
@@ -162,6 +178,8 @@ The hard partition after the polish. Before 2026-10-21 it was the search's: each
 | DA11 | No polish: the search's hard plan, the output before 2026-10-21 |
 | DA12 | The polish alone, from step 0 (no search). Shows what the search adds |
 | DA13 | The polish under ROAD's fill instead of blur (section 4.4) |
+| DA14 | Version 2's set-level cross term, −\|d̃_l(U_k)\|_s (the payoff the GH200 read evaluated) |
+| DA15 | The two-sided cell penalty, φ(t) = \|t\| |
 | DA2 | Open decision 4 |
 
 ## 5. Comparators (`baselines/decomposition.py`)
@@ -286,10 +304,15 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 
 - Ω construction: ρ and ties.
 - **Toy 1, additive.** Sizes are free. `subtract`, `occlusion_partition` and CDEA all return U_k = {1}, U_l = {2}, S = {3}, ∅ = {4}.
-- **Toy 2, suppression.** As version 1.
+- **Toy 2, suppression.** Changed by open decision 12. The SUPPRESSOR cell raises z_k and lowers z_l, as a planted A_k does, and is now U_k; the two-sided penalty (DA15) leaves it ∅. A pure suppressor, which only lowers z_l, stays out of U_k under every payoff.
 - **Toy 3, redundancy.** The pair {a, b} belongs in U_k. `occlusion_partition` misses it, because each cell alone is below a random cell. CDEA finds it. This is the key test, as in version 1.
 - **Toy 4, mixing (new).** There is no shared cell, so S must stay empty, or MIX and the split halves must flag it.
 - **Toy 5, co-location (new).** One cell carries a k-only and an l-only feature. Every method that labels image cells calls it S. The test documents the limit in section 10.
+- **Toy 6, planted suppression (2026-10-22).** z_k = f_Ak + f_C and z_l = −s·f_Ak + f_Al + f_C, for s in {0.6, 0.9, 1.5}.
+  - The set payoff (DA14) prefers C in U_k.
+  - The two-sided cell penalty (DA15) drops A_k to ∅ from s = 0.9.
+  - The proposed payoff keeps A_k, A_l and C as U_k, U_l and S, and CDEA finds that partition.
+  - A pure suppressor stays out of U_k under every payoff.
 - The size-matched null, chunk invariance, exclusive categorical draws, the score definitions, and the confirmation rule against `verify_roles`.
 
 ## 10. Limits and what lies outside the method
@@ -319,7 +342,7 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 | Additive comparator | `occlusion_assign` (a budgeted linear programme) | `occlusion_partition` (best role per cell) | No budgets |
 | Version 1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
 
-Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). Version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
+Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). On 2026-10-22, open decision 12 kept the suppression penalty's intent (suppression earns no gain) and dropped its charge for raising the other class. Version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
 
 ## 12. Open decisions
 
@@ -336,6 +359,7 @@ Carried over from version 1's decisions (2026-10-14): logits as units (3), the s
 | 9 | ViT-B/16 null cost | A size grid with linear interpolation |
 | 10 | Descriptive measurements outside the method | Run the co-location share and the pairwise interaction on dev val first. Both bear on the framing |
 | 11 | Sign-off | Version 2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any version 2 number is read |
+| 12 | φ in the cell penalty (2026-10-22) | **Settled by the user on 2026-10-22: one-sided, max(0, t).** It drops D3's penalty on raising the other class, and it is the only form that keeps the planted roles on toy 6 at every s. The two-sided form is DA15 |
 
 ## 13. Implementation notes (2026-10-20, branch `paper/decomp-partition`)
 
@@ -370,10 +394,16 @@ Where the text and the implementation disagree:
   - With the polish, both toys give the formulation's roles.
   - The cells record the blur welfare of the step-0, search and final partitions (`payoff_init_*`, `payoff_search_*`, `payoff_hard_*`) and the share of Ω the polish moved.
 - **Toy 4.** With no shared cell, the search alone parks a weak k cell in S. S and ∅ both start at log ε, and Adam moves both alike. The polish takes it back out, so S stays empty.
-- **The welfare's maximum is not the true partition (2026-10-22, GH200 planted read).** This is the known exploit of section 4.1, and it pays in the exact welfare. It is not a first-order artefact, so the polish of section 4.4 makes it worse.
+- **The welfare's maximum is not the true partition (2026-10-22, GH200 planted read).** This is the known exploit of section 4.1, and it pays in the exact welfare. It is not a first-order artefact, so the polish of section 4.4 makes it worse. The drafted payoff of section 4.1 (route a) answers it; until it is evaluated, that is a claim about the toys only.
   - Suppose deleting A_k raises z_l, so d_l(A_k) < 0. The null pushes d̃_l(A_k) lower still.
   - Then moving C from S into U_k cancels part of |d̃_l(U_k)| and adds d̃_k(C). That gains more than C pays in S, min(d̃_k, d̃_l).
-  - On a toy, with z_k = f_Ak + f_C and z_l = −s·f_Ak + f_Al + f_C, the switch happens at s ≈ 0.5, with or without the null. CDEA follows the welfare and puts C in U_k (`tests/test_partition.py`, a strict xfail).
+  - On a toy, with z_k = f_Ak + f_C and z_l = −s·f_Ak + f_Al + f_C, the switch happens at s ≈ 0.5, with or without the null. Under that payoff (now DA14) the exact welfare prefers C in U_k (`tests/test_partition.py`, toy 6).
   - On planted data, S ends empty in most images, and the polish lowers role accuracy below step 0.
+- **RA in Ω on planted pairs (audit, 2026-10-22).** Section 6.7 leaves patch cells outside Ω out of "RA, in Ω". On planted images that hides most of the test.
+  - Each class has two cues there, its unique patch and C. At ρ = 0.5 only the stronger of the two enters C_j(ρ), so Ω usually holds one or two of the three patches.
+  - On clean planted-like maps Ω holds one or two patches at every dominance level. RA in Ω reads 1.0 for the rule, while RA over all patch cells reads 0.33–0.67.
+  - The patches that remain are each class's top cell, and the rule's label there is close to automatic. Grad-CAM clamps the rival's evidence at A_k, so A_k is U_k for any k evidence.
+  - Version 1's RR asked a different question: whether each role's top 2.5% of pixels, over the whole image, lands on its patch. A perfect map scores 0.96 there.
+  - So `subtract`'s 0.998 is RA in Ω, not role accuracy on the benchmark. `scripts/planted_metric_audit.py` reads the coverage, per patch, from the records. `tests/test_partition.py` pins the behaviour.
 - **Co-location share.** As written, P nets each position's channels before the min. On the dev models it falls far below 0, because Q is several times P. A positive-part version, in [0, 1], is reported beside it (`evaluation/descriptive.py`).
 

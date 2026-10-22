@@ -456,6 +456,14 @@ Disclosures for version 2:
 - **Not read.** The planted test split is unread. A re-declared D1′ can still be confirmatory on it after the freeze.
 - **Any change made in response is post hoc.** That covers the payoff, the benchmark and the metric. Each needs a dated entry here before it is evaluated.
 
+**2026-10-22, route (a): a re-declared payoff (DRAFT, written before any evaluation of it).** The user chose route (a) after the GH200 read.
+- **The payoff.** Formulation section 4.1 now charges each unique role's cross-class effect per cell. The set-level gains are unchanged.
+- **Claims.** Section 13.9 re-declares the claims, the metric, the selection and the tests for that payoff.
+- **The code.** Branch `paper/decomp-cell-penalty`. Only the formulation's toys have been run (`tests/test_partition.py`); no image has been scored with the new payoff.
+- **The motivation.** The GH200 read motivated the change. Its numbers, made with version 2's payoff, are not evidence for the new one.
+- **Unread data.** The planted test split is still unread.
+- **Later the same day: open decision 12 settled.** The user declared the one-sided cell penalty, φ(t) = max(0, t). It was settled before any image was scored with either form. The two-sided form stays as DA15.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |
@@ -563,3 +571,60 @@ The definitions are in `FORMULATION_DECOMPOSITION.md` section 6.
   - On planted ResNet-50, a patch is one cell, so `occlusion_partition` sits near the ceiling by construction (as in 13.4). This comparison is read for non-inferiority only there.
   - The framing rule of 13.4 applies, with `occlusion_partition` in place of `occlusion_assign`.
 - **Neither D1′ nor D2′ holds.** The decomposition is reported as a negative result, together with D0 and the descriptive measurements (formulation open decision 10).
+
+### 13.9 Route (a) re-declaration (DRAFT, 2026-10-22)
+
+Written before any image was scored with the payoff of formulation section 4.1 as drafted on 2026-10-22. If the user signs it off, it replaces 13.5–13.8 for the decomposition. Until then, nothing here is read.
+
+**What changes, and what does not.**
+- The payoff: each unique role's cross-class term is charged per cell, with φ(t) = max(0, t). The user settled this on 2026-10-22 (formulation open decision 12). It drops D3's charge for raising the other class, and keeps D3's intent: suppression earns no gain.
+- Unchanged: Ω, the size-matched null, the roles, the plan, the search, the polish, the scorer and the comparators.
+- **Ablations.**
+  - DA14: version 2's set-level term, the payoff the GH200 read evaluated.
+  - DA15: the two-sided cell penalty.
+  - DA11–DA13 as before.
+
+**Claims.**
+
+| # | Claim | Metric | Compared against | Test |
+|---|---|---|---|---|
+| D1″a | On the existing planted pairs, CDEA keeps what the rule gets right | RA in Ω on role-confirmed images | `subtract` | Non-inferiority, family D-T |
+| D1″b | On a harder planted condition, where the rule's evidence misleads, CDEA labels the roles better | RA in Ω on role-confirmed images | `subtract`, and the best rule row | Superiority, family D-T |
+| — | Joint search against per-cell measurement | RA in Ω | `occlusion_partition` | Non-inferiority, δ = 0.05 |
+| D0 | As in 13.5 | | | Descriptive |
+
+- **D1″a.** The planted ResNet-50 benchmark is saturated: `subtract` is near its ceiling. So here CDEA can only show that it does not lose what the rule gets right. Margin δ = 0.02.
+  - *Audit, 2026-10-22 (formulation section 13): that premise is not established.* The 0.998 is RA in Ω, which leaves out the patch cells outside Ω. At ρ = 0.5 Ω usually holds only one cue per class.
+  - Before sign-off, the user decides how RA, ρ and Ω coverage enter D1″. The audit's numbers from the GH200 records (`scripts/planted_metric_audit.py`) come first.
+- **D1″b's condition is not built yet.** It must be specified before anything is read on it: its sample rule, n and seeds.
+  - Proposed: A_k and A_l on adjacent cells, with C elsewhere. Receptive fields spread each patch's evidence into the neighbouring cell, so the reference evidence overlaps, while deleting each patch tells them apart.
+  - Training never places patches on touching cells, and never shows A_k and A_l together. So the condition is a test-time shift, and `verify_roles` decides which images count.
+  - Before any CDEA row is read on it, its val split may be read for `subtract` and `occlusion_partition` alone, to confirm that the rule falls below ceiling. If the rule does not, the condition is replaced before CDEA is read.
+- **The planted ViT-B/16 cells** are a robustness row, not a claim. Too few of their images confirm all three roles.
+
+**The metric.**
+- **VR is withdrawn as a primary metric.** On planted val it did not follow RA across methods, and the row that never says "shared" scored highest.
+- **Natural images are descriptive:** D0, the role sizes, the confirmations and the third class. The exception is an after-metric that first passes a validity gate on planted val.
+- **The gate.** For every role, the share of confirmed role labels on patch cells that match the patch's role must be at least 0.8. It is measured on the `subtract` and `occlusion_partition` rows, never on CDEA's, and decided before any natural-image read.
+- **PUR's set-level |·|** has the flaw of formulation section 13. PUR^cell is reported beside it.
+
+**Selection** (replaces 13.7 for CDEA).
+- Steps and lr, on 13.3's grid.
+- The choice is by mean RA in Ω on role-confirmed planted val images, ResNet-50 seeds 0–4. VR plays no part.
+- Nothing is chosen on test images or on D1″b's condition.
+
+**Tests.**
+- **Family D-T.** 13.4's machinery: sign-flip within seed, the two-level bootstrap, and seeds pooled. ResNet-50, seeds 0–4.
+  - **D1″a holds** if the lower 95% bound of CDEA − `subtract` exceeds −0.02.
+  - **D1″b holds** if CDEA − `subtract` and CDEA − the best rule row both give p < 0.05 with a mean above 0.
+  - **D1″ holds** if D1″a and D1″b both hold.
+- **Joint search against `occlusion_partition`.** On D1″b's condition, with the same machinery and δ = 0.05. The framing rule of 13.4 applies, with `occlusion_partition` in place of `occlusion_assign`.
+- **D1″ does not hold.** The decomposition is reported as a negative result, with D0 and the descriptive measurements (13.8's last line).
+
+**Order.**
+1. The user signs off this section. Formulation open decision 12 was settled on 2026-10-22.
+2. D1″b's condition is specified here, with a dated entry, and implemented.
+3. The planted val cells are rerun at the new hash, for the selection.
+4. The plan is frozen.
+5. The planted test split and D1″b's test split are read once.
+

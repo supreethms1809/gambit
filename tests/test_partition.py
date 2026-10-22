@@ -116,7 +116,7 @@ def test_the_search_alone_drifts_below_step_zero_and_the_polish_recovers() -> No
     below step 0 (2.0 against 2.625). The polish starts from the better of the two and never goes below it."""
     model, x = additive_toy()
     h, evidence, _ = _setup(model, x, 1.0)
-    alone = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, polish=False), evidence=evidence)
+    alone = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, polish=False, payoff="set"), evidence=evidence)
     assert int(alone.labels[0, SHARED_CELL]) == U_K
     from cdea.decompose import role_welfare
 
@@ -124,7 +124,7 @@ def test_the_search_alone_drifts_below_step_zero_and_the_polish_recovers() -> No
     def welfare(roles):
         return float(role_welfare(model, x, h.ids, full, roles, alone.null, True, *GRID))
     assert welfare(alone.search_roles) < welfare(alone.initial_roles) - 0.5
-    polished = partition(model, x, h, *GRID, PartitionConfig(rho=1.0), evidence=evidence)
+    polished = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff="set"), evidence=evidence)
     assert float(polished.welfare) >= welfare(polished.initial_roles) - 1e-6
     assert float(polished.welfare) == pytest.approx(welfare(polished.roles), abs=1e-5)
 
@@ -164,17 +164,43 @@ def test_an_attribution_artefact_is_empty_for_deletion_methods_and_unique_for_th
 SUPPRESSOR, WEAK_K, ONLY_L = 0, 3, 12
 
 
-def test_suppressing_the_rival_is_not_unique_evidence() -> None:
+def test_a_pure_suppressor_is_not_unique_evidence() -> None:
+    """D3's intent, under every payoff: a cell whose deletion only raises z_l earns no gain, so it stays out of U_k.
+
+    Grad-CAM gives such a cell no evidence, so it would lie outside Omega; the test hands it k evidence to put it
+    in Omega and in U_k at step 0, so that deletion alone must move it out.
+    """
+    weight = _cells((0, K_ONLY, 1.0), (1, L_ONLY, 1.0), (1, ART, -1.0), (0, SHARED_CELL, 1.0), (1, SHARED_CELL, 1.0),
+                    *[(0, c, 0.1) for c in K_BACKGROUND])
+    model = CellToy(weight, torch.tensor([0.5, 0.5, -5.0])).eval()
+    x = toy_image(torch.ones(UNITS))
+    h, evidence, _ = _setup(model, x, 1.0)
+    evidence = evidence.clone()
+    evidence[0, 0, ART] = 0.3
+    evidence = normalise(evidence)
+    for payoff in ("cell_positive", "cell_abs", "set"):
+        out = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff=payoff), evidence=evidence)
+        assert bool(out.omega[0, ART]) and bool(out.initial_roles[0, U_K, ART])
+        assert int(out.labels[0, ART]) == NEITHER, payoff
+
+
+def test_a_unique_cell_that_also_suppresses_the_rival() -> None:
+    """Toy 2's SUPPRESSOR raises z_k and lowers z_l, as a planted A_k does. Under the proposed one-sided penalty it
+    is U_k, as the planted ground truth labels A_k. The two-sided penalty (DA15) keeps D3's penalty and leaves it
+    empty. Margin attribution and the rule call it U_k too."""
     model, x = suppression_toy()
     subtract, _, cdea = _labels(model, x, 1.0)
+    assert cdea.payoff == "cell_positive"
     assert int(subtract[SUPPRESSOR]) == U_K
-    assert int(cdea.labels[0, SUPPRESSOR]) == NEITHER
+    assert int(cdea.labels[0, SUPPRESSOR]) == U_K
     assert int(cdea.labels[0, WEAK_K]) == U_K and int(cdea.labels[0, ONLY_L]) == U_L
+    h, evidence, _ = _setup(model, x, 1.0)
+    two_sided = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff="cell_abs"), evidence=evidence)
+    assert int(two_sided.labels[0, SUPPRESSOR]) == NEITHER
 
     from baselines.decomposition import margin_partition
     from baselines.margin import margin_gradcam
 
-    h = _pair(model, x)
     margin = margin_partition(margin_gradcam(model, x, h), cdea.omega, *GRID)
     assert int(margin[0, SUPPRESSOR]) == U_K
 
@@ -638,7 +664,7 @@ def test_the_road_polish_never_ends_below_its_own_step_zero_and_ignores_the_batc
     model, x = additive_toy()
     x2 = torch.cat([x, toy_image(torch.linspace(0.2, 1, UNITS))])
     h2 = _pair(model, x2)
-    cfg = PartitionConfig(steps=4, rho=1.0)
+    cfg = PartitionConfig(steps=4, rho=1.0, payoff="set")
     edit = road_polish_edit(x2, 0, 0, GRID)
     whole = partition(model, x2, h2, *GRID, cfg, polish_edit=edit)
     part = partition(model, x2[1:], HypothesisSet(ids=h2.ids[1:], mask=h2.mask[1:]), *GRID, cfg,
@@ -676,28 +702,142 @@ def test_paper_run_takes_the_road_polish_ablation() -> None:
 AK, AL, C_PATCH = 0, 3, 12
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Formulation section 13: when deleting A_k raises z_l by more than about half of C's l-drop, moving C "
-    "into U_k cancels part of |d~_l(U_k)| and the exact welfare prefers that wrong partition. A payoff that "
-    "cannot be paid by cancellation would make this pass."))
-def test_the_welfare_prefers_the_true_partition_when_a_unique_patch_suppresses_the_rival() -> None:
-    from cdea.decompose import role_welfare
+def _planted_toy(suppression: float):
+    weight = _cells((0, AK, 1.0), (1, AK, -suppression), (1, AL, 1.0), (0, C_PATCH, 1.0), (1, C_PATCH, 1.0))
+    return CellToy(weight, torch.tensor([0.5, 0.0, -5.0])).eval(), toy_image(torch.ones(UNITS))
 
-    weight = _cells((0, AK, 1.0), (1, AK, -0.9), (1, AL, 1.0), (0, C_PATCH, 1.0), (1, C_PATCH, 1.0))
-    model = CellToy(weight, torch.tensor([0.5, 0.0, -5.0])).eval()
-    x = toy_image(torch.ones(UNITS))
+
+def _roles(uk, ul, s, cells):
+    roles = torch.zeros(1, 4, UNITS, dtype=torch.bool)
+    for role, members in ((U_K, uk), (U_L, ul), (SHARED, s)):
+        roles[0, role, members] = True
+    for cell in cells:
+        if not roles[0, :3, cell].any():
+            roles[0, NEITHER, cell] = True
+    return roles
+
+
+@pytest.mark.parametrize("suppression", [0.6, 0.9, 1.5])
+def test_the_cell_penalty_keeps_the_planted_roles_when_a_unique_patch_suppresses_the_rival(suppression) -> None:
+    """Formulation section 13. A_k raises z_l when deleted. The set-level term pays C to join U_k; the two-sided
+    cell penalty (DA15) drops A_k from s = 0.9; the one-sided penalty keeps the true partition at every s."""
+    from cdea.decompose import blur_edit, role_welfare, single_cell_excess
+
+    model, x = _planted_toy(suppression)
     h = _pair(model, x)
     full = model(x).detach()
+    cells = [AK, AL, C_PATCH]
+    omega = torch.zeros(1, UNITS, dtype=torch.bool)
+    omega[0, cells] = True
     table = size_null(model, x, h.ids, *GRID, 3)
-    true = torch.zeros(1, 4, UNITS, dtype=torch.bool)
-    true[0, U_K, AK] = true[0, U_L, AL] = true[0, SHARED, C_PATCH] = True
-    cancel = torch.zeros(1, 4, UNITS, dtype=torch.bool)
-    cancel[0, U_K, [AK, C_PATCH]] = True
-    cancel[0, U_L, AL] = True
-    cancel[0, NEITHER, :] = False
-    for use_null in (True, False):
-        w_true = float(role_welfare(model, x, h.ids, full, true, table, use_null, *GRID))
-        w_cancel = float(role_welfare(model, x, h.ids, full, cancel, table, use_null, *GRID))
-        assert w_true > w_cancel
+    with torch.no_grad():
+        excess = single_cell_excess(model, h.ids, full, blur_edit(x, *GRID), omega, table, True)
+
+    def welfare(roles, payoff):
+        cell = None if payoff == "set" else excess
+        return float(role_welfare(model, x, h.ids, full, roles, table, True, *GRID, payoff=payoff, cell_excess=cell))
+
+    true = _roles([AK], [AL], [C_PATCH], cells)
+    cancel = _roles([AK, C_PATCH], [AL], [], cells)
+    dropped = _roles([], [AL], [C_PATCH], cells)
+    assert welfare(cancel, "set") > welfare(true, "set")
+    assert welfare(true, "cell_positive") > max(welfare(cancel, "cell_positive"), welfare(dropped, "cell_positive"))
+    if suppression >= 0.9:
+        assert welfare(dropped, "cell_abs") > welfare(true, "cell_abs")
     _, _, cdea = _labels(model, x, 1.0)
-    assert int(cdea.labels[0, C_PATCH]) == SHARED
+    assert [int(cdea.labels[0, c]) for c in cells] == [U_K, U_L, SHARED]
+
+
+def test_the_cross_penalty_is_per_cell_and_its_gradient_is_exact() -> None:
+    from cdea.payoffs import cross_penalty, partition_payoffs
+
+    excess = torch.tensor([[[0.5, -0.2, 0.0], [-0.4, 0.3, 0.8]]])        # g_k, g_l of three cells
+    masks = torch.tensor([[[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [0.0, 0.0, 1.0]]], requires_grad=True)
+    pos = cross_penalty(masks, excess, "cell_positive")
+    assert pos[0].tolist() == pytest.approx([0.0 + 0.3, 0.0 + 0.0, 0.0])
+    assert cross_penalty(masks, excess, "cell_abs")[0].tolist() == pytest.approx([0.4 + 0.3, 0.2 + 0.0, 0.0])
+    pos[0, 0].backward()
+    assert masks.grad[0, 0].tolist() == pytest.approx([0.0, 0.3, 0.8])
+    drops = torch.tensor([[[2.0, 0.5], [0.0, 0.0], [1.0, 1.5]]])
+    null = torch.full((1, 3, 2), 0.25)
+    null[0, 1] = 0.0                                                      # an empty role's null is nu(0) = 0
+    u = partition_payoffs(drops, null, "cell_positive", pos.detach())
+    assert u[0, 0] == pytest.approx(1.75 - 0.3)
+    assert float(u[0, 1]) == 0.0                                          # an empty unique role pays exactly 0
+    assert u[0, 2] == pytest.approx(0.75, abs=1e-3)
+
+
+def test_the_polish_maximises_the_cell_payoff_it_reports() -> None:
+    from cdea.decompose import role_welfare
+
+    model, x = _planted_toy(0.9)
+    h, evidence, _ = _setup(model, x, 1.0)
+    out = partition(model, x, h, *GRID, PartitionConfig(rho=1.0), evidence=evidence)
+    full = model(x).detach()
+
+    def welfare(roles):
+        return float(role_welfare(model, x, h.ids, full, roles, out.null, True, *GRID, payoff=out.payoff,
+                                  cell_excess=out.cell_excess))
+
+    assert float(out.welfare) == pytest.approx(welfare(out.roles), abs=1e-5)
+    assert float(out.welfare) >= welfare(out.initial_roles) - 1e-6
+
+
+def test_the_runner_diagnostics_score_each_payoff_as_it_was_optimised() -> None:
+    from evaluation.run_partition import _stage_payoffs
+
+    model, x = _planted_toy(0.9)
+    h, evidence, _ = _setup(model, x, 1.0)
+    for payoff in ("cell_positive", "cell_abs", "set"):
+        out = partition(model, x, h, *GRID, PartitionConfig(rho=1.0, payoff=payoff), evidence=evidence)
+        stage = _stage_payoffs(model, x, h.ids, out, GRID)
+        hard = sum(float(stage[f"payoff_hard_{p}"]) for p in ("uk", "ul", "s"))
+        assert hard == pytest.approx(float(out.welfare), abs=1e-4), payoff
+        assert float(stage["polish_welfare"]) == pytest.approx(float(out.welfare), abs=1e-6)
+
+
+# RA in Omega on planted pairs (2026-10-22 audit) ---------------------------------
+
+@pytest.mark.parametrize("share", [0.3, 0.55, 0.9])
+def test_rho_half_keeps_one_cue_per_class_and_ra_in_omega_ignores_the_rest(share) -> None:
+    """Each class's evidence sits on its unique patch (``share``) and on C. At rho = 0.5 only the stronger cue
+    of each class enters Omega, so one or two of the three patches are outside it. RA in Omega leaves them
+    out and reads 1 for the rule; RA over all patch cells counts them wrong."""
+    units = 49
+    ak, al, c = 10, 40, 24
+    ek = torch.zeros(1, units)
+    ek[0, ak], ek[0, c] = share, 1 - share
+    el = torch.zeros(1, units)
+    el[0, al], el[0, c] = share, 1 - share
+    evidence = normalise(torch.stack([ek, el], dim=1))
+    omega = evidence_region(evidence, 0.5)
+    patches = torch.zeros(1, 3, units, dtype=torch.bool)
+    patches[0, 0, ak] = patches[0, 1, al] = patches[0, 2, c] = True
+    scores = planted_role_scores(roles_from_labels(rule_labels(rule_parts(evidence), omega)), patches, omega)
+    assert 1 <= int(omega[0, [ak, al, c]].sum()) <= 2
+    assert float(scores["ra_in"]) == 1.0
+    assert float(scores["ra_all"]) < 1.0
+    assert float(scores["ra_all"]) == pytest.approx(float(scores["omega_coverage"]))
+
+
+def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
+    import pandas as pd
+
+    from scripts.planted_metric_audit import main
+
+    rows = []
+    for image in range(4):
+        for method in ("subtract", "cdea"):
+            row = {"method": method, "operator": "road", "fast": 0, "image_index": image,
+                   "role_ak": 1, "role_al": 1, "role_c": int(image % 2 == 0), "ra_in": 1.0, "ra_all": 2 / 3,
+                   "omega_coverage": 2 / 3, "omega_size": 10}
+            for t, outside in (("ak", 0.0), ("al", 0.0), ("c", 1.0)):
+                row[f"conf_{t}_outside"] = outside
+                row[f"ra_all_{t}"] = 1.0 - outside
+            rows.append(row)
+    out = tmp_path / "val" / "partition" / "planted_pair" / "resnet50" / "seed0"
+    out.mkdir(parents=True)
+    pd.DataFrame(rows).to_csv(out / "records.csv.gz", index=False)
+    main(["--root", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "subtract" in printed and "RAin|c" in printed
