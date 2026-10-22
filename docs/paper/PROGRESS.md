@@ -15,28 +15,21 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
-- **First, read open decision 9 (version 2 re-scope).**
-  - If the user has signed off version 2, hold the decomposition phases (`dev`, `planted-val`, `natural-val`). Version 1 records will not match the version 2 hash.
-  - The shift phases are unaffected.
-0. The 2026-10-20 review fixes and the B7 review's fixes (log) moved the method hash to `d69b1ac6` and the knobs hash to `38f5d7c0`. No earlier record counts. ROAD now solves to convergence, so time one decomposition cell first (C2) and check the launcher's cell budget.
-1. Pull `main` and run `PYTHONPATH=. python -m pytest tests/`. Every test should pass there. Two of them only mean something there:
-   - `test_a_resnet_allocation_repeats_exactly_on_an_accelerator` checks CUDA determinism;
-   - `test_plan_refactor` compares against a CPU reference that a Mac does not reproduce, even at the commit that wrote it.
-2. Check the jobs under "Running". The planted-pair ViT-B/16 training must have finished: the launcher trains any checkpoint it cannot find, and it cannot see a trainer started outside it.
-3. Dry-run, then launch the val phases in one queue, two large and two small cells at once:
+- The partition queue is in "Running". Do not launch `launch_runs.py` phases `dev`, `planted-val`, or `natural-val`: those still call `--game decomposition`. Resume with the same command; it skips done markers whose stamp matches.
+- Shift-val stays stopped. Its finished cells were written before this pull.
+- **Open decision 9 is still unsigned.** The queue was restarted because the user ordered the decomposition rerun after the cell-penalty fix. Do not read a version 2 number as a paper result until the sign-off.
+0. Method hash `eea2f74d`, knobs hash `38f5d7c0` (`main` at `ee8d70c`). The stopped partition cells are in `results/archive/2026-10-21-partition-4a716ca7/`. The version 1 cells are in the 2026-10-21 decomposition folder of `results/archive/`. Neither counts.
+1. Check the job under "Running". Resume it, if it has stopped, with:
    ```bash
-   PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate --dry-run
-   nohup env PYTHONPATH=. python scripts/launch_runs.py --phases dev,planted-val,natural-val,shift-gate > results/paper/logs/launch_runs.log 2>&1 &
+   PYTHONPATH=. python results/paper/logs/launch_partition_queue.py --dry-run
+   nohup env PYTHONPATH=. python -u results/paper/logs/launch_partition_queue.py > results/paper/logs/launch_partition.log 2>&1 &
    ```
-   - Record the launcher's PID under "Running".
-   - Cell logs are in `results/paper/logs/runs/`.
-   - The same command resumes after a stop and skips done cells.
-4. When dev is done, make the dev selection (A2) and run the degenerate checks (A3). Record the chosen labels in the log.
-5. When the shift gate is done, read it (SH2). Only then launch `shift-val` (SH3).
+2. When the dev partition cells finish, make the version 2 selection (EVAL_PLAN 13.7) with `scripts/partition_readout.py`. Record the chosen labels in the log. `gambitEnv` has no pandas; the readout was run with `/home/sureshm/anaconda3/envs/cdea/bin/python`.
+3. Shift-val stays stopped until someone decides whether the rows written before this pull still count. The shift gate's finished cells are in `results/paper/gate_shift`.
 
 ## Current state, 2026-10-14
 
-- **Code.** Method hash `d69b1ac6`, knobs hash `38f5d7c0` (2026-10-20, the review fixes and the B7 review's fixes). Before that it was `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
+- **Code.** Method hash `eea2f74d`, knobs hash `38f5d7c0` (2026-10-21, `main` at `ee8d70c`, the one-sided cell penalty). Before that it was `4a716ca7` (the partition merge and the ROAD polish), then `d69b1ac6`, then `11bdeb54`. On 2026-10-14 it moved from `a5deb9fe` to `8486647c` (the shift-game commits), then to `11bdeb54` (the built-in input convention). See the log.
   - The 2026-10-20 fixes change scores: ROAD's fill, the shift random floor and `extremal_shift`. Rows written at `11bdeb54` are not comparable.
   - The decomposition game did not change. A CPU smoke cell at all three hashes gives identical rows, every column except the hash (7 core methods, 28 rows).
   - The input convention is built in (`models.wrapper.INPUT_CONVENTION = "imagenet"`). No file is read, and every paper checkpoint name is unchanged.
@@ -67,15 +60,15 @@ On the GH200:
 
 ## Running
 
-Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 and add the PIDs.
-- **Planted-pair ViT-B/16 training.**
-  - Command: `launch_paper_training.py --seeds 0,1,2,3,4 --datasets planted_pair --models vit_b_16 --jobs 3`.
-  - Log: `results/paper/logs/train_planted_pair_vit_b_16.log`.
-- **Planted-pair ResNet-50 val cells.**
-  - Seeds 0–4 run one after another, writing into `results/paper/decomp_dev/`.
-  - They run from the worktree `../gambit-decomp`, which has the same hash as `main`.
-  - Log: `results/paper/logs/decomp_dev/planted_pair_resnet50_loop.log`.
-- **Dev cells for CIFAR-10 and HAM10000.** Started 2026-10-14 around 00:20 UTC. Logs are in `results/paper/logs/decomp_dev/`.
+Last recorded on 2026-10-22. Nothing is running.
+- **Partition val queue: finished.** 26 of 26 cells, 0 failed (`launch_partition.log`). Read on 2026-10-22 (log).
+- (Was) **Partition val queue** (the decomposition game after the cell-penalty fix). PID 604874. 26 cells, two ViT and two ResNet at a time. Val only. No `--final`.
+  - Command: `PYTHONPATH=. python -u results/paper/logs/launch_partition_queue.py`
+  - Log: `results/paper/logs/launch_partition.log`. Cell logs: `results/paper/logs/runs/`.
+  - Records: `results/paper/cells/val/partition/`. Done markers: `results/paper/cells/_markers/val/partition__*.done`.
+  - Stamp: method `eea2f74d`, knobs `38f5d7c0`. Default CDEA payoff is `cell_positive`. ResNet dev and planted cells also run DA14 and DA15.
+  - First four cells: ImageNet ViT, ImageNet ResNet, planted-pair ViT seed 0, planted-pair ResNet seed 0.
+  - The same command resumes and skips done cells. A failure stops new starts; already-running cells finish.
 
 ## Plan
 
@@ -230,6 +223,21 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-22, high-overlap read of the same records.** Images were split per dataset × backbone by O: the top tertile (section 6.8) and the top decile. The scratch scripts are named in the session; read with the `cdea` env.
+  - **Readout fix.** `scripts/partition_readout.py` keyed images on `image_index` alone. The planted cells pool five seeds, so images of different seeds were merged: "882 images", the top tertile and the paired intervals were wrong. Per-method means were not affected. It now keys on seed and `image_index` (`with_image_key`), with a test. The planted rows now read 1000 images and a top tertile of 333.
+  - **Natural cells, ROAD.** CDEA minus `subtract` in VR is +0.15 on all images (11 cells ahead, 0 behind) and +0.04 [−0.00, +0.08] on the top tertile (3 ahead, 3 behind). The share of overlap confirmed shared falls by 0.12 against `subtract` on the top tertile (0 ahead, 4 behind). The leads over `occlusion_minsplit` and `occlusion_partition` hold on the top tertile.
+  - **Planted pairs.** On the top tertile, CDEA labels C as S 92% of the time (ResNet), against 82% on all images; `subtract` stays at 1.00. On ViT the RA pick (`lr0.05_t50`) labels confirmed C as S 87%, the VR pick (`lr0.2_t100`) 72%.
+  - **The definition of S.** Section 3.5 defines S as "lowers both", but the payoff does not enforce it: section 4.1 sends a cell that lowers both to U_k when one drop exceeds twice the other. The scorer's S check (6.4) uses "both drops count". Open decision 12 changed the unique side only.
+  - The user agreed (2026-10-22) to report C's accuracy as the planted headline, with RA over all patch cells, and to drop RA in Ω as a summary. No dated `EVAL_PLAN.md` entry yet.
+
+- **2026-10-22, read of the cell-penalty partition queue (`eea2f74d`, all 26 val cells).** Commands: `scripts/partition_readout.py --operator {road,blur}` and `scripts/planted_metric_audit.py --backbone {resnet50,vit_b_16}`, run with the `cdea` env's python, on `results/paper/cells/val/partition/`. Every row matched the hash. Open decision 9 is still unsigned, so this is a dev read.
+  - **Subtract's planted RA was recomputed independently.** A scratch script used its own Grad-CAM on `layer4`, its own Ω and rule in numpy, and the patch masks of seed 0. It agrees with the records: RA in Ω 0.9967 in both. The number is real. It is high because RA in Ω scores only the C patch: A_k and A_l are right for every method, and a rule with no S scores 0.79. C enters Ω mostly when Grad-CAM is balanced on it.
+  - **CDEA's planted loss is the polish moving C out of S.** DA11 (no polish) keeps C in S; the default does not on 17% of the images where C is in Ω on ResNet, and on 49% on ViT. On ResNet the moved C cells have blur drops of about 6.6 on one class and 2.6 on the other, above the payoff's 2:1 line. Adding C to U_k also raises d̃_k(U_k) by more than C's own drop. The one-sided cell penalty fixed DA14's C → S share (0.002 → 0.82).
+  - **On ViT, `verify_roles` confirms C as shared on only 27% of planted images**, so RA on C is mostly scored against a label the model does not follow.
+  - VR under ROAD: CDEA is first on 8 of 16 natural cells. On planted pairs `margin_gradcam_ref`, which has no S, leads VR (0.90 on ResNet). Under blur, CDEA is first on every natural cell.
+
+- **2026-10-21, partition queue restarted after the cell penalty.** The queue at method `4a716ca7` was stopped and moved to `results/archive/2026-10-21-partition-4a716ca7/` (19 summaries, 19 markers). `main` was pulled to `ee8d70c`. The same 26 val cells were started again (PID 604874, log `results/paper/logs/launch_partition.log`). Default CDEA is the one-sided cell penalty. ResNet dev and planted cells also run DA14 and DA15. Shift cells, the shift gate, checkpoints, and `shift_pairs` were left in place. `tests/test_partition.py`: 44 passed; the two readout tests need pandas, which `gambitEnv` does not have.
 
 - **2026-10-22, RA audit.** The user doubted that `subtract` reaches RA 0.998 on planted pairs, since version 1 never scored near that. RA is computed as section 6.7 defines it, but "RA, in Ω" leaves out patch cells outside Ω.
   - At ρ = 0.5 each class's stronger cue alone enters Ω. On clean planted-like maps Ω holds one or two of the three patches, RA in Ω reads 1.0 for the rule, and RA over all patch cells reads 0.33–0.67.

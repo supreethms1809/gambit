@@ -26,8 +26,10 @@ Omega instead, with free role sizes:
                        E_k - m, E_l - m and m (``cdea.region.rule_labels``)
     occlusion_partition, gradient_partition
                        a cell takes its best of s_k, s_l, s_S if that score is
-                       above 0, else the empty role. With free sizes this is
-                       the exact optimum of the additive objective.
+                       above 0, else the empty role. A cell with g_k > 0 and
+                       g_l > 0 cannot be unique (the shared rule), so it is S.
+                       With free sizes this is the exact optimum of the
+                       additive objective under that rule.
     random_partition   each Omega cell takes a seeded uniform role
 """
 
@@ -208,9 +210,18 @@ def rule_partition(e_k: torch.Tensor, e_l: torch.Tensor, omega: torch.Tensor, gr
     return rule_labels(rule_parts(evidence.to(omega.device)), omega)
 
 
-def cell_partition(g: torch.Tensor, omega: torch.Tensor) -> torch.Tensor:
-    """``(B, R)`` labels from ``(B, 2, R)`` per-cell excess drops: the best cell score if above 0, else empty."""
-    scores = cell_scores(g.to(omega.device))
+def cell_partition(g: torch.Tensor, omega: torch.Tensor, shared_rule: bool = True) -> torch.Tensor:
+    """``(B, R)`` labels from ``(B, 2, R)`` per-cell excess drops: the best cell score if above 0, else empty.
+
+    With ``shared_rule``, a cell that lowers both classes (``g_k > 0`` and
+    ``g_l > 0``) cannot be unique, so it takes S, whose score ``min(g_k, g_l)``
+    is then above 0.
+    """
+    g = g.to(omega.device)
+    scores = cell_scores(g)
+    if shared_rule:
+        both = (g[:, 0] > 0) & (g[:, 1] > 0)
+        scores[:, :2] = scores[:, :2].masked_fill(both.unsqueeze(1), float("-inf"))
     best, role = scores.max(dim=1)
     labels = torch.where(best > 0, role, torch.full_like(role, NEITHER))
     return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))

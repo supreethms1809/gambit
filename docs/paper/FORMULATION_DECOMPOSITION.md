@@ -4,6 +4,7 @@
 - Two changes followed the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4).
 - After the GH200 dev read, the user chose route (a): the payoff of section 4.1 is redrafted with a cell-level cross penalty, on branch `paper/decomp-cell-penalty`. It has not been evaluated on any image. `EVAL_PLAN.md` 13.9 re-declares the claims for it.
 - Open decision 12 is settled: the cell penalty is one-sided.
+- 2026-10-22, after the read of the cell-penalty queue: the shared rule (sections 3.5 and 4.1), RA reporting (section 6.7) and the harder planted condition (section 7). `EVAL_PLAN.md` has the dated entry.
 - On `main`, `cdea/decompose.py` implements version 1 (`decompose`). Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4. The branch adds version 2 (`partition`) beside it.
 - Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both. On 2026-10-20 the user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
 - Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
@@ -84,6 +85,11 @@ The null comes from the whole grid so that it keeps its version 1 meaning: the c
 | S, shared | lowers both z_k and z_l |
 | ∅, neither | lowers neither |
 
+**The shared rule (2026-10-22).** The table is read per cell, by each cell's single-cell excess drop g_j(r) (section 4.1).
+- A cell that lowers both, with g_k(r) > 0 and g_l(r) > 0, may be S or ∅, never U_k or U_l.
+- Any other cell may be U_k, U_l or ∅, never S.
+- Before this, the payoff alone decided, and section 4.1's 2:1 line sent a cell that lowers both to a unique role.
+
 Suppressing l is still not unique evidence for k (D3, settled in version 1).
 - Under the payoff of section 4.1 a region that only suppresses l earns no gain, so it stays out of U_k.
 - Until 2026-10-22 a region whose deletion raises z_l was also penalised in u_k. The user dropped that half of D3 on 2026-10-22 (open decision 12).
@@ -108,7 +114,18 @@ Version 2's payoffs are ablation DA14: u_k = d̃_k(U_k) − |d̃_l(U_k)|_s, and 
 - A shared cell C in U_k now pays φ(g_l(C)). That roughly equals what it would earn in S, so it is no longer bought into U_k by an A_k that raises z_l.
 - The gain d̃_k(U_k) stays set-level, so cells that matter only together (redundancy, toy 3) still pay together.
 - The cell term is linear in the plan, so its gradient is exact, and the polish updates it move by move.
-- Up to the nulls, a cell that lowers both classes goes to S unless one of its drops is more than twice the other. That is the subtraction rule's threshold.
+- Up to the nulls, under the payoff alone, a cell that lowers both classes goes to S unless one of its drops is more than twice the other. That is the subtraction rule's threshold. The shared rule (below) removes that line.
+
+**The shared rule (2026-10-22, after the cell-penalty read; ablation DA16 drops it).** It closes roles per cell, and the welfare chooses among the open ones:
+- U_k and U_l are closed on cells with g_k(r) > 0 and g_l(r) > 0;
+- S is closed on every other cell;
+- ∅ is always open.
+
+It is a hard constraint, not a weight. In the search the closed roles get logit −∞, and the polish never moves a cell into a closed role.
+- **Why.** On planted val the polish moved C, which lowers both classes, into U_k on 17% of ResNet-50 images with C in Ω. Its drops were past the 2:1 line, and adding it raised d̃_k(U_k) by more than it paid.
+- **Why both halves.** With only the first half, the l-only patch joined S on a toy (`tests/test_partition.py`). It raised the set-level min by about what it earned in U_l: the mixing of the known exploit below. The second half closes that mixing for single cells.
+- **The cost.** Redundant shared evidence, a region that lowers both classes only jointly, cannot be S. Redundant unique evidence (toy 3) is unaffected.
+- The margin is 0, so "lowers" means "beats a random cell" (ν_j(1)). g is measured under blur with CDEA's null, as for the cell penalty.
 
 **Entry threshold.** ν grows with n. So adding a cell raises u_k only if its marginal drop beats a random cell's. The size-matched null is the entry threshold, and no sparsity weight is needed.
 
@@ -180,6 +197,7 @@ The hard partition after the polish. Before 2026-10-21 it was the search's: each
 | DA13 | The polish under ROAD's fill instead of blur (section 4.4) |
 | DA14 | Version 2's set-level cross term, −\|d̃_l(U_k)\|_s (the payoff the GH200 read evaluated) |
 | DA15 | The two-sided cell penalty, φ(t) = \|t\| |
+| DA16 | No shared rule (section 4.1): every role open to every cell, the payoff alone decides |
 | DA2 | Open decision 4 |
 
 ## 5. Comparators (`baselines/decomposition.py`)
@@ -199,7 +217,7 @@ Rules never label a cell ∅.
 | `ig_minsplit` | Captum IntegratedGradients, as version 1 | Core |
 | `occlusion_minsplit` | Captum `Occlusion`, black, one cell, as version 1 | Core |
 | `rise_minsplit`, `extremal_minsplit` | As version 1 | Extended |
-| `occlusion_partition` | Ours. The single-cell blur drops g_{j,r} (excess over ν(1)) give cell scores s_k = g_k − \|g_l\|, s_l = g_l − \|g_k\|, s_S = min(g_k, g_l). A cell takes its best role if that score is > 0, else ∅. With free sizes this per-cell rule is the exact optimum of the additive objective, so no linear programme is needed | Core. Decides the framing |
+| `occlusion_partition` | Ours. The single-cell blur drops g_{j,r} (excess over ν(1)) give cell scores s_k = g_k − \|g_l\|, s_l = g_l − \|g_k\|, s_S = min(g_k, g_l). A cell takes its best role if that score is > 0, else ∅. Under the shared rule (4.1), a cell with g_k > 0 and g_l > 0 is S. With free sizes this per-cell rule is the exact optimum of the additive objective, so no linear programme is needed | Core. Decides the framing |
 | `gradient_partition` | The same, with the first-order g of version 1's `gradient_assign` | Ablation DA3 |
 | `margin_gradcam_ref` | The margin map on Ω: positive cells go to U_k, negative cells to U_l, with no S | Reference |
 | `random_partition` | Each Ω cell takes a seeded uniform role | Floor |
@@ -278,7 +296,8 @@ The before/after figure shows, per method and per overlap tertile, O before and 
 - **Ω coverage.** The share of planted patch cells inside Ω. It is a property of the reference evidence and is the same for every method.
 - **Role accuracy RA.** For each planted patch (A_k, A_l, C), the share of its cells labelled with its role. RA is the mean over the three patches.
   - In "RA, all", patch cells outside Ω count as wrong.
-  - In "RA, in Ω", they are excluded.
+  - In "RA, in Ω", they are excluded. **Dropped as a summary on 2026-10-22** (user; section 13's audit). It is still recorded.
+  - **The headline (2026-10-22).** C's accuracy over all its cells, on role-confirmed images, with RA all and each patch beside it. A_k and A_l are labelled right by every method on the existing pairs, so C carries the test. On the harder condition (section 7) the headline is RA all.
 - **Confusion.** A 3 × 5 table: patch × {U_k, U_l, S, ∅, outside Ω}.
 
 ### 6.8 Overlap strata
@@ -290,6 +309,12 @@ O tertiles per dataset. The cut points come from val and are frozen with the pla
 Unchanged from version 1: `PlantedPairCIFAR`, the three pairs, the training rule, grid placement, the sample rule and `verify_roles`. The checkpoints are version 1's.
 
 One addition: report Ω coverage (6.7). A patch that the reference evidence misses cannot be labelled by any method, so it is a limit of the evidence, not of a method.
+
+**The harder condition (2026-10-22, `EVAL_PLAN.md` 13.9's D1″b).** Dataset key `planted_pair_adjacent`.
+- The same test-mode images and checkpoints, but A_k and A_l sit on two cells that share a side, and C on a cell touching neither.
+- Receptive fields spread each patch's evidence into its neighbour, so the reference evidence for k and l overlaps on the pair. Deleting each patch still tells them apart.
+- Training never places patches on touching cells, so it is a test-time shift. `verify_roles` decides which images count.
+- Its ceiling check and sample rule are in `EVAL_PLAN.md`'s dated entry of 2026-10-22.
 
 ## 8. Degenerate routes (`scripts/check_degenerate.py`)
 
@@ -313,6 +338,10 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
   - The two-sided cell penalty (DA15) drops A_k to ∅ from s = 0.9.
   - The proposed payoff keeps A_k, A_l and C as U_k, U_l and S, and CDEA finds that partition.
   - A pure suppressor stays out of U_k under every payoff.
+- **Toy 7, the shared rule (2026-10-22).** C lowers k three times as much as l.
+  - Without the rule (DA16), the cell penalty sends C to U_k.
+  - With it, CDEA and `occlusion_partition` call C shared.
+  - With only its unique half, A_l joined S. Every stage obeys the rule, under every payoff.
 - The size-matched null, chunk invariance, exclusive categorical draws, the score definitions, and the confirmation rule against `verify_roles`.
 
 ## 10. Limits and what lies outside the method

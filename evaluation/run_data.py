@@ -76,16 +76,20 @@ def decomposition_sample(
     model=None,
     device=None,
 ) -> DecompositionSample:
-    """Natural datasets: the contrastive sample. ``planted_pair``: needs the model (section 6)."""
-    if dataset == "planted_pair":
+    """Natural datasets: the contrastive sample. Planted conditions (``PLANTED_CONDITIONS``): need the model (section 6)."""
+    from evaluation.planted_cues import PLANTED_CONDITIONS
+
+    if dataset in PLANTED_CONDITIONS:
         if model is None:
             raise ValueError("the planted-pair sample keeps images whose top 2 is the pair; pass the model")
-        return _planted_pair(split, n, seed, model, device, dict(final=final, config_hash=config_hash))
+        return _planted_pair(split, n, seed, model, device, dict(final=final, config_hash=config_hash),
+                             PLANTED_CONDITIONS[dataset])
     c = contrastive_sample(dataset, split, n, seed, final=final, config_hash=config_hash)
     return DecompositionSample(x=c.x, labels=c.labels, index=c.index)
 
 
-def _planted_pair(split: str, n: int, seed: int, model, device, lock: dict) -> DecompositionSample:
+def _planted_pair(split: str, n: int, seed: int, model, device, lock: dict,
+                  placement: str = "grid") -> DecompositionSample:
     """Seeded test-mode images whose model top 2 is the planted pair, in draw order, until ``n`` are kept.
 
     Every tried image is counted in ``notes``; images whose patch roles fail
@@ -93,7 +97,7 @@ def _planted_pair(split: str, n: int, seed: int, model, device, lock: dict) -> D
     """
     from evaluation.planted_cues import PAIRS, PlantedPairCIFAR, verify_roles
 
-    ds = PlantedPairCIFAR(split=split, mode="test", image_size=IMAGE_SIZE, seed=0, **lock)
+    ds = PlantedPairCIFAR(split=split, mode="test", image_size=IMAGE_SIZE, seed=0, placement=placement, **lock)
     order = _draw(len(ds), len(ds), seed)
     xs, labels, index, patches = [], [], [], []
     tried = 0
@@ -127,7 +131,7 @@ def _planted_pair(split: str, n: int, seed: int, model, device, lock: dict) -> D
         roles.append(verify_roles(model, part, patch_tensor[start:start + 16].to(device), ids, seed=seed))
     return DecompositionSample(
         x=x, labels=torch.tensor(labels).long(), index=index, patches=patch_tensor, roles=torch.cat(roles),
-        notes={"tried": tried, "kept": len(xs)},
+        notes={"tried": tried, "kept": len(xs), "placement": placement},
     )
 
 

@@ -48,9 +48,10 @@ def paper_checkpoint_path(dataset: str, backbone: str, seed: int, *,
 
     ``ckpt_dir`` and ``num_epochs`` locate smoke checkpoints; paper cells use the defaults.
     """
-    from models.build import FINE_TUNED, paper_checkpoint_name
+    from models.build import CHECKPOINT_DATASET, FINE_TUNED, paper_checkpoint_name
     from models.wrapper import INPUT_CONVENTION
 
+    dataset = CHECKPOINT_DATASET.get(dataset, dataset)
     fine_tune = dataset in FINE_TUNED
     name = paper_checkpoint_name(
         dataset,

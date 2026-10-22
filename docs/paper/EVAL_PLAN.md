@@ -464,6 +464,35 @@ Disclosures for version 2:
 - **Unread data.** The planted test split is still unread.
 - **Later the same day: open decision 12 settled.** The user declared the one-sided cell penalty, φ(t) = max(0, t). It was settled before any image was scored with either form. The two-sided form stays as DA15.
 
+**2026-10-22, after the read of the cell-penalty queue: the shared rule, RA reporting and D1″b's condition (DRAFT, written before any evaluation of them).** The user read the 26 val cells at method `eea2f74d` (PROGRESS log), then asked for three changes. All three are post hoc. The planted val cells motivated them, so those cells are not a test of them. The planted test split and D1″b's test split are unread.
+- **The shared rule (formulation sections 3.5 and 4.1).** S is "lowers both", read per cell.
+  - g_j(r) is the excess blur drop of z_j when Ω cell r alone is deleted, net of ν_j(1).
+  - A cell with g_k(r) > 0 and g_l(r) > 0 may not be U_k or U_l.
+  - Any other cell may not be S.
+  - The welfare still chooses between the open roles and ∅.
+  - **Why.** On planted val, the polish moved C from S to U_k on 17% of ResNet-50 images with C in Ω. C's blur drops there were about 6.6 on k and 2.6 on l, past the cell penalty's 2:1 line.
+  - **Why both halves.** On a toy with only the first half, CDEA put the l-only patch into S beside C. That raised the set-level min by about what the patch earned in U_l: the mixing of section 4.1's known exploit.
+  - **The comparators.** `occlusion_partition` and `gradient_partition` (DA3) follow the same rule, so the framing comparison still sets per-cell measurement against the joint search under one definition. Under the rule, a cell with both g above 0 is S; S needs both above 0 already.
+  - **The cost.** A shared region that lowers both classes only jointly (redundant shared evidence) cannot be S.
+  - **Ablation DA16** is the payoff without the rule: the default the 2026-10-22 queue read. The margin is 0, so "lowers" means "beats a random cell". A non-zero margin is not a candidate.
+- **RA reporting (formulation section 6.7).** The user agreed on 2026-10-22.
+  - "RA, in Ω" is dropped as a summary. It grades about 2.6 of 11.7 Ω cells per planted ResNet-50 image, and a row with no S scored 0.79 on it.
+  - The planted headline is C's accuracy over all its cells (outside Ω counts wrong) on role-confirmed images. RA over all patch cells and each patch's accuracy are reported beside it.
+  - For D1″b, whose condition targets A_k and A_l, the headline is RA over all patch cells on role-confirmed images, with each patch reported.
+  - 13.9's claims and selection change accordingly.
+- **D1″b's condition (13.9).** Dataset key `planted_pair_adjacent`, implemented in `evaluation/planted_cues.py`.
+  - **Images.** The `planted_pair` test-mode images, with the same CIFAR-10 images and patches and the `planted_pair` checkpoints.
+  - **Placement.** A_k and A_l sit on two grid cells that share a side. Which neighbour is drawn per image. C sits on a cell that touches neither, not even at a corner.
+  - **Why it is harder.** Training never places patches on touching cells, and never shows A_k with A_l. So this is a test-time shift.
+  - **Sample rule.** As `planted_pair`: images in the seeded draw order (1000 + s) whose model top 2 is the pair, until n = 200 are kept. `verify_roles` decides which images are role-confirmed.
+  - **Cells.** ResNet-50, seeds 0–4. The val split is used only for the check below. The test split is read once, after the freeze.
+  - **The ceiling check, declared before the read.** Val is read for `subtract` and `occlusion_partition` alone. The condition is kept if two things hold:
+    - at least half of the kept images are role-confirmed;
+    - on those images, `subtract` mislabels at least 10% of the A_k and A_l cells inside Ω.
+
+    The count is inside Ω because a cell Ω misses cannot be labelled by any method. Otherwise the condition is replaced, with a new dated entry, before any CDEA row is read on it.
+  - **Reported with the check:** `occlusion_partition`'s mislabelled share, Ω's coverage of each patch, and the role-confirmed share.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |
@@ -579,25 +608,27 @@ Written before any image was scored with the payoff of formulation section 4.1 a
 **What changes, and what does not.**
 - The payoff: each unique role's cross-class term is charged per cell, with φ(t) = max(0, t). The user settled this on 2026-10-22 (formulation open decision 12). It drops D3's charge for raising the other class, and keeps D3's intent: suppression earns no gain.
 - Unchanged: Ω, the size-matched null, the roles, the plan, the search, the polish, the scorer and the comparators.
+- **The shared rule (dated entry, 2026-10-22, after the cell-penalty read).** A cell whose single-cell blur excess drops on k and l are both above 0 may not be U_k or U_l, and any other cell may not be S. `occlusion_partition` and DA3 follow it.
 - **Ablations.**
   - DA14: version 2's set-level term, the payoff the GH200 read evaluated.
   - DA15: the two-sided cell penalty.
+  - DA16: no shared rule, the default the cell-penalty read evaluated.
   - DA11–DA13 as before.
 
 **Claims.**
 
 | # | Claim | Metric | Compared against | Test |
 |---|---|---|---|---|
-| D1″a | On the existing planted pairs, CDEA keeps what the rule gets right | RA in Ω on role-confirmed images | `subtract` | Non-inferiority, family D-T |
-| D1″b | On a harder planted condition, where the rule's evidence misleads, CDEA labels the roles better | RA in Ω on role-confirmed images | `subtract`, and the best rule row | Superiority, family D-T |
-| — | Joint search against per-cell measurement | RA in Ω | `occlusion_partition` | Non-inferiority, δ = 0.05 |
+| D1″a | On the existing planted pairs, CDEA keeps what the rule gets right | C's accuracy over all its cells, on role-confirmed images (dated entry, 2026-10-22); RA over all patch cells beside it | `subtract` | Non-inferiority, family D-T |
+| D1″b | On a harder planted condition, where the rule's evidence misleads, CDEA labels the roles better | RA over all patch cells, on role-confirmed images; each patch beside it | `subtract`, and the best rule row | Superiority, family D-T |
+| — | Joint search against per-cell measurement | RA over all patch cells | `occlusion_partition` | Non-inferiority, δ = 0.05 |
 | D0 | As in 13.5 | | | Descriptive |
 
 - **D1″a.** The planted ResNet-50 benchmark is saturated: `subtract` is near its ceiling. So here CDEA can only show that it does not lose what the rule gets right. Margin δ = 0.02.
   - *Audit, 2026-10-22 (formulation section 13): that premise is not established.* The 0.998 is RA in Ω, which leaves out the patch cells outside Ω. At ρ = 0.5 Ω usually holds only one cue per class.
   - Before sign-off, the user decides how RA, ρ and Ω coverage enter D1″. The audit's numbers from the GH200 records (`scripts/planted_metric_audit.py`) come first.
-- **D1″b's condition is not built yet.** It must be specified before anything is read on it: its sample rule, n and seeds.
-  - Proposed: A_k and A_l on adjacent cells, with C elsewhere. Receptive fields spread each patch's evidence into the neighbouring cell, so the reference evidence overlaps, while deleting each patch tells them apart.
+- **D1″b's condition** is specified in the dated entry of 2026-10-22 (`planted_pair_adjacent`): its sample rule, n, seeds and ceiling check.
+  - A_k and A_l on adjacent cells, with C elsewhere. Receptive fields spread each patch's evidence into the neighbouring cell, so the reference evidence overlaps, while deleting each patch tells them apart.
   - Training never places patches on touching cells, and never shows A_k and A_l together. So the condition is a test-time shift, and `verify_roles` decides which images count.
   - Before any CDEA row is read on it, its val split may be read for `subtract` and `occlusion_partition` alone, to confirm that the rule falls below ceiling. If the rule does not, the condition is replaced before CDEA is read.
 - **The planted ViT-B/16 cells** are a robustness row, not a claim. Too few of their images confirm all three roles.
@@ -610,7 +641,7 @@ Written before any image was scored with the payoff of formulation section 4.1 a
 
 **Selection** (replaces 13.7 for CDEA).
 - Steps and lr, on 13.3's grid.
-- The choice is by mean RA in Ω on role-confirmed planted val images, ResNet-50 seeds 0–4. VR plays no part.
+- The choice is by mean RA over all patch cells on role-confirmed planted val images, ResNet-50 seeds 0–4 (until the dated entry of 2026-10-22, RA in Ω). VR plays no part.
 - Nothing is chosen on test images or on D1″b's condition.
 
 **Tests.**

@@ -241,6 +241,11 @@ class PlantedPatchClassifier(Dataset):
 PAIRS: tuple[tuple[int, int], ...] = ((3, 5), (1, 9), (4, 7))
 PATCH_PROBABILITY = 0.9
 PAIR_PATCH = 32          # one 7x7 cell at 224
+# Planted conditions for the decomposition game, by dataset key, and their test-mode placement. Both use the
+# ``planted_pair`` checkpoints, trained with grid placement. ``planted_pair_adjacent`` is D1''b's harder
+# condition (EVAL_PLAN.md, dated entry of 2026-10-22): A_k and A_l on two cells that share a side, C on a
+# cell touching neither. Training never places patches on touching cells, so it is a test-time shift.
+PLANTED_CONDITIONS = {"planted_pair": "grid", "planted_pair_adjacent": "adjacent"}
 
 
 def pair_of(label: int) -> int | None:
@@ -271,11 +276,27 @@ def pair_cells(generator: torch.Generator, count: int, grid: int = 7) -> list[in
     raise RuntimeError("could not place the patches")
 
 
+def adjacent_cells(generator: torch.Generator, grid: int = 7) -> list[int]:
+    """Cells of A_k, A_l and C: A_k and A_l share a side, and C touches neither (not even at a corner)."""
+    order = torch.randperm(grid * grid, generator=generator).tolist()
+    r, c = divmod(order[0], grid)
+    sides = [(r + dr) * grid + c + dc for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+             if 0 <= r + dr < grid and 0 <= c + dc < grid]
+    pair = [order[0], sides[int(torch.randint(len(sides), (1,), generator=generator))]]
+    for cell in order[1:]:
+        q, p = divmod(cell, grid)
+        if all(max(abs(q - o // grid), abs(p - o % grid)) > 1 for o in pair):
+            return pair + [cell]
+    raise RuntimeError("could not place C apart from the adjacent pair")
+
+
 def _origins(generator: torch.Generator, count: int, canvas: int, patch: int, placement: str) -> list[tuple[int, int]]:
-    if placement == "grid":
+    if placement in {"grid", "adjacent"}:
         side = canvas // patch
-        return [(divmod(cell, side)[0] * patch, divmod(cell, side)[1] * patch)
-                for cell in pair_cells(generator, count, side)]
+        if placement == "adjacent" and count != 3:
+            raise ValueError("adjacent placement places A_k, A_l and C")
+        cells = adjacent_cells(generator, side) if placement == "adjacent" else pair_cells(generator, count, side)
+        return [(divmod(cell, side)[0] * patch, divmod(cell, side)[1] * patch) for cell in cells]
     if placement != "random":
         raise ValueError(f"unknown placement {placement!r}")
     origins: list[tuple[int, int]] = []
@@ -296,7 +317,9 @@ class PlantedPairCIFAR(Dataset):
     ``mode="train"``: each patch of the image's pair appears with probability
     0.9; classes outside the pairs get none. ``mode="test"``: the image is of a
     pair class and carries A_k, A_l and C of its pair at disjoint positions.
-    Items are deterministic in ``(seed, index)``.
+    Items are deterministic in ``(seed, index)``. ``placement`` is ``grid``
+    (no two patches touch), ``adjacent`` (test mode only: A_k and A_l share a
+    side) or ``random``.
     """
 
     def __init__(self, split: str = "val", mode: str = "train", root: Path | None = None,
@@ -309,6 +332,8 @@ class PlantedPairCIFAR(Dataset):
         from torchvision import transforms
         from torchvision.datasets import CIFAR10
 
+        if placement == "adjacent" and mode != "test":
+            raise ValueError("adjacent placement is a test-time condition; the checkpoints train on grid")
         self.split, self.mode, self.placement = split, mode, placement
         self.image_size, self.patch, self.seed = int(image_size), int(patch), int(seed)
         data_root = Path(root) if root else REPO / "data"

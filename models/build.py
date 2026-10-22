@@ -23,6 +23,7 @@ NUM_CLASSES = {
     "imagenet": 1000,
     "planted_patch": 10,
     "planted_pair": 10,
+    "planted_pair_adjacent": 10,
     "waterbirds": 2,
     "imagenet9": 9,
     "colored_mnist": 10,
@@ -32,6 +33,8 @@ PAPER_BACKBONES = ("resnet50", "vit_b_16")
 
 # Shift datasets are full fine-tunes. Contrastive datasets are linear probes.
 FINE_TUNED = {"planted_patch", "planted_pair", "waterbirds", "imagenet9", "colored_mnist"}
+# Test-time conditions scored with another dataset's checkpoints; they are never trained.
+CHECKPOINT_DATASET = {"planted_pair_adjacent": "planted_pair"}
 
 
 def paper_checkpoint_name(

@@ -39,7 +39,14 @@ from cdea._plan import (
 )
 from cdea.allocation import DRAW_SEED, EPS, _prior
 from cdea.null import N_NULL, NULL_SEED, interpolate_sizes, null_at, null_drops, null_size_grid, size_masks, size_null
-from cdea.payoffs import cell_charges, class_drops, cross_penalty, decomposition_payoffs, partition_payoffs
+from cdea.payoffs import (
+    cell_charges,
+    class_drops,
+    cross_penalty,
+    decomposition_payoffs,
+    partition_payoffs,
+    shared_cells,
+)
 from cdea.region import OUTSIDE, RHO, evidence_region, roles_from_labels, rule_parts
 from cdea.sinkhorn import sinkhorn
 
@@ -211,6 +218,8 @@ class PartitionConfig:
     polish: bool = True                  # False is ablation DA11: the straight-through search alone
     polish_moves: Optional[int] = None   # cap on accepted moves per image; None is 4 R
     payoff: str = "cell_positive"        # cell_positive | cell_abs (DA15) | set (DA14, version 2 as read on the GH200)
+    shared_rule: bool = True             # False is ablation DA16: roles open to every cell, as the payoff alone
+    shared_margin: float = 0.0           # g_k and g_l must both exceed this for the shared rule to bind
 
 
 @dataclass
@@ -226,7 +235,8 @@ class Partition:
     evidence: torch.Tensor               # (B, 2, R) normalised reference evidence
     null: torch.Tensor                   # (B, 2, S + 1) blur null by size; zeros when the null is off
     payoff: str = "set"                  # the payoff the partition maximised
-    cell_excess: Optional[torch.Tensor] = None  # (B, 2, R) blur g_k, g_l of each Omega cell alone; None for ``set``
+    cell_excess: Optional[torch.Tensor] = None  # (B, 2, R) blur g_k, g_l of each Omega cell alone; None without a cell term
+    shared: Optional[torch.Tensor] = None       # (B, R) bool: Omega cells that lower both; only they may be S
 
 
 def reference_evidence(model: nn.Module, x: torch.Tensor, pair: HypothesisSet, grid_h: int, grid_w: int,
@@ -248,8 +258,24 @@ def _initial_parts(evidence: torch.Tensor, init: str) -> Optional[torch.Tensor]:
     raise ValueError(f"unknown init {init!r}")
 
 
-def _role_plan(theta: torch.Tensor, independent: bool) -> torch.Tensor:
-    """``(B, 4, R)``. Joint: a softmax over the roles. Independent: one Bernoulli per role against the empty row."""
+def closed_roles(shared: torch.Tensor) -> torch.Tensor:
+    """``(B, 4, R)`` bool, the shared rule: U_k and U_l are closed on the cells of ``shared``, S on the rest.
+
+    The empty role is always open.
+    """
+    closed = torch.zeros(shared.shape[0], ROLES_V2, shared.shape[1], dtype=torch.bool, device=shared.device)
+    closed[:, :2] = shared.unsqueeze(1)
+    closed[:, 2] = ~shared
+    return closed
+
+
+def _role_plan(theta: torch.Tensor, independent: bool, shared: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """``(B, 4, R)``. Joint: a softmax over the roles. Independent: one Bernoulli per role against the empty row.
+
+    With ``shared``, the roles ``closed_roles`` closes get logit -inf (the shared rule).
+    """
+    if shared is not None:
+        theta = theta.masked_fill(closed_roles(shared), float("-inf"))
     if not independent:
         return torch.softmax(theta, dim=1)
     roles = torch.sigmoid(theta[:, :-1] - theta[:, -1:])
@@ -315,9 +341,11 @@ def partition(
             else:
                 table = reference.new_zeros(x.shape[0], 2, top + 1)
             cell = None
-            if cfg.payoff != "set":
+            if cfg.payoff != "set" or cfg.shared_rule:
                 cell = single_cell_excess(model, ids, reference, blur_edit(x.detach(), grid_h, grid_w), omega,
                                           table, cfg.null)
+            shared = shared_cells(cell, omega, cfg.shared_margin) if cfg.shared_rule else None
+            charged = cell if cfg.payoff != "set" else None
             parts = _initial_parts(evidence, cfg.init)
             if parts is None:
                 theta = x.new_zeros(x.shape[0], ROLES_V2, units)
@@ -325,39 +353,39 @@ def partition(
                 empty = x.new_full((x.shape[0], 1, units), math.log(EPS))
                 theta = torch.cat([torch.log(parts + EPS), empty], dim=1)
             theta = theta.detach().requires_grad_(True)
-            initial = _hard_roles(_role_plan(theta.detach(), cfg.independent), omega, cfg.independent)
+            initial = _hard_roles(_role_plan(theta.detach(), cfg.independent, shared), omega, cfg.independent)
             opt = torch.optim.Adam([theta], lr=float(cfg.lr))
             generator = torch.Generator(device="cpu").manual_seed(int(cfg.draw_seed))
             limit = boundary_offset(x.shape[-2], x.shape[-1], grid_h, grid_w)
             for _ in range(int(cfg.steps)):
                 opt.zero_grad(set_to_none=True)
                 offsets = _offsets(generator, PLAYERS, limit) if cfg.boundary_shift else None
-                masks = _role_plan(theta, cfg.independent)[:, :PLAYERS]
+                masks = _role_plan(theta, cfg.independent, shared)[:, :PLAYERS]
                 if cfg.binary_masks:
                     shape = (PLAYERS, units) if cfg.independent else (units,)
                     masks = _draw(masks, torch.rand(shape, generator=generator), not cfg.independent)
                 masks = masks * inside
                 edited = _player_logits(model, x.detach(), masks, grid_h, grid_w, False, offsets)
                 null = null_at(table, masks.sum(dim=-1)) if cfg.null else None
-                penalty = None if cell is None else cross_penalty(masks, cell, cfg.payoff)
+                penalty = None if charged is None else cross_penalty(masks, charged, cfg.payoff)
                 payoff = partition_payoffs(class_drops(reference, edited, ids), null, cfg.payoff, penalty)
                 loss = -payoff.sum()
                 loss.backward()
                 opt.step()
             with torch.no_grad():
-                plan = _role_plan(theta.detach(), cfg.independent)
+                plan = _role_plan(theta.detach(), cfg.independent, shared)
             search = _hard_roles(plan, omega, cfg.independent)
             moves = 4 * units if cfg.polish_moves is None else int(cfg.polish_moves)
             with torch.no_grad():
                 edit = polish_edit or blur_edit(x.detach(), grid_h, grid_w)
-                polish_table, polish_cell = table, cell
+                polish_table, polish_cell = table, charged
                 if polish_edit is not None:
                     polish_table = reference.new_zeros(x.shape[0], 2, top + 1)
                     if cfg.null and top > 0:
                         sizes = null_size_grid(top, units) if cfg.null_grid else None
                         polish_table = edit_null(model, ids, reference, edit, x.shape[0], units, top, cfg.n_null,
                                                  cfg.null_seed, sizes)
-                    if cell is not None:
+                    if charged is not None:
                         polish_cell = single_cell_excess(model, ids, reference, edit, omega, polish_table, cfg.null)
                 terms = dict(payoff=cfg.payoff, cell_excess=polish_cell)
                 welfare_search = role_welfare(model, x.detach(), ids, reference, search, polish_table, cfg.null,
@@ -368,7 +396,7 @@ def partition(
                     better = (welfare_search >= welfare_init).view(-1, 1, 1)
                     start = torch.where(better, search, initial)
                     roles, welfare = polish(model, x.detach(), ids, reference, start, omega, polish_table, cfg.null,
-                                            grid_h, grid_w, moves, edit, **terms)
+                                            grid_h, grid_w, moves, edit, shared=shared, **terms)
                 else:
                     roles, welfare = search, welfare_search
         finally:
@@ -391,6 +419,7 @@ def partition(
         null=table.detach(),
         payoff=cfg.payoff,
         cell_excess=None if cell is None else cell.detach(),
+        shared=shared,
     )
 
 
@@ -500,11 +529,13 @@ def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h:
 
 
 def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h: int, grid_w: int,
-           moves: int, edit=None, payoff: str = "set", cell_excess=None) -> tuple[torch.Tensor, torch.Tensor]:
+           moves: int, edit=None, payoff: str = "set", cell_excess=None,
+           shared: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
     """Best-improvement single-cell moves on an exclusive partition ``(B, 4, R)``. Returns it and its welfare.
 
     Blur deletion unless ``edit`` is given. Each image moves on its own, so its
-    result does not depend on the batch.
+    result does not depend on the batch. With the ``(B, R)`` ``shared``, no move
+    enters a role ``closed_roles`` closes; ``roles`` must already obey it.
     """
     edit = edit or blur_edit(x, grid_h, grid_w)
     batch, roles_count, units = roles.shape
@@ -516,6 +547,7 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
     penalty = _penalty(current, cell_excess, payoff)
     charge = None if penalty is None else cell_charges(cell_excess, payoff)
     welfare = _welfare_terms(drops, sizes, table, use_null, payoff, penalty).sum(dim=-1)
+    closed = None if shared is None else closed_roles(shared)
     active = omega.any(dim=-1).tolist()
     for _ in range(int(moves)):
         if not any(active):
@@ -528,7 +560,7 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
             for r in torch.nonzero(omega[b]).flatten().tolist():
                 source = int(labels[r])
                 for target in range(roles_count):
-                    if target == source:
+                    if target == source or (closed is not None and bool(closed[b, target, r])):
                         continue
                     index = len(candidates)
                     candidates.append((b, r, source, target))

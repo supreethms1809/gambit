@@ -186,6 +186,47 @@ def test_planted_pair_test_items_carry_three_disjoint_patches() -> None:
         assert ds[i]["image"].equal(item["image"])                      # deterministic
 
 
+def test_adjacent_cells_put_a_k_beside_a_l_and_c_apart() -> None:
+    from evaluation.planted_cues import adjacent_cells
+
+    for draw in range(200):
+        ak, al, c = adjacent_cells(torch.Generator().manual_seed(draw))
+        (r0, c0), (r1, c1), (r2, c2) = divmod(ak, 7), divmod(al, 7), divmod(c, 7)
+        assert abs(r0 - r1) + abs(c0 - c1) == 1                       # share a side
+        assert min(max(abs(r2 - r), abs(c2 - q)) for r, q in ((r0, c0), (r1, c1))) > 1
+
+
+def test_the_adjacent_condition_uses_the_planted_pair_checkpoints() -> None:
+    from evaluation.planted_cues import PLANTED_CONDITIONS
+    from evaluation.run_models import paper_checkpoint_path
+
+    assert PLANTED_CONDITIONS == {"planted_pair": "grid", "planted_pair_adjacent": "adjacent"}
+    for seed in (0, 3):
+        assert (paper_checkpoint_path("planted_pair_adjacent", "resnet50", seed)
+                == paper_checkpoint_path("planted_pair", "resnet50", seed))
+
+
+@pytest.mark.skipif(not _cifar_available(), reason="CIFAR-10 is not on this machine")
+def test_adjacent_planted_items_touch_only_a_k_and_a_l() -> None:
+    from evaluation.planted_cues import PlantedPairCIFAR
+
+    with pytest.raises(ValueError):
+        PlantedPairCIFAR(split="val", mode="train", placement="adjacent")
+    ds = PlantedPairCIFAR(split="val", mode="test", placement="adjacent")
+    grid = PlantedPairCIFAR(split="val", mode="test")
+    for i in range(20):
+        item = ds[i]
+        assert item["image"].shape == grid[i]["image"].shape and item["label"] == grid[i]["label"]
+        corners = []
+        for slot in range(3):
+            ys, xs = torch.nonzero(item["masks"][slot], as_tuple=True)
+            assert int(ys.min()) % 32 == 0 and int(xs.min()) % 32 == 0 and len(ys) == 32 * 32
+            corners.append((int(ys.min()) // 32, int(xs.min()) // 32))
+        (r0, c0), (r1, c1), (r2, c2) = corners
+        assert abs(r0 - r1) + abs(c0 - c1) == 1
+        assert min(max(abs(r2 - r), abs(c2 - q)) for r, q in corners[:2]) > 1
+
+
 @pytest.mark.skipif(not _cifar_available(), reason="CIFAR-10 is not on this machine")
 def test_planted_pair_training_frequencies() -> None:
     from evaluation.planted_cues import PAIRS, PATCH_PROBABILITY, PlantedPairCIFAR, pair_of

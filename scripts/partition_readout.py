@@ -68,9 +68,18 @@ def fmt(stat) -> str:
     return f"{mean:+.3f} [{lo:+.3f}, {hi:+.3f}] n={n}"
 
 
+def with_image_key(df):
+    """Add ``image``, one key per image. Planted cells pool seeds, and ``image_index`` repeats across them."""
+    if "image" in df:
+        return df
+    if "seed" not in df:
+        return df.assign(image=df["image_index"].astype(str))
+    return df.assign(image=df["seed"].astype(str) + ":" + df["image_index"].astype(str))
+
+
 def per_image(df):
     """One row per image: the method-independent columns."""
-    first = df.drop_duplicates("image_index").set_index("image_index")
+    first = with_image_key(df).drop_duplicates("image").set_index("image")
     return first[["overlap", "overlap_omega", "omega_size", "z_k_full", "z_l_full", "z_m_full", "correct"]]
 
 
@@ -83,7 +92,7 @@ def method_table(rows, top_images) -> list[str]:
               f"{'PUR':>7s} {'SV':>7s} {'PURc':>7s} {'SVc':>7s} {'MIX':>7s} {'GEN':>7s} {'cfUk':>5s} {'cfUl':>5s} {'cfS':>5s} {'cf0':>5s}")
     out.append(header)
     for method, g in rows.groupby("method", sort=True):
-        top = g[g["image_index"].isin(top_images)]
+        top = g[g["image"].isin(top_images)]
         s_empty = float((g["size_s"] == 0).mean())
         s_unconf = float(((g["size_s"] > 0) & (g["confirmed_s"] == 0)).mean())
         pur = (g["pur_k"] + g["pur_l"]).mean()
@@ -124,13 +133,17 @@ def cdea_diagnostics(rows) -> list[str]:
             search = g[["payoff_search_uk", "payoff_search_ul", "payoff_search_s"]].sum(axis=1)
             line += (f"  search W {float(search.mean()):+.3f} (< init {float((search < init - 1e-6).mean()):.2f})"
                      f"  polish moved {float(g['polish_changed'].mean()):.3f}")
+        if "shared_rule_share" in g and g["shared_rule_share"].notna().any():
+            line += (f"  lowers both {float(g['shared_rule_share'].mean()):.3f}"
+                     f" (rule moved {float(g['shared_rule_moved'].mean()):.3f} off step 0)")
         out.append(line)
     return out
 
 
 def paired(rows, a: str, b: str, column: str, images=None):
-    left = rows[rows["method"] == a].set_index("image_index")[column]
-    right = rows[rows["method"] == b].set_index("image_index")[column]
+    rows = with_image_key(rows)
+    left = rows[rows["method"] == a].set_index("image")[column]
+    right = rows[rows["method"] == b].set_index("image")[column]
     joined = (left - right).dropna()
     if images is not None:
         joined = joined[joined.index.isin(images)]
@@ -142,7 +155,7 @@ def report(df, operator: str) -> dict:
 
     selection = {}
     for (dataset, backbone), cell in df.groupby(["dataset", "backbone"]):
-        rows = cell[cell["operator"] == operator]
+        rows = with_image_key(cell[cell["operator"] == operator])
         if rows.empty:
             continue
         images = per_image(rows)
@@ -170,7 +183,7 @@ def report(df, operator: str) -> dict:
         best_rule = max(rules, key=lambda m: means[m]) if rules else None
         print(f"best rule row by mean VR: {best_rule}")
         for column in ("vr",):
-            for other in ("subtract", best_rule, "occlusion_partition"):
+            for other in dict.fromkeys(("subtract", best_rule, "occlusion_partition")):  # best_rule may be subtract
                 if other is None or other not in means.index or "cdea" not in means.index:
                     continue
                 print(f"CDEA - {other:22s} {column}: all {fmt(paired(rows, 'cdea', other, column))}; "
