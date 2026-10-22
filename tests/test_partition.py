@@ -794,3 +794,50 @@ def test_the_runner_diagnostics_score_each_payoff_as_it_was_optimised() -> None:
         hard = sum(float(stage[f"payoff_hard_{p}"]) for p in ("uk", "ul", "s"))
         assert hard == pytest.approx(float(out.welfare), abs=1e-4), payoff
         assert float(stage["polish_welfare"]) == pytest.approx(float(out.welfare), abs=1e-6)
+
+
+# RA in Omega on planted pairs (2026-10-22 audit) ---------------------------------
+
+@pytest.mark.parametrize("share", [0.3, 0.55, 0.9])
+def test_rho_half_keeps_one_cue_per_class_and_ra_in_omega_ignores_the_rest(share) -> None:
+    """Each class's evidence sits on its unique patch (``share``) and on C. At rho = 0.5 only the stronger cue
+    of each class enters Omega, so one or two of the three patches are outside it. RA in Omega leaves them
+    out and reads 1 for the rule; RA over all patch cells counts them wrong."""
+    units = 49
+    ak, al, c = 10, 40, 24
+    ek = torch.zeros(1, units)
+    ek[0, ak], ek[0, c] = share, 1 - share
+    el = torch.zeros(1, units)
+    el[0, al], el[0, c] = share, 1 - share
+    evidence = normalise(torch.stack([ek, el], dim=1))
+    omega = evidence_region(evidence, 0.5)
+    patches = torch.zeros(1, 3, units, dtype=torch.bool)
+    patches[0, 0, ak] = patches[0, 1, al] = patches[0, 2, c] = True
+    scores = planted_role_scores(roles_from_labels(rule_labels(rule_parts(evidence), omega)), patches, omega)
+    assert 1 <= int(omega[0, [ak, al, c]].sum()) <= 2
+    assert float(scores["ra_in"]) == 1.0
+    assert float(scores["ra_all"]) < 1.0
+    assert float(scores["ra_all"]) == pytest.approx(float(scores["omega_coverage"]))
+
+
+def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
+    import pandas as pd
+
+    from scripts.planted_metric_audit import main
+
+    rows = []
+    for image in range(4):
+        for method in ("subtract", "cdea"):
+            row = {"method": method, "operator": "road", "fast": 0, "image_index": image,
+                   "role_ak": 1, "role_al": 1, "role_c": int(image % 2 == 0), "ra_in": 1.0, "ra_all": 2 / 3,
+                   "omega_coverage": 2 / 3, "omega_size": 10}
+            for t, outside in (("ak", 0.0), ("al", 0.0), ("c", 1.0)):
+                row[f"conf_{t}_outside"] = outside
+                row[f"ra_all_{t}"] = 1.0 - outside
+            rows.append(row)
+    out = tmp_path / "val" / "partition" / "planted_pair" / "resnet50" / "seed0"
+    out.mkdir(parents=True)
+    pd.DataFrame(rows).to_csv(out / "records.csv.gz", index=False)
+    main(["--root", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "subtract" in printed and "RAin|c" in printed
