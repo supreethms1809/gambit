@@ -1082,6 +1082,7 @@ class PartitionRunConfig:
     independent: bool = False
     polish: bool = True                # False is ablation DA11
     polish_operator: str = "blur"      # blur | road (ablation DA13)
+    payoff: str = "cell_positive"      # cell_positive | set (DA14) | cell_abs (DA15)
     kind: str = "partition"            # partition | gradient_partition (DA3) | fixed_budgets (DA10)
 
 
@@ -1102,6 +1103,10 @@ PARTITION_ABLATIONS: dict[str, Callable[[PartitionRunConfig], PartitionRunConfig
     "DA12_polish_only": lambda c: replace(c, steps=0),
     # The polish deletes with ROAD's fill instead of blur, with its own ROAD null.
     "DA13_road_polish": lambda c: replace(c, polish_operator="road"),
+    # The payoff (section 4.1, drafted 2026-10-22): version 2's set-level cross term, as the GH200 read
+    # evaluated it, and the two-sided cell penalty.
+    "DA14_set_cross": lambda c: replace(c, payoff="set"),
+    "DA15_cell_abs": lambda c: replace(c, payoff="cell_abs"),
 }
 
 
@@ -1191,6 +1196,7 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         null_grid=backbone.startswith("vit"),
         independent=cfg.independent,
         polish=cfg.polish,
+        payoff=cfg.payoff,
     )
     if cfg.polish_operator not in {"blur", "road"}:
         raise ValueError(f"unknown polish operator {cfg.polish_operator!r}")

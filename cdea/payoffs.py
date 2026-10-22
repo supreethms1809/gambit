@@ -122,3 +122,62 @@ def decomposition_payoffs(drops: torch.Tensor, null: torch.Tensor | None = None)
     u_l = excess[:, 1, 1] - smooth_abs(excess[:, 1, 0])
     u_s = smooth_min(excess[:, 2, 0], excess[:, 2, 1])
     return torch.stack([u_k, u_l, u_s], dim=1)
+
+
+# ---------------------------------------------------------------------------
+# The cell-level cross penalty (FORMULATION_DECOMPOSITION.md section 4.1,
+# drafted 2026-10-22). Version 2 charged U_k for the set-level |d~_l(U_k)|,
+# so a cell that lowers z_l could cancel one that raises it, and a shared cell
+# could pay its way into U_k. Here each cell of U_k is charged for its own
+# effect on z_l, g_l(r): the excess drop of z_l when cell r alone is deleted.
+# The gains stay set-level, so redundant cells still pay together.
+# ---------------------------------------------------------------------------
+
+PAYOFFS = ("cell_positive", "cell_abs", "set")
+
+
+def _cross(t: torch.Tensor, kind: str) -> torch.Tensor:
+    if kind == "cell_positive":
+        return t.clamp_min(0)
+    if kind == "cell_abs":
+        return t.abs()
+    raise ValueError(f"no cell-level cross penalty for payoff {kind!r}")
+
+
+def cell_charges(cell_excess: torch.Tensor, kind: str) -> torch.Tensor:
+    """``(B, 2, R)``: what each cell costs U_k (``phi(g_l)``) and U_l (``phi(g_k)``)."""
+    return torch.stack([_cross(cell_excess[:, 1], kind), _cross(cell_excess[:, 0], kind)], dim=1)
+
+
+def cross_penalty(masks: torch.Tensor, cell_excess: torch.Tensor, kind: str) -> torch.Tensor:
+    """``(B, 3)``: U_k pays ``sum_r m_r phi(g_l(r))``, U_l pays ``sum_r m_r phi(g_k(r))``, S pays nothing.
+
+    ``masks`` is ``(B, 3, R)`` (U_k, U_l, S), ``cell_excess`` is ``(B, 2, R)``:
+    ``g_k`` and ``g_l``. ``phi`` is ``max(0, .)`` for ``cell_positive``
+    (lowering z_l is charged, raising it is not) and ``|.|`` for ``cell_abs``.
+    Linear in the masks, so its gradient is exact.
+    """
+    charge = cell_charges(cell_excess, kind)
+    pen = (masks[:, :2] * charge).sum(dim=-1)
+    return torch.cat([pen, torch.zeros_like(pen[:, :1])], dim=1)
+
+
+def partition_payoffs(drops: torch.Tensor, null: torch.Tensor | None, kind: str,
+                      penalty: torch.Tensor | None = None) -> torch.Tensor:
+    """``(u_k, u_l, u_S)`` of a partition, ``(B, 3)``.
+
+    ``set`` is version 2's ``decomposition_payoffs``. The cell kinds are
+      u_k = d~_k(U_k) - P_k,  u_l = d~_l(U_l) - P_l,  u_S = min_s(d~_k(S), d~_l(S)),
+    with ``P`` from ``cross_penalty``. An empty unique role pays exactly 0.
+    """
+    if kind == "set":
+        return decomposition_payoffs(drops, null)
+    if kind not in PAYOFFS:
+        raise ValueError(f"unknown payoff {kind!r}")
+    if penalty is None:
+        raise ValueError("the cell payoffs need the cross penalty")
+    excess = drops if null is None else drops - null
+    u_k = excess[:, 0, 0] - penalty[:, 0]
+    u_l = excess[:, 1, 1] - penalty[:, 1]
+    u_s = smooth_min(excess[:, 2, 0], excess[:, 2, 1])
+    return torch.stack([u_k, u_l, u_s], dim=1)

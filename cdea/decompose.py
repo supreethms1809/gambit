@@ -39,7 +39,7 @@ from cdea._plan import (
 )
 from cdea.allocation import DRAW_SEED, EPS, _prior
 from cdea.null import N_NULL, NULL_SEED, interpolate_sizes, null_at, null_drops, null_size_grid, size_masks, size_null
-from cdea.payoffs import class_drops, decomposition_payoffs
+from cdea.payoffs import cell_charges, class_drops, cross_penalty, decomposition_payoffs, partition_payoffs
 from cdea.region import OUTSIDE, RHO, evidence_region, roles_from_labels, rule_parts
 from cdea.sinkhorn import sinkhorn
 
@@ -210,6 +210,7 @@ class PartitionConfig:
     independent: bool = False            # True is ablation DA1
     polish: bool = True                  # False is ablation DA11: the straight-through search alone
     polish_moves: Optional[int] = None   # cap on accepted moves per image; None is 4 R
+    payoff: str = "cell_positive"        # cell_positive | cell_abs (DA15) | set (DA14, version 2 as read on the GH200)
 
 
 @dataclass
@@ -224,6 +225,8 @@ class Partition:
     omega: torch.Tensor                  # (B, R) bool
     evidence: torch.Tensor               # (B, 2, R) normalised reference evidence
     null: torch.Tensor                   # (B, 2, S + 1) blur null by size; zeros when the null is off
+    payoff: str = "set"                  # the payoff the partition maximised
+    cell_excess: Optional[torch.Tensor] = None  # (B, 2, R) blur g_k, g_l of each Omega cell alone; None for ``set``
 
 
 def reference_evidence(model: nn.Module, x: torch.Tensor, pair: HypothesisSet, grid_h: int, grid_w: int,
@@ -311,6 +314,10 @@ def partition(
                                   sizes=sizes)
             else:
                 table = reference.new_zeros(x.shape[0], 2, top + 1)
+            cell = None
+            if cfg.payoff != "set":
+                cell = single_cell_excess(model, ids, reference, blur_edit(x.detach(), grid_h, grid_w), omega,
+                                          table, cfg.null)
             parts = _initial_parts(evidence, cfg.init)
             if parts is None:
                 theta = x.new_zeros(x.shape[0], ROLES_V2, units)
@@ -332,7 +339,8 @@ def partition(
                 masks = masks * inside
                 edited = _player_logits(model, x.detach(), masks, grid_h, grid_w, False, offsets)
                 null = null_at(table, masks.sum(dim=-1)) if cfg.null else None
-                payoff = decomposition_payoffs(class_drops(reference, edited, ids), null)
+                penalty = None if cell is None else cross_penalty(masks, cell, cfg.payoff)
+                payoff = partition_payoffs(class_drops(reference, edited, ids), null, cfg.payoff, penalty)
                 loss = -payoff.sum()
                 loss.backward()
                 opt.step()
@@ -342,22 +350,25 @@ def partition(
             moves = 4 * units if cfg.polish_moves is None else int(cfg.polish_moves)
             with torch.no_grad():
                 edit = polish_edit or blur_edit(x.detach(), grid_h, grid_w)
-                polish_table = table
+                polish_table, polish_cell = table, cell
                 if polish_edit is not None:
                     polish_table = reference.new_zeros(x.shape[0], 2, top + 1)
                     if cfg.null and top > 0:
                         sizes = null_size_grid(top, units) if cfg.null_grid else None
                         polish_table = edit_null(model, ids, reference, edit, x.shape[0], units, top, cfg.n_null,
                                                  cfg.null_seed, sizes)
+                    if cell is not None:
+                        polish_cell = single_cell_excess(model, ids, reference, edit, omega, polish_table, cfg.null)
+                terms = dict(payoff=cfg.payoff, cell_excess=polish_cell)
                 welfare_search = role_welfare(model, x.detach(), ids, reference, search, polish_table, cfg.null,
-                                              grid_h, grid_w, edit)
+                                              grid_h, grid_w, edit, **terms)
                 if cfg.polish and not cfg.independent:
                     welfare_init = role_welfare(model, x.detach(), ids, reference, initial, polish_table, cfg.null,
-                                                grid_h, grid_w, edit)
+                                                grid_h, grid_w, edit, **terms)
                     better = (welfare_search >= welfare_init).view(-1, 1, 1)
                     start = torch.where(better, search, initial)
                     roles, welfare = polish(model, x.detach(), ids, reference, start, omega, polish_table, cfg.null,
-                                            grid_h, grid_w, moves, edit)
+                                            grid_h, grid_w, moves, edit, **terms)
                 else:
                     roles, welfare = search, welfare_search
         finally:
@@ -378,6 +389,8 @@ def partition(
         omega=omega,
         evidence=evidence,
         null=table.detach(),
+        payoff=cfg.payoff,
+        cell_excess=None if cell is None else cell.detach(),
     )
 
 
@@ -437,15 +450,45 @@ def edit_null(model, ids, reference, edit, batch: int, units: int, top: int, n: 
     return interpolate_sizes(values, grid, top)
 
 
-def _welfare_terms(drops: torch.Tensor, sizes: torch.Tensor, table: torch.Tensor, use_null: bool) -> torch.Tensor:
-    return decomposition_payoffs(drops, null_at(table, sizes) if use_null else None)
+def single_cell_excess(model, ids, reference, edit, omega: torch.Tensor, table: torch.Tensor,
+                       use_null: bool) -> torch.Tensor:
+    """``(B, 2, R)``: ``g_j(r)``, the drop of z_j when Omega cell r alone is deleted, less the null of one cell.
+
+    Zero off Omega. One forward pass per Omega cell, without gradients.
+    """
+    batch, units = omega.shape
+    out = reference.new_zeros(batch, ids.shape[1], units)
+    pairs = torch.nonzero(omega)
+    if pairs.numel() == 0:
+        return out
+    rows, cells = pairs[:, 0], pairs[:, 1]
+    masks = torch.nn.functional.one_hot(cells, units).to(reference.dtype)
+    drops = _deletion_drops(model, ids, reference, rows, masks, edit)
+    if use_null:
+        drops = drops - table[rows, :, 1]
+    out[rows, :, cells] = drops
+    return out
+
+
+def _penalty(roles: torch.Tensor, cell_excess, payoff: str):
+    if payoff == "set":
+        return None
+    if cell_excess is None:
+        raise ValueError(f"payoff {payoff!r} needs the single-cell excess drops")
+    return cross_penalty(roles[:, :PLAYERS].to(cell_excess.dtype), cell_excess, payoff)
+
+
+def _welfare_terms(drops: torch.Tensor, sizes: torch.Tensor, table: torch.Tensor, use_null: bool,
+                   payoff: str = "set", penalty=None) -> torch.Tensor:
+    return partition_payoffs(drops, null_at(table, sizes) if use_null else None, payoff, penalty)
 
 
 def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h: int, grid_w: int,
-                 edit=None) -> torch.Tensor:
+                 edit=None, payoff: str = "set", cell_excess=None) -> torch.Tensor:
     """``(B,)`` welfare ``u_k + u_l + u_S`` of a hard partition ``(B, 4, R)``, each role net of its null.
 
-    Blur deletion unless ``edit`` is given.
+    Blur deletion unless ``edit`` is given. ``payoff`` and ``cell_excess`` are
+    as in ``partition_payoffs`` and ``single_cell_excess``.
     """
     edit = edit or blur_edit(x, grid_h, grid_w)
     batch, _, units = roles.shape
@@ -453,11 +496,11 @@ def role_welfare(model, x, ids, reference, roles, table, use_null: bool, grid_h:
     masks = roles[:, :PLAYERS].reshape(batch * PLAYERS, units)
     drops = _deletion_drops(model, ids, reference, rows, masks, edit).view(batch, PLAYERS, -1)
     sizes = roles[:, :PLAYERS].sum(dim=-1).to(x.dtype)
-    return _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
+    return _welfare_terms(drops, sizes, table, use_null, payoff, _penalty(roles, cell_excess, payoff)).sum(dim=-1)
 
 
 def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h: int, grid_w: int,
-           moves: int, edit=None) -> tuple[torch.Tensor, torch.Tensor]:
+           moves: int, edit=None, payoff: str = "set", cell_excess=None) -> tuple[torch.Tensor, torch.Tensor]:
     """Best-improvement single-cell moves on an exclusive partition ``(B, 4, R)``. Returns it and its welfare.
 
     Blur deletion unless ``edit`` is given. Each image moves on its own, so its
@@ -470,7 +513,9 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
     drops = _deletion_drops(model, ids, reference, rows, current[:, :PLAYERS].reshape(-1, units),
                             edit).view(batch, PLAYERS, -1)
     sizes = current[:, :PLAYERS].sum(dim=-1).to(x.dtype)
-    welfare = _welfare_terms(drops, sizes, table, use_null).sum(dim=-1)
+    penalty = _penalty(current, cell_excess, payoff)
+    charge = None if penalty is None else cell_charges(cell_excess, payoff)
+    welfare = _welfare_terms(drops, sizes, table, use_null, payoff, penalty).sum(dim=-1)
     active = omega.any(dim=-1).tolist()
     for _ in range(int(moves)):
         if not any(active):
@@ -501,12 +546,20 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
         cand_sizes = sizes[owner_rows].clone()
         for (index, p), value in zip(owners, new):
             cand_drops[index, p] = value
-        for index, (_, _, source, target) in enumerate(candidates):
+        cand_penalty = None if penalty is None else penalty[owner_rows].clone()
+        for index, (b, r, source, target) in enumerate(candidates):
             if source < PLAYERS:
                 cand_sizes[index, source] -= 1
             if target < PLAYERS:
                 cand_sizes[index, target] += 1
-        cand_welfare = _welfare_terms(cand_drops, cand_sizes, table[owner_rows], use_null).sum(dim=-1)
+            if cand_penalty is not None:
+                # Only the unique roles carry a cell charge: U_k pays phi(g_l), U_l pays phi(g_k).
+                if source < 2:
+                    cand_penalty[index, source] -= charge[b, source, r]
+                if target < 2:
+                    cand_penalty[index, target] += charge[b, target, r]
+        cand_welfare = _welfare_terms(cand_drops, cand_sizes, table[owner_rows], use_null, payoff,
+                                      cand_penalty).sum(dim=-1)
         gain = cand_welfare - welfare[owner_rows]
         for b in range(batch):
             if not active[b]:
@@ -522,6 +575,8 @@ def polish(model, x, ids, reference, roles, omega, table, use_null: bool, grid_h
             drops[b] = cand_drops[best]
             sizes[b] = cand_sizes[best]
             welfare[b] = cand_welfare[best]
+            if penalty is not None:
+                penalty[b] = cand_penalty[best]
     return current, welfare
 
 
