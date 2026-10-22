@@ -245,3 +245,19 @@ def random_partition(omega: torch.Tensor, rows: list[int], generator: torch.Gene
     table = torch.randint(0, 4, (max(rows) + 1, omega.shape[-1]), generator=generator)
     labels = table[torch.tensor(rows)].to(omega.device)
     return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))
+
+
+def precomputed_partition(k: torch.Tensor, l: torch.Tensor, shared: torch.Tensor, others: torch.Tensor,
+                          omega: torch.Tensor) -> torch.Tensor:
+    """``(B, R)`` labels read from another method's soft masks (the ``precomputed_maps`` row).
+
+    Each Omega cell takes U_k, U_l or S when the mask of k, of l or the shared
+    mask is the largest there and positive; ties go in that order. A cell no
+    mask covers, or where another hypothesis's unique mask (``others``) is
+    larger, is empty. The masks may overlap, so a cell is read by its largest.
+    """
+    stack = torch.stack([k, l, shared], dim=1).to(omega.device)
+    best, role = stack.max(dim=1)
+    claimed = (best > 0) & (best >= others.to(omega.device))
+    labels = torch.where(claimed, role, torch.full_like(role, NEITHER))
+    return torch.where(omega, labels, torch.full_like(labels, OUTSIDE))

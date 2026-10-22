@@ -841,3 +841,48 @@ def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
     main(["--root", str(tmp_path)])
     printed = capsys.readouterr().out
     assert "subtract" in printed and "RAin|c" in printed
+
+
+# The precomputed_maps row (2026-10-22) ---------------------------------------------
+
+def test_precomputed_maps_are_read_by_their_largest_mask() -> None:
+    from baselines.decomposition import precomputed_partition
+
+    k = torch.tensor([[0.6, 0.0, 0.1, 0.0, 0.2, 0.0]])
+    l = torch.tensor([[0.1, 0.5, 0.1, 0.0, 0.0, 0.3]])
+    s = torch.tensor([[0.0, 0.2, 0.4, 0.0, 0.0, 0.0]])
+    others = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.5, 0.0]])
+    omega = torch.tensor([[True, True, True, True, True, False]])
+    labels = precomputed_partition(k, l, s, others, omega)
+    # Cell 3 has no mass, cell 4 belongs to another hypothesis, cell 5 lies outside Omega.
+    assert labels.tolist() == [[U_K, U_L, SHARED, NEITHER, NEITHER, OUTSIDE]]
+
+
+def test_precomputed_maps_are_picked_by_image_index_and_checked_against_the_pair(tmp_path) -> None:
+    import numpy as np
+
+    from baselines.precomputed import load_partition_maps
+
+    path = tmp_path / "maps.npz"
+    np.savez(path, index=np.array([7, 3]), class_k=np.array([1, 4]), class_l=np.array([2, 5]),
+             k=np.eye(2, 4, dtype=np.float32), l=np.zeros((2, 4), np.float32), shared=np.zeros((2, 4), np.float32),
+             others=np.zeros((2, 4), np.float32))
+    maps = load_partition_maps(str(path), torch.tensor([[4, 5], [1, 2]]), [3, 7])
+    assert maps["k"].tolist() == [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]
+    with pytest.raises(ValueError):
+        load_partition_maps(str(path), torch.tensor([[4, 5], [2, 1]]), [3, 7])
+    with pytest.raises(KeyError):
+        load_partition_maps(str(path), torch.tensor([[1, 2]]), [9])
+    assert load_partition_maps(str(tmp_path), torch.tensor([[1, 2]]), [7])["k"].shape == (1, 4)
+
+
+def test_paper_run_needs_a_file_for_the_precomputed_row() -> None:
+    from scripts.paper_run import parse, spec_from_args
+
+    with pytest.raises(SystemExit):
+        spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "precomputed_maps"]))
+    spec = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "precomputed_maps,cdea",
+                                 "--precomputed-dir", "maps.npz"]))
+    assert spec.precomputed_dir == "maps.npz" and "precomputed_maps" in spec.methods
+    every = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "all"]))
+    assert "precomputed_maps" not in every.methods

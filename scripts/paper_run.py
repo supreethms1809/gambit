@@ -41,6 +41,7 @@ from evaluation.run_methods import (  # noqa: E402
     PARTITION_CANDIDATES,
     PARTITION_CORE,
     PARTITION_EXTENDED,
+    PARTITION_PRECOMPUTED,
     SHIFT_ABLATIONS,
     SHIFT_CANDIDATES,
     SHIFT_CORE,
@@ -86,6 +87,8 @@ def parse(argv=None):
     p.add_argument("--image-batch", type=int, default=4,
                    help="images on the device at once inside a cell; 0 keeps the whole sample. "
                    "Scores do not depend on it.")
+    p.add_argument("--precomputed-dir", default=None,
+                   help="partition game: the .npz (or a folder holding one) the precomputed_maps row reads")
     p.add_argument("--final", action="store_true")
     p.add_argument("--config-hash", default=None)
     return p.parse_args(argv)
@@ -103,7 +106,11 @@ def spec_from_args(args):
         ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
         candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
     elif args.game == "partition":
-        methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED, PARTITION_CORE)
+        methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED + PARTITION_PRECOMPUTED, PARTITION_CORE)
+        if args.methods == "all":
+            methods = [m for m in methods if m not in PARTITION_PRECOMPUTED]
+        if "precomputed_maps" in methods and not args.precomputed_dir:
+            raise SystemExit("precomputed_maps needs --precomputed-dir")
         ablations = _list(args.ablations, tuple(PARTITION_ABLATIONS))
         candidates = _list(args.candidates, tuple(PARTITION_CANDIDATES))
         if not args.backbone.startswith("vit") and "chefer_minsplit" in methods:
@@ -127,7 +134,7 @@ def spec_from_args(args):
         areas=tuple(float(a) for a in args.areas.split(",")), operators=operators,
         model_source=args.model_source, checkpoint=args.checkpoint, final=args.final,
         config_hash=args.config_hash, knobs=FAST if args.fast else Knobs(), out_dir=args.out,
-        image_batch=args.image_batch,
+        image_batch=args.image_batch, precomputed_dir=args.precomputed_dir,
     )
 
 

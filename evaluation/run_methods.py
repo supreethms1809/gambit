@@ -1060,6 +1060,7 @@ class PartitionContext:
     omega: torch.Tensor                       # (B, R) bool
     rows: list                                # sample positions of the batch
     grid: tuple[int, int]
+    index: list = field(default_factory=list)  # dataset image indices of the batch
 
 
 @dataclass
@@ -1279,6 +1280,23 @@ def random_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionCo
     return _labels_maps(random_partition(ctx.omega, list(ctx.rows), floor_generator(seed)))
 
 
+def precomputed_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext,
+                               precomputed_dir: Optional[str] = None) -> PartitionMaps:
+    """Another method's soft masks, dumped outside this tree, read as roles on Omega.
+
+    Used for the earlier formulation, archived on its own tag and branch, whose
+    ``scripts/dump_pair_maps.py`` writes the file (``PROGRESS.md`` names both).
+    The reading rule is ``baselines.decomposition.precomputed_partition``.
+    """
+    from baselines.decomposition import precomputed_partition
+    from baselines.precomputed import load_partition_maps
+
+    maps = load_partition_maps(precomputed_dir, h.ids[:, :2], ctx.index)
+    return _labels_maps(precomputed_partition(maps["k"], maps["l"], maps["shared"], maps["others"], ctx.omega))
+
+
+# Rows that read maps from ``--precomputed-dir``; never part of "all".
+PARTITION_PRECOMPUTED = ("precomputed_maps",)
 PARTITION_SEEDED = {"cdea", "random_partition", "rise_minsplit"}
 
 
@@ -1294,4 +1312,5 @@ def partition_method(name: str):
         "rise_minsplit": rise_minsplit_partition,
         "extremal_minsplit": extremal_minsplit_partition,
         "chefer_minsplit": chefer_minsplit_partition,
+        "precomputed_maps": precomputed_partition_maps,
     }[name]

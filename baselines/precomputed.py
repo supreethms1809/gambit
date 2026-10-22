@@ -57,3 +57,33 @@ def load_pair(directory: str | None, hypotheses: HypothesisSet, grid: tuple[int,
     if "shared" in blob:
         extra["shared"] = blob["shared"] if index is None else blob["shared"][selector]
     return PairMaps(k=k_map.to(hypotheses.ids.device), l=l_map.to(hypotheses.ids.device), grid=grid, extra=extra)
+
+
+def load_partition_maps(path: str | None, ids: torch.Tensor, index: list[int]) -> dict[str, torch.Tensor]:
+    """Soft masks for the partition game's ``precomputed_maps`` row, from one ``.npz``.
+
+    The file holds per image ``index``, ``class_k``, ``class_l``, ``k``, ``l``,
+    ``shared`` and ``others`` (the largest unique mask of any other hypothesis),
+    each map on the grid. Rows are picked by dataset image ``index``; the stored
+    pair must equal ``ids`` (``(B, 2)``), or the maps belong to another sample.
+    """
+    import numpy as np
+
+    if not path:
+        raise ValueError("precomputed maps need a file or directory")
+    source = Path(path)
+    if source.is_dir():
+        files = sorted(source.glob("*.npz"))
+        if len(files) != 1:
+            raise FileNotFoundError(f"expected one npz in {source}, found {len(files)}")
+        source = files[0]
+    loaded = np.load(source)
+    stored = loaded["index"].tolist()
+    missing = [int(i) for i in index if int(i) not in stored]
+    if missing:
+        raise KeyError(f"image indices {missing} are not in {source}")
+    rows = torch.tensor([stored.index(int(i)) for i in index])
+    pair = torch.stack([torch.as_tensor(loaded["class_k"])[rows], torch.as_tensor(loaded["class_l"])[rows]], dim=1)
+    if not torch.equal(pair.long(), ids.detach().cpu().long()):
+        raise ValueError(f"the stored pair does not match this sample's rank 0 and rank 1 ({source})")
+    return {key: torch.as_tensor(loaded[key])[rows].float() for key in ("k", "l", "shared", "others")}

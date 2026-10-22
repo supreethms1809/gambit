@@ -53,6 +53,8 @@ def _maps(spec, model, x, h, method, variant, device, ctx):
         kwargs["cfg"] = PARTITION_ABLATIONS[variant](PartitionRunConfig())
     if method in PARTITION_SEEDED:
         kwargs["seed"] = spec.seed
+    if method == "precomputed_maps":
+        kwargs["precomputed_dir"] = spec.precomputed_dir
     return partition_method(method)(model, x, h, spec.backbone, spec.knobs, device, ctx, **kwargs)
 
 
@@ -102,7 +104,7 @@ def run_partition(spec: CellSpec, device) -> Path:
         began = time.perf_counter()
         evidence = partition_reference(model, x, h, spec.backbone, spec.knobs)
         ctx = PartitionContext(evidence=evidence, omega=evidence_region(evidence), rows=list(range(start, end)),
-                               grid=grid)
+                               grid=grid, index=[int(i) for i in sample.index[start:end]])
         shared["reference_seconds"] += time.perf_counter() - began
         maps = {}
         for method, variant, label in runs:
