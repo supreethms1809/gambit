@@ -462,6 +462,7 @@ Disclosures for version 2:
 - **The code.** Branch `paper/decomp-cell-penalty`. Only the formulation's toys have been run (`tests/test_partition.py`); no image has been scored with the new payoff.
 - **The motivation.** The GH200 read motivated the change. Its numbers, made with version 2's payoff, are not evidence for the new one.
 - **Unread data.** The planted test split is still unread.
+- **Later the same day: open decision 12 settled.** The user declared the one-sided cell penalty, φ(t) = max(0, t). It was settled before any image was scored with either form. The two-sided form stays as DA15.
 
 ### 13.1 Claims
 
@@ -576,7 +577,7 @@ The definitions are in `FORMULATION_DECOMPOSITION.md` section 6.
 Written before any image was scored with the payoff of formulation section 4.1 as drafted on 2026-10-22. If the user signs it off, it replaces 13.5–13.8 for the decomposition. Until then, nothing here is read.
 
 **What changes, and what does not.**
-- The payoff: each unique role's cross-class term is charged per cell, with φ(t) = max(0, t). That is formulation open decision 12, settled at sign-off.
+- The payoff: each unique role's cross-class term is charged per cell, with φ(t) = max(0, t). The user settled this on 2026-10-22 (formulation open decision 12). It drops D3's charge for raising the other class, and keeps D3's intent: suppression earns no gain.
 - Unchanged: Ω, the size-matched null, the roles, the plan, the search, the polish, the scorer and the comparators.
 - **Ablations.**
   - DA14: version 2's set-level term, the payoff the GH200 read evaluated.
@@ -619,7 +620,7 @@ Written before any image was scored with the payoff of formulation section 4.1 a
 - **D1″ does not hold.** The decomposition is reported as a negative result, with D0 and the descriptive measurements (13.8's last line).
 
 **Order.**
-1. The user signs off this section and formulation open decision 12.
+1. The user signs off this section. Formulation open decision 12 was settled on 2026-10-22.
 2. D1″b's condition is specified here, with a dated entry, and implemented.
 3. The planted val cells are rerun at the new hash, for the selection.
 4. The plan is frozen.

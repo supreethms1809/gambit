@@ -3,6 +3,7 @@
 **Status (2026-10-22).** Version 2, **DRAFT**. Implemented on `main` (section 13). Not signed off.
 - Two changes followed the first dev read: the polish (section 4.4) and the ∅ rule (section 6.4).
 - After the GH200 dev read, the user chose route (a): the payoff of section 4.1 is redrafted with a cell-level cross penalty, on branch `paper/decomp-cell-penalty`. It has not been evaluated on any image. `EVAL_PLAN.md` 13.9 re-declares the claims for it.
+- Open decision 12 is settled: the cell penalty is one-sided.
 - On `main`, `cdea/decompose.py` implements version 1 (`decompose`). Its text is at tag `decomp-declared`: `git show decomp-declared:docs/paper/FORMULATION_DECOMPOSITION.md`. Version 1 records are read under `EVAL_PLAN.md` 13.1–13.4. The branch adds version 2 (`partition`) beside it.
 - Version 2's claims and tests are `EVAL_PLAN.md` 13.5–13.8, also a draft. No version 2 number is read before the user signs off both. On 2026-10-20 the user asked for a local dev read before the sign-off; `EVAL_PLAN.md` discloses it.
 - Section 11 lists what changed from version 1 and why. Section 12 lists the open decisions.
@@ -78,14 +79,14 @@ The null comes from the whole grid so that it keeps its version 1 meaning: the c
 
 | Role | Deleting it … |
 |---|---|
-| U_k, unique to k | lowers z_k and does not lower z_l (proposed 2026-10-22; until then, "leaves z_l unchanged, in either direction") |
+| U_k, unique to k | lowers z_k and does not lower z_l (settled 2026-10-22, open decision 12; until then, "leaves z_l unchanged, in either direction") |
 | U_l, unique to l | the same, with k and l swapped |
 | S, shared | lowers both z_k and z_l |
 | ∅, neither | lowers neither |
 
 Suppressing l is still not unique evidence for k (D3, settled in version 1).
 - Under the payoff of section 4.1 a region that only suppresses l earns no gain, so it stays out of U_k.
-- Until 2026-10-22 a region whose deletion raises z_l was also penalised in u_k. The proposed payoff drops that half of D3 (open decision 12).
+- Until 2026-10-22 a region whose deletion raises z_l was also penalised in u_k. The user dropped that half of D3 on 2026-10-22 (open decision 12).
 - The planted benchmark labels such a region unique: A_k, a k-only patch confirmed by `verify_roles`' one-sided rule, often raises z_l when deleted.
 
 ## 4. Method
@@ -97,7 +98,7 @@ Suppressing l is still not unique evidence for k (D3, settled in version 1).
 - u_l = d̃_l(U_l) − Σ_{r∈U_l} φ(g_k(r))
 - u_S = min_s(d̃_k(S), d̃_l(S))
 - g_j(r) = d_j({r}) − ν_j(1) is the excess drop of z_j when cell r alone is deleted, under CDEA's blur. It is measured once per image, for the Ω cells.
-- φ(t) = max(0, t) is proposed: a cell is charged for lowering the other class, not for raising it (open decision 12). φ(t) = |t| is ablation DA15.
+- φ(t) = max(0, t): a cell is charged for lowering the other class, not for raising it. The user settled this on 2026-10-22 (open decision 12). φ(t) = |t| is ablation DA15.
 - An empty role pays 0, and ∅ always pays 0.
 - The welfare is W = u_k + u_l + u_S, with no weights.
 
@@ -303,7 +304,7 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 
 - Ω construction: ρ and ties.
 - **Toy 1, additive.** Sizes are free. `subtract`, `occlusion_partition` and CDEA all return U_k = {1}, U_l = {2}, S = {3}, ∅ = {4}.
-- **Toy 2, suppression.** As version 1.
+- **Toy 2, suppression.** Changed by open decision 12. The SUPPRESSOR cell raises z_k and lowers z_l, as a planted A_k does, and is now U_k; the two-sided penalty (DA15) leaves it ∅. A pure suppressor, which only lowers z_l, stays out of U_k under every payoff.
 - **Toy 3, redundancy.** The pair {a, b} belongs in U_k. `occlusion_partition` misses it, because each cell alone is below a random cell. CDEA finds it. This is the key test, as in version 1.
 - **Toy 4, mixing (new).** There is no shared cell, so S must stay empty, or MIX and the split halves must flag it.
 - **Toy 5, co-location (new).** One cell carries a k-only and an l-only feature. Every method that labels image cells calls it S. The test documents the limit in section 10.
@@ -341,7 +342,7 @@ One addition: report Ω coverage (6.7). A patch that the reference evidence miss
 | Additive comparator | `occlusion_assign` (a budgeted linear programme) | `occlusion_partition` (best role per cell) | No budgets |
 | Version 1 itself | The method | Ablation DA10 | Shows what the change costs or gains |
 
-Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). Version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
+Carried over from version 1's decisions (2026-10-14): logits as units (3), the suppression penalty (2), binary draws by default (6), and the planted pairs (7). On 2026-10-22, open decision 12 kept the suppression penalty's intent (suppression earns no gain) and dropped its charge for raising the other class. Version 1's text, including its decision table and its implementation notes, is at tag `decomp-declared`.
 
 ## 12. Open decisions
 
@@ -358,7 +359,7 @@ Carried over from version 1's decisions (2026-10-14): logits as units (3), the s
 | 9 | ViT-B/16 null cost | A size grid with linear interpolation |
 | 10 | Descriptive measurements outside the method | Run the co-location share and the pairwise interaction on dev val first. Both bear on the framing |
 | 11 | Sign-off | Version 2 and `EVAL_PLAN.md` 13.5–13.8 are signed off together, before any version 2 number is read |
-| 12 | φ in the cell penalty (2026-10-22) | One-sided, max(0, t). It drops D3's penalty on raising the other class, and it is the only form that keeps the planted roles on toy 6 at every s. The two-sided form is DA15 |
+| 12 | φ in the cell penalty (2026-10-22) | **Settled by the user on 2026-10-22: one-sided, max(0, t).** It drops D3's penalty on raising the other class, and it is the only form that keeps the planted roles on toy 6 at every s. The two-sided form is DA15 |
 
 ## 13. Implementation notes (2026-10-20, branch `paper/decomp-partition`)
 
