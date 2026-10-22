@@ -464,6 +464,21 @@ Disclosures for version 2:
 - **Unread data.** The planted test split is still unread.
 - **Later the same day: open decision 12 settled.** The user declared the one-sided cell penalty, φ(t) = max(0, t). It was settled before any image was scored with either form. The two-sided form stays as DA15.
 
+**2026-10-22, a local read of the drafted payoff, before 13.9's sign-off.** At the user's request, the partition game at `main`'s hash `eea2f74d` was run on the Mac, on 10 seeded val images per cell.
+- **What was read.** Three cells finished and were read, under ROAD and blur:
+  - CIFAR-10 and HAM10000 on ResNet-50, with the local linear probes;
+  - brain tumor on ViT-B/16, with an older fine-tune from before the paper's splits, so some of its val images may be training images.
+- **What ran.** The rows were CDEA (one-sided cell penalty, with the polish), the core comparators, `chefer_minsplit` on ViT, and DA14 and DA15.
+- **Stopped unread.** The user stopped Stanford Dogs and CIFAR-10 on ViT-B/16 before they wrote records.
+- **Not run.** CIFAR-100, Oxford Pets, CUB and ImageNet have no local checkpoint or data, and the planted pairs no local checkpoint.
+- **What it showed.**
+  - The scorer's stored scores all recompute from their inputs.
+  - With the cell penalty, the search alone ends below step 0 in 10–20% of images, against 45% under version 2's payoff.
+  - VR again ranked methods mostly by how many cells they call unique.
+  - No role-correctness claim can come from it: there is no ground truth on these images.
+- **Already seen.** The CIFAR-10 and HAM10000 images are among the 64 read on 2026-10-20.
+- **Unread data.** The planted test split is unread.
+
 ### 13.1 Claims
 
 | # | Claim | Metric | Compared against | Test |

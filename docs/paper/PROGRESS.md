@@ -231,6 +231,13 @@ Not part of this plan unless reopened:
 
 ## Log
 
+- **2026-10-22, local read of the drafted payoff (10 images per cell).** The user asked for it before 13.9's sign-off; `EVAL_PLAN.md` discloses it.
+  - Command: `paper_run.py --game partition --n 10 --ablations DA14_set_cross,DA15_cell_abs --model-source checkpoint --out results/paper/smoke/partition_local_10`, at hash `eea2f74d`.
+  - Finished and read: CIFAR-10 and HAM10000 on ResNet-50 (local probes), and brain tumor on ViT-B/16 (an older fine-tune).
+  - The user stopped Stanford Dogs and CIFAR-10 on ViT-B/16.
+  - Records are under `results/paper/smoke/partition_local_10` in the main checkout.
+  - A ViT-B/16 cell takes about 85 minutes on the Mac.
+
 - **2026-10-22, RA audit.** The user doubted that `subtract` reaches RA 0.998 on planted pairs, since version 1 never scored near that. RA is computed as section 6.7 defines it, but "RA, in Ω" leaves out patch cells outside Ω.
   - At ρ = 0.5 each class's stronger cue alone enters Ω. On clean planted-like maps Ω holds one or two of the three patches, RA in Ω reads 1.0 for the rule, and RA over all patch cells reads 0.33–0.67.
   - Version 1's RR measured whether each role's top 2.5% lands on its patch over the whole image.
