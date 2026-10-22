@@ -399,5 +399,11 @@ Where the text and the implementation disagree:
   - Then moving C from S into U_k cancels part of |d̃_l(U_k)| and adds d̃_k(C). That gains more than C pays in S, min(d̃_k, d̃_l).
   - On a toy, with z_k = f_Ak + f_C and z_l = −s·f_Ak + f_Al + f_C, the switch happens at s ≈ 0.5, with or without the null. Under that payoff (now DA14) the exact welfare prefers C in U_k (`tests/test_partition.py`, toy 6).
   - On planted data, S ends empty in most images, and the polish lowers role accuracy below step 0.
+- **RA in Ω on planted pairs (audit, 2026-10-22).** Section 6.7 leaves patch cells outside Ω out of "RA, in Ω". On planted images that hides most of the test.
+  - Each class has two cues there, its unique patch and C. At ρ = 0.5 only the stronger of the two enters C_j(ρ), so Ω usually holds one or two of the three patches.
+  - On clean planted-like maps Ω holds one or two patches at every dominance level. RA in Ω reads 1.0 for the rule, while RA over all patch cells reads 0.33–0.67.
+  - The patches that remain are each class's top cell, and the rule's label there is close to automatic. Grad-CAM clamps the rival's evidence at A_k, so A_k is U_k for any k evidence.
+  - Version 1's RR asked a different question: whether each role's top 2.5% of pixels, over the whole image, lands on its patch. A perfect map scores 0.96 there.
+  - So `subtract`'s 0.998 is RA in Ω, not role accuracy on the benchmark. `scripts/planted_metric_audit.py` reads the coverage, per patch, from the records. `tests/test_partition.py` pins the behaviour.
 - **Co-location share.** As written, P nets each position's channels before the min. On the dev models it falls far below 0, because Q is several times P. A positive-part version, in [0, 1], is reported beside it (`evaluation/descriptive.py`).
 

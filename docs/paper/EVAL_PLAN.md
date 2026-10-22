@@ -594,6 +594,8 @@ Written before any image was scored with the payoff of formulation section 4.1 a
 | D0 | As in 13.5 | | | Descriptive |
 
 - **D1″a.** The planted ResNet-50 benchmark is saturated: `subtract` is near its ceiling. So here CDEA can only show that it does not lose what the rule gets right. Margin δ = 0.02.
+  - *Audit, 2026-10-22 (formulation section 13): that premise is not established.* The 0.998 is RA in Ω, which leaves out the patch cells outside Ω. At ρ = 0.5 Ω usually holds only one cue per class.
+  - Before sign-off, the user decides how RA, ρ and Ω coverage enter D1″. The audit's numbers from the GH200 records (`scripts/planted_metric_audit.py`) come first.
 - **D1″b's condition is not built yet.** It must be specified before anything is read on it: its sample rule, n and seeds.
   - Proposed: A_k and A_l on adjacent cells, with C elsewhere. Receptive fields spread each patch's evidence into the neighbouring cell, so the reference evidence overlaps, while deleting each patch tells them apart.
   - Training never places patches on touching cells, and never shows A_k and A_l together. So the condition is a test-time shift, and `verify_roles` decides which images count.

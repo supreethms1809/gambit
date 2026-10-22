@@ -148,6 +148,7 @@ Last recorded on 2026-10-14. No PIDs were recorded, so check these on the GH200 
   - Commands: `paper_run.py --game partition` with `--methods core --candidates all --ablations DA3_gradient_partition,DA8_no_null,DA10_fixed_budgets,DA11_no_polish,DA12_polish_only,DA13_road_polish`. Planted pairs: `--dataset planted_pair`. DA13 costs about 19 s per image on the Mac, against about 4 s for the default CDEA.
 - [ ] R6. Bring `PAPER_NOTES.md`, the guide (`docs/guide/`) and the project's CVPR outline in line with version 2. Done after R1, so that they follow the signed-off text.
 - [ ] R7. Route (a): the user signs off `EVAL_PLAN.md` 13.9, or amends it. Nothing is scored with the drafted payoff before then. Formulation open decision 12 was settled on 2026-10-22: φ is one-sided.
+- [ ] R7a. On the GH200, run `PYTHONPATH=. python scripts/planted_metric_audit.py --root results/paper/cells --backbone resnet50` (and `--backbone vit_b_16`) on the version 2 planted val records. Then decide how RA, ρ and Ω coverage enter D1″ (formulation section 13, audit).
 - [ ] R8. Specify D1″b's harder planted condition in a dated `EVAL_PLAN.md` entry, then implement it. Its val split may be read for `subtract` and `occlusion_partition` alone, to confirm the rule falls below ceiling.
 - [ ] R9. Rerun the planted val cells at the new hash, ResNet-50 seeds 0–4. Choose steps and lr by RA in Ω (13.9).
 - [ ] R10. Check the after-metric gate of 13.9 on planted val, on the `subtract` and `occlusion_partition` rows, before any natural-image read.
@@ -229,6 +230,11 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-22, RA audit.** The user doubted that `subtract` reaches RA 0.998 on planted pairs, since version 1 never scored near that. RA is computed as section 6.7 defines it, but "RA, in Ω" leaves out patch cells outside Ω.
+  - At ρ = 0.5 each class's stronger cue alone enters Ω. On clean planted-like maps Ω holds one or two of the three patches, RA in Ω reads 1.0 for the rule, and RA over all patch cells reads 0.33–0.67.
+  - Version 1's RR measured whether each role's top 2.5% lands on its patch over the whole image.
+  - Toys and constructed maps only; no planted record is on the Mac. The finding is in formulation section 13, the caveat on D1″a in 13.9, the audit in `scripts/planted_metric_audit.py`, and plan R7a.
 
 - **2026-10-22, open decision 12 settled.** The user declared the one-sided cell penalty, φ(t) = max(0, t), and dropped D3's charge for raising the other class. It is recorded in formulation sections 3.5, 4.1, 9, 11 and 12, and in `EVAL_PLAN.md`'s dated entry and 13.9. No image has been scored with either form.
 
