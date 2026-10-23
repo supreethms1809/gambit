@@ -29,24 +29,72 @@ if str(REPO) not in sys.path:
 GAME = "partition"
 RULE_ROWS = ("subtract", "ig_minsplit", "occlusion_minsplit", "rise_minsplit", "extremal_minsplit", "chefer_minsplit")
 BOOT = 2000
+HASH_TYPES = {"method_code_hash": str, "knobs_hash": str}  # read as text: a hash of digits alone parses as a number
+
+
+def current_rows(df, any_hash: bool, fast: bool):
+    """The rows that count: ``method_code_hash`` and ``knobs_hash`` match the tree, and no fast knobs.
+
+    Fast rows count only with ``fast``, and then against the fast knobs' hash. Every
+    cell (dataset, backbone, seed) with rows left out is named, with the hashes it
+    was written at, so a stale cell is never read as a current one by omission.
+    """
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_methods import FAST, Knobs
+
+    total = len(df)
+    df = df.assign(method_code_hash=df["method_code_hash"].astype(str), knobs_hash=df["knobs_hash"].astype(str))
+    keep = df["fast"] == 0 if not fast else df["fast"].isin([0, 1])
+    if not any_hash:
+        knobs = df["fast"].map({0: knobs_hash(Knobs()), 1: knobs_hash(FAST)})
+        keep &= (df["method_code_hash"] == method_code_hash()) & (df["knobs_hash"] == knobs)
+    cell = [c for c in ("dataset", "backbone", "seed") if c in df]
+    if cell and not keep.all():
+        for key, g in df[~keep].groupby(cell):
+            stamps = sorted({f"{m[:8]}/{k[:8]}" for m, k in zip(g["method_code_hash"], g["knobs_hash"])})
+            print(f"skipped {'/'.join(str(v) for v in key)}: {len(g)} rows at method/knobs {', '.join(stamps)}")
+    df = df[keep]
+    print(f"rows: {len(df)} of {total} counted (method and knobs hash match: {not any_hash}, fast rows: {fast})")
+    versions = sorted(v for v in df["torch"].unique() if v) if "torch" in df else []
+    if len(versions) > 1:
+        print(f"WARNING: the counted cells ran on more than one torch ({', '.join(versions)}); the hash does not cover it")
+    if df.empty:
+        raise SystemExit("no row matches the current tree; nothing to read")
+    return df
+
+
+def read_cells(paths) -> "pd.DataFrame":
+    """Concatenate cell records, leaving out cells whose ``summary.json`` reports method errors.
+
+    A failed cell is still written, at the current hash, without the methods that
+    errored. Each row carries its cell's ``torch`` version, which the hash does not cover.
+    """
+    import json
+
+    import pandas as pd
+
+    from scripts.launch_runs import method_errors
+
+    frames = []
+    for path in paths:
+        summary = Path(path).parent / "summary.json"
+        if summary.is_file():
+            errors = method_errors(summary)
+            if errors:
+                print(f"skipped {Path(path).parent}: the cell failed ({', '.join(errors)} errored)")
+                continue
+            torch_version = json.loads(summary.read_text(encoding="utf-8")).get("provenance", {}).get("torch", "")
+        else:
+            torch_version = ""
+        frames.append(pd.read_csv(path, dtype=HASH_TYPES).assign(torch=torch_version))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def load(root: Path, split: str, any_hash: bool, fast: bool):
-    import pandas as pd
-
-    from evaluation.provenance import method_code_hash
-
-    frames = [pd.read_csv(path) for path in sorted((root / split / GAME).glob("*/*/seed*/records.csv.gz"))]
-    if not frames:
+    df = read_cells(sorted((root / split / GAME).glob("*/*/seed*/records.csv.gz")))
+    if df.empty:
         raise SystemExit(f"no records under {root / split / GAME}")
-    df = pd.concat(frames, ignore_index=True)
-    total = len(df)
-    if not fast:
-        df = df[df["fast"] == 0]
-    if not any_hash:
-        df = df[df["method_code_hash"] == method_code_hash()]
-    print(f"rows: {len(df)} of {total} counted (hash match: {not any_hash}, fast rows: {fast})")
-    return df
+    return current_rows(df, any_hash, fast)
 
 
 def boot_ci(values, seed: int = 0):

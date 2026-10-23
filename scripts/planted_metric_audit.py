@@ -34,14 +34,19 @@ GAME = "partition"
 PATCHES = ("ak", "al", "c")
 
 
-def load(root: Path, split: str, backbone: str, operator: str, dataset: str = "planted_pair"):
-    import pandas as pd
+def load(root: Path, split: str, backbone: str, operator: str, dataset: str = "planted_pair",
+         any_hash: bool = False):
+    """Rows of the current tree only (``partition_readout.current_rows``), unless ``any_hash``."""
+    from scripts.partition_readout import current_rows, read_cells
 
     paths = sorted((root / split / GAME / dataset / backbone).glob("seed*/records.csv.gz"))
     if not paths:
         raise SystemExit(f"no planted-pair records under {root / split / GAME / dataset / backbone}")
-    df = pd.concat([pd.read_csv(path) for path in paths], ignore_index=True)
-    df = df[(df["operator"] == operator) & (df["fast"] == 0)]
+    df = read_cells(paths)
+    if df.empty:
+        raise SystemExit(f"every cell under {root / split / GAME / dataset / backbone} failed")
+    df = current_rows(df, any_hash, False)
+    df = df[df["operator"] == operator]
     confirmed = (df["role_ak"] == 1) & (df["role_al"] == 1) & (df["role_c"] == 1)
     return df.assign(confirmed=confirmed)
 
@@ -79,8 +84,10 @@ def main(argv=None) -> None:
     p.add_argument("--backbone", default="resnet50", choices=["resnet50", "vit_b_16"])
     p.add_argument("--operator", default="road", choices=["road", "blur"])
     p.add_argument("--dataset", default="planted_pair", choices=["planted_pair", "planted_pair_adjacent"])
+    p.add_argument("--any-hash", action="store_true", help="also read rows written at another method or knobs hash")
     args = p.parse_args(argv)
-    print("\n".join(audit(load(Path(args.root), args.split, args.backbone, args.operator, args.dataset))))
+    df = load(Path(args.root), args.split, args.backbone, args.operator, args.dataset, args.any_hash)
+    print("\n".join(audit(df)))
 
 
 if __name__ == "__main__":

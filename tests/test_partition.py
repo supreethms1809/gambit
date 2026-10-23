@@ -840,12 +840,16 @@ def test_rho_half_keeps_one_cue_per_class_and_ra_in_omega_ignores_the_rest(share
 def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
     import pandas as pd
 
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_methods import Knobs
     from scripts.planted_metric_audit import main
 
+    stamp = {"method_code_hash": method_code_hash(), "knobs_hash": knobs_hash(Knobs())}
     rows = []
     for image in range(4):
         for method in ("subtract", "cdea"):
-            row = {"method": method, "operator": "road", "fast": 0, "image_index": image,
+            row = {**stamp, "dataset": "planted_pair", "backbone": "resnet50", "seed": 0,
+                   "method": method, "operator": "road", "fast": 0, "image_index": image,
                    "role_ak": 1, "role_al": 1, "role_c": int(image % 2 == 0), "ra_in": 1.0, "ra_all": 2 / 3,
                    "omega_coverage": 2 / 3, "omega_size": 10}
             for t, outside in (("ak", 0.0), ("al", 0.0), ("c", 1.0)):
@@ -858,6 +862,50 @@ def test_the_planted_audit_reads_records(tmp_path, capsys) -> None:
     main(["--root", str(tmp_path)])
     printed = capsys.readouterr().out
     assert "subtract" in printed and "RAin|c" in printed
+    assert "skipped" not in printed
+
+    stale = out.parent / "seed1"
+    stale.mkdir()
+    pd.DataFrame([{**r, "seed": 1, "method_code_hash": "0" * 64, "method": "stale_method"} for r in rows]).to_csv(
+        stale / "records.csv.gz", index=False)
+    main(["--root", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "stale_method" not in printed
+    assert "skipped planted_pair/resnet50/1: 8 rows at method/knobs 00000000/" in printed
+
+    import json
+
+    failed = out.parent / "seed2"
+    failed.mkdir()
+    pd.DataFrame([{**r, "seed": 2, "method": "failed_cell"} for r in rows]).to_csv(failed / "records.csv.gz", index=False)
+    (failed / "summary.json").write_text(json.dumps({"methods": {"ig_minsplit": {"status": "error"}}}))
+    main(["--root", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "failed_cell" not in printed
+    assert "the cell failed (ig_minsplit errored)" in printed
+
+
+def test_readouts_never_count_a_stale_row() -> None:
+    """A row counts only when both hashes match the tree; a fast row only with ``fast``, against the fast knobs."""
+    import pandas as pd
+
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_methods import FAST, Knobs
+    from scripts.partition_readout import current_rows
+
+    code, knobs, fast = method_code_hash(), knobs_hash(Knobs()), knobs_hash(FAST)
+    frame = pd.DataFrame([
+        {"dataset": "d", "backbone": "b", "seed": 0, "fast": 0, "method_code_hash": code, "knobs_hash": knobs, "tag": "current"},
+        {"dataset": "d", "backbone": "b", "seed": 1, "fast": 0, "method_code_hash": "stale", "knobs_hash": knobs, "tag": "old code"},
+        {"dataset": "d", "backbone": "b", "seed": 2, "fast": 0, "method_code_hash": code, "knobs_hash": "stale", "tag": "old knobs"},
+        {"dataset": "d", "backbone": "b", "seed": 3, "fast": 1, "method_code_hash": code, "knobs_hash": fast, "tag": "fast"},
+        {"dataset": "d", "backbone": "b", "seed": 4, "fast": 0, "method_code_hash": code, "knobs_hash": fast, "tag": "fast knobs, unflagged"},
+    ])
+    assert current_rows(frame, False, False)["tag"].tolist() == ["current"]
+    assert current_rows(frame, False, True)["tag"].tolist() == ["current", "fast"]
+    assert len(current_rows(frame, True, True)) == 5
+    with pytest.raises(SystemExit):
+        current_rows(frame[frame["tag"] != "current"], False, False)
 
 
 # The shared rule (2026-10-22, formulation sections 3.5 and 4.1) -----------------

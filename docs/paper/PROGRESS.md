@@ -60,15 +60,23 @@ On the GH200:
 
 ## Running
 
-Last recorded on 2026-10-22. Nothing is running.
-- **Partition val queue: finished.** 26 of 26 cells, 0 failed (`launch_partition.log`). Read on 2026-10-22 (log).
-- (Was) **Partition val queue** (the decomposition game after the cell-penalty fix). PID 604874. 26 cells, two ViT and two ResNet at a time. Val only. No `--final`.
-  - Command: `PYTHONPATH=. python -u results/paper/logs/launch_partition_queue.py`
+Last recorded on 2026-10-22, 23:45 local.
+- **Partition val queue, rerun at the shared-rule hash.** Launcher PID 1737802 (relaunched 23:45 in `gambitEnv`). 31 cells: the 26 of the last queue plus `adjacent-val` (`planted_pair_adjacent`, ResNet-50, seeds 0–4, n = 200). The ResNet dev, planted and adjacent cells run DA3, DA8, DA10–DA16. Val only. No `--final`.
+  - Command: `PYTHONPATH=. /home/sureshm/anaconda3/envs/gambitEnv/bin/python -u results/paper/logs/launch_partition_queue.py`. Use `gambitEnv` (torch 2.9.1): the `cdea` env has no `captum` or `pytorch_grad_cam`, and a queue launched there on 2026-10-22 failed its first cell on `ig_minsplit`, `occlusion_minsplit` and `margin_gradcam_ref`.
   - Log: `results/paper/logs/launch_partition.log`. Cell logs: `results/paper/logs/runs/`.
-  - Records: `results/paper/cells/val/partition/`. Done markers: `results/paper/cells/_markers/val/partition__*.done`.
-  - Stamp: method `eea2f74d`, knobs `38f5d7c0`. Default CDEA payoff is `cell_positive`. ResNet dev and planted cells also run DA14 and DA15.
-  - First four cells: ImageNet ViT, ImageNet ResNet, planted-pair ViT seed 0, planted-pair ResNet seed 0.
-  - The same command resumes and skips done cells. A failure stops new starts; already-running cells finish.
+  - Records: `results/paper/cells/val/partition/`. Each cell's `records.csv.gz` is rewritten when it finishes; until then the cell holds its `eea2f74d` rows.
+  - Stamp: method `a2e2066b`, knobs `38f5d7c0` (`main` at `c6413fd`).
+  - The same command resumes and skips done cells whose stamp matches.
+
+**Which records are which (2026-10-22).** Every readout counts a row only when both its method and knobs hashes match the tree, and names each cell it skips (`partition_readout.current_rows`, used by `planted_metric_audit.py` too). `--any-hash` turns that off; do not use it for a result. Cells whose `summary.json` reports method errors are skipped too, and a warning prints when the counted cells ran on more than one torch: the hash does not cover the environment. The `dev_*` roots below ran in the `cdea` env (torch 2.11); the queue runs in `gambitEnv` (torch 2.9.1).
+
+| Where | What | Hash | Read as |
+|---|---|---|---|
+| `results/paper/cells/val/partition/` | The queue above | `a2e2066b` once each cell finishes; `eea2f74d` before | The val result. Stale cells are skipped by name |
+| `results/archive/2026-10-22-partition-eea2f74d/` | Copy of the 26 cells read on 2026-10-22, before the shared rule | `eea2f74d` | Archive. Does not count |
+| `results/paper/dev_shared_rule/` | planted_pair ResNet-50 seeds 0–4: CDEA, DA16, `subtract`, `occlusion_partition`; default candidate | `a2e2066b` | Dev read of the shared rule. Not the selection |
+| `results/paper/dev_adjacent/` | planted_pair_adjacent seeds 0–4: CDEA, `subtract`, `occlusion_partition`; default candidate | `a2e2066b` | Dev read of D1″b's condition. Superseded by the queue's `adjacent-val` cells |
+| `results/paper/dev_adjacent_da16/` | As `dev_adjacent`, plus DA16 | `a2e2066b` | Dev read of the shared rule on D1″b's condition |
 
 ## Plan
 
