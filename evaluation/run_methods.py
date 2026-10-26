@@ -1060,6 +1060,7 @@ class PartitionContext:
     omega: torch.Tensor                       # (B, R) bool
     rows: list                                # sample positions of the batch
     grid: tuple[int, int]
+    rho: float = 0.5                          # the mass share that made ``omega``; CDEA rebuilds Omega with it
 
 
 @dataclass
@@ -1168,6 +1169,11 @@ def partition_reference(model, x, h, backbone, knobs) -> torch.Tensor:
     return reference_evidence(model, x, pair, gh, gw, default_backend(backbone), knobs.ig_steps)
 
 
+# Above this many units the null is measured on a size grid and interpolated (formulation open
+# decision 9): ViT-B/16 on its own 14 by 14 grid. ViT-B/16 on 7 by 7 gets the exact null, as ResNet-50.
+NULL_GRID_UNITS = 49
+
+
 def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
                    cfg: Optional[PartitionRunConfig] = None, seed: int = 0) -> PartitionMaps:
     cfg = cfg or PartitionRunConfig()
@@ -1197,11 +1203,12 @@ def cdea_partition(model, x, h, backbone, knobs, device, ctx: PartitionContext,
         boundary_shift=cfg.boundary_shift,
         draw_seed=cfg.draw_seed,
         null=cfg.null,
-        null_grid=backbone.startswith("vit"),
+        null_grid=gh * gw > NULL_GRID_UNITS,
         independent=cfg.independent,
         polish=cfg.polish,
         payoff=cfg.payoff,
         shared_rule=cfg.shared_rule,
+        rho=ctx.rho,
     )
     if cfg.polish_operator not in {"blur", "road"}:
         raise ValueError(f"unknown polish operator {cfg.polish_operator!r}")
@@ -1265,6 +1272,17 @@ def occlusion_partition_maps(model, x, h, backbone, knobs, device, ctx: Partitio
     return _labels_maps(occlusion_partition(model, x, h.ids, *ctx.grid, ctx.omega))
 
 
+def occlusion_onesided_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
+    """Per-cell deletion with the one-sided scores and the shared rule.
+
+    ``occlusion_partition`` charges ``|g|`` of the other class. This row charges
+    ``max(0, g)``, which is the penalty CDEA uses.
+    """
+    from baselines.decomposition import occlusion_onesided
+
+    return _labels_maps(occlusion_onesided(model, x, h.ids, *ctx.grid, ctx.omega))
+
+
 def margin_partition_maps(model, x, h, backbone, knobs, device, ctx: PartitionContext) -> PartitionMaps:
     """Reference row: the sign of the margin map on Omega. No S.
 
@@ -1294,6 +1312,7 @@ def partition_method(name: str):
         "ig_minsplit": ig_minsplit_partition,
         "occlusion_minsplit": occlusion_minsplit_partition,
         "occlusion_partition": occlusion_partition_maps,
+        "occlusion_onesided": occlusion_onesided_maps,
         "margin_gradcam_ref": margin_partition_maps,
         "random_partition": random_partition_maps,
         "rise_minsplit": rise_minsplit_partition,

@@ -66,7 +66,18 @@ def labels_string(roles: torch.Tensor) -> str:
 
 
 def run_partition(spec: CellSpec, device) -> Path:
-    """Score every requested version-2 method on one dataset x backbone x seed."""
+    """Score every requested version-2 method on one dataset x backbone x seed.
+
+    ``spec.grid`` scores the cell on a ``grid`` by ``grid`` unit grid instead of the
+    backbone's own (ViT-B/16 on 7 by 7: 2 by 2 tokens per unit).
+    """
+    from core.grid import unit_grid
+
+    with unit_grid(spec.backbone, None if spec.grid is None else (spec.grid, spec.grid)):
+        return _run_partition(spec, device)
+
+
+def _run_partition(spec: CellSpec, device) -> Path:
     from cdea.region import evidence_region
     from core.grid import grid_of
     from evaluation.provenance import knobs_hash, method_code_hash
@@ -101,8 +112,8 @@ def run_partition(spec: CellSpec, device) -> Path:
         h = HypothesisSet(ids=ids[:, :2], mask=top.mask[:, :2].to(device))
         began = time.perf_counter()
         evidence = partition_reference(model, x, h, spec.backbone, spec.knobs)
-        ctx = PartitionContext(evidence=evidence, omega=evidence_region(evidence), rows=list(range(start, end)),
-                               grid=grid)
+        ctx = PartitionContext(evidence=evidence, omega=evidence_region(evidence, spec.rho),
+                               rows=list(range(start, end)), grid=grid, rho=spec.rho)
         shared["reference_seconds"] += time.perf_counter() - began
         maps = {}
         for method, variant, label in runs:
@@ -231,6 +242,7 @@ def _score_batch(model, x, ids, ctx, maps, spec, sample, offset, code_hash, knob
                     "correct": int(int(ids[i, 0]) == int(sample.labels[offset + i])),
                     "z_k_full": float(_pick(full, ids[:, 0])[i]), "z_l_full": float(_pick(full, ids[:, 1])[i]),
                     "z_m_full": float(_pick(full, ids[:, 2])[i]) if classes > 2 else float("nan"),
+                    "rho": float(spec.rho), "grid": f"{ctx.grid[0]}x{ctx.grid[1]}",
                     "omega_size": int(omega[i].sum()), "overlap": float(overlap[i].sum()),
                     "overlap_omega": float((overlap[i] * omega[i]).sum()),
                     "labels": labels_string(roles[i]),

@@ -30,6 +30,10 @@ Omega instead, with free role sizes:
                        g_l > 0 cannot be unique (the shared rule), so it is S.
                        With free sizes this is the exact optimum of the
                        additive objective under that rule.
+    occlusion_onesided the same partition with the one-sided scores
+                       s_k = g_k - max(0, g_l), s_l = g_l - max(0, g_k).
+                       Raising the other class is not charged. The shared
+                       rule is the same. ``occlusion_partition`` is unchanged.
     random_partition   each Omega cell takes a seeded uniform role
 """
 
@@ -64,12 +68,20 @@ def min_split(e_k: torch.Tensor, e_l: torch.Tensor) -> tuple[torch.Tensor, torch
 # Per-cell scores and the exact assignment
 # ---------------------------------------------------------------------------
 
-def cell_scores(g: torch.Tensor) -> torch.Tensor:
-    """``(B, 2, R)`` per-cell excess drops of k and l to ``(B, 3, R)`` scores for U_k, U_l, S."""
+def cell_scores(g: torch.Tensor, penalty: str = "abs") -> torch.Tensor:
+    """``(B, 2, R)`` per-cell excess drops of k and l to ``(B, 3, R)`` scores for U_k, U_l, S.
+
+    ``abs`` charges ``|g|`` of the other class. ``positive`` charges ``max(0, g)``,
+    so raising the other class is free. ``s_S = min(g_k, g_l)`` either way.
+    """
     if g.ndim != 3 or g.shape[1] != 2:
         raise ValueError("g must be (batch, 2 classes, units)")
+    if penalty not in {"abs", "positive"}:
+        raise ValueError("penalty must be 'abs' or 'positive'")
     g_k, g_l = g[:, 0], g[:, 1]
-    return torch.stack([g_k - g_l.abs(), g_l - g_k.abs(), torch.minimum(g_k, g_l)], dim=1)
+    cross_l = g_l.abs() if penalty == "abs" else g_l.clamp_min(0)
+    cross_k = g_k.abs() if penalty == "abs" else g_k.clamp_min(0)
+    return torch.stack([g_k - cross_l, g_l - cross_k, torch.minimum(g_k, g_l)], dim=1)
 
 
 def assign(scores: torch.Tensor, budget: float) -> torch.Tensor:
@@ -210,15 +222,17 @@ def rule_partition(e_k: torch.Tensor, e_l: torch.Tensor, omega: torch.Tensor, gr
     return rule_labels(rule_parts(evidence.to(omega.device)), omega)
 
 
-def cell_partition(g: torch.Tensor, omega: torch.Tensor, shared_rule: bool = True) -> torch.Tensor:
+def cell_partition(g: torch.Tensor, omega: torch.Tensor, shared_rule: bool = True,
+                   penalty: str = "abs") -> torch.Tensor:
     """``(B, R)`` labels from ``(B, 2, R)`` per-cell excess drops: the best cell score if above 0, else empty.
 
     With ``shared_rule``, a cell that lowers both classes (``g_k > 0`` and
     ``g_l > 0``) cannot be unique, so it takes S, whose score ``min(g_k, g_l)``
-    is then above 0.
+    is then above 0. ``penalty`` is ``abs`` (the two-sided row) or ``positive``
+    (the one-sided row).
     """
     g = g.to(omega.device)
-    scores = cell_scores(g)
+    scores = cell_scores(g, penalty)
     if shared_rule:
         both = (g[:, 0] > 0) & (g[:, 1] > 0)
         scores[:, :2] = scores[:, :2].masked_fill(both.unsqueeze(1), float("-inf"))
@@ -232,6 +246,13 @@ def occlusion_partition(model, x, ids, grid_h: int, grid_w: int, omega: torch.Te
     """Single-cell blur drops, excess over the null of one cell, through ``cell_partition``."""
     g = occlusion_drops(model, x, ids, grid_h, grid_w) if g is None else g
     return cell_partition(g, omega)
+
+
+def occlusion_onesided(model, x, ids, grid_h: int, grid_w: int, omega: torch.Tensor,
+                       g: torch.Tensor | None = None) -> torch.Tensor:
+    """``occlusion_partition`` with the one-sided scores and the same shared rule."""
+    g = occlusion_drops(model, x, ids, grid_h, grid_w) if g is None else g
+    return cell_partition(g, omega, penalty="positive")
 
 
 def gradient_partition(model, x, ids, grid_h: int, grid_w: int, omega: torch.Tensor,

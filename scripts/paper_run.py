@@ -83,6 +83,12 @@ def parse(argv=None):
     p.add_argument("--fast", action="store_true", help="smoke knobs; never a paper number")
     p.add_argument("--out", default=str(REPO / "results" / "paper" / "cells"))
     p.add_argument("--device", default="auto")
+    p.add_argument("--rho", type=float, default=0.5,
+                   help="mass share that defines Omega. 0.5 is the paper default; other values "
+                   "belong in their own --out directory")
+    p.add_argument("--grid", type=int, default=None,
+                   help="partition game only: units per side instead of the backbone's own (vit_b_16 at 7 is "
+                   "2 by 2 tokens per unit). Belongs in its own --out directory")
     p.add_argument("--image-batch", type=int, default=4,
                    help="images on the device at once inside a cell; 0 keeps the whole sample. "
                    "Scores do not depend on it.")
@@ -103,7 +109,10 @@ def spec_from_args(args):
         ablations = _list(args.ablations, tuple(DECOMP_ABLATIONS))
         candidates = _list(args.candidates, tuple(DECOMP_CANDIDATES))
     elif args.game == "partition":
-        methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED, PARTITION_CORE)
+        # occlusion_onesided is the one-sided per-cell row. It is not in core or in ``all``.
+        methods = _list(args.methods, PARTITION_CORE + PARTITION_EXTENDED + ("occlusion_onesided",), PARTITION_CORE)
+        if args.methods == "all":
+            methods = [name for name in methods if name != "occlusion_onesided"]
         ablations = _list(args.ablations, tuple(PARTITION_ABLATIONS))
         candidates = _list(args.candidates, tuple(PARTITION_CANDIDATES))
         if not args.backbone.startswith("vit") and "chefer_minsplit" in methods:
@@ -112,6 +121,12 @@ def spec_from_args(args):
         methods = _list(args.methods, CONTRASTIVE_CORE + CONTRASTIVE_EXTENDED, CONTRASTIVE_CORE)
         ablations = _list(args.ablations, tuple(ABLATIONS))
         candidates = _list(args.candidates, tuple(CONTRASTIVE_CANDIDATES))
+    if args.grid is not None and args.game != "partition":
+        raise SystemExit("--grid is for the partition game")
+    if args.game == "partition" and (args.rho != 0.5 or args.grid is not None):
+        default_out = (REPO / "results" / "paper" / "cells").resolve()
+        if Path(args.out).resolve() == default_out:
+            raise SystemExit("a rho other than 0.5 or a --grid would overwrite the paper cells; pass a separate --out")
     operators = tuple(o.strip() for o in args.operators.split(","))
     if args.game not in {"decomposition", "partition"}:
         candidates = [c for c in candidates if candidate_applies(c, args.backbone)]
@@ -127,7 +142,7 @@ def spec_from_args(args):
         areas=tuple(float(a) for a in args.areas.split(",")), operators=operators,
         model_source=args.model_source, checkpoint=args.checkpoint, final=args.final,
         config_hash=args.config_hash, knobs=FAST if args.fast else Knobs(), out_dir=args.out,
-        image_batch=args.image_batch,
+        image_batch=args.image_batch, rho=args.rho, grid=args.grid,
     )
 
 

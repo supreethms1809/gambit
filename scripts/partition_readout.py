@@ -32,8 +32,26 @@ BOOT = 2000
 HASH_TYPES = {"method_code_hash": str, "knobs_hash": str}  # read as text: a hash of digits alone parses as a number
 
 
+EQUIVALENT_HASHES = REPO / "scripts" / "equivalent_hashes.json"
+
+
+def counted_hashes() -> set[str]:
+    """The tree's method hash, plus the older hashes ``equivalent_hashes.json`` accepts for it.
+
+    Each accepted hash names the change and the same-rows check that showed it leaves the records unchanged.
+    """
+    import json
+
+    from evaluation.provenance import method_code_hash
+
+    current = method_code_hash()
+    entries = json.loads(EQUIVALENT_HASHES.read_text()) if EQUIVALENT_HASHES.is_file() else {}
+    return {current} | {entry["hash"] for entry in entries.get(current, [])}
+
+
 def current_rows(df, any_hash: bool, fast: bool):
-    """The rows that count: ``method_code_hash`` and ``knobs_hash`` match the tree, and no fast knobs.
+    """The rows that count: ``method_code_hash`` matches the tree (or a hash ``counted_hashes`` accepts for it),
+    ``knobs_hash`` matches, and no fast knobs.
 
     Fast rows count only with ``fast``, and then against the fast knobs' hash. Every
     cell (dataset, backbone, seed) with rows left out is named, with the hashes it
@@ -47,7 +65,11 @@ def current_rows(df, any_hash: bool, fast: bool):
     keep = df["fast"] == 0 if not fast else df["fast"].isin([0, 1])
     if not any_hash:
         knobs = df["fast"].map({0: knobs_hash(Knobs()), 1: knobs_hash(FAST)})
-        keep &= (df["method_code_hash"] == method_code_hash()) & (df["knobs_hash"] == knobs)
+        accepted = counted_hashes()
+        keep &= df["method_code_hash"].isin(accepted) & (df["knobs_hash"] == knobs)
+        for code in sorted(set(df.loc[keep, "method_code_hash"]) - {method_code_hash()}):
+            print(f"counting rows at {code[:8]}, accepted as equivalent to the tree's {method_code_hash()[:8]} "
+                  f"({EQUIVALENT_HASHES.name})")
     cell = [c for c in ("dataset", "backbone", "seed") if c in df]
     if cell and not keep.all():
         for key, g in df[~keep].groupby(cell):

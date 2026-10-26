@@ -463,6 +463,34 @@ def test_rule_partition_pools_pixels_before_it_clamps() -> None:
     assert rule_partition(pixel_k, pixel_l, omega, *GRID)[0, :3].tolist() == [U_L, U_K, U_L]
 
 
+def test_the_onesided_row_is_not_in_the_core_set() -> None:
+    from scripts.paper_run import parse, spec_from_args
+
+    core = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "core"]))
+    whole = spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--methods", "all"]))
+    assert "occlusion_onesided" not in core.methods
+    assert "occlusion_onesided" not in whole.methods
+    one = spec_from_args(parse([
+        "--game", "partition", "--dataset", "cifar10", "--methods", "occlusion_onesided",
+        "--rho", "0.3", "--out", "/tmp/gambit-rho-out",
+    ]))
+    assert one.methods == ["occlusion_onesided"] and one.rho == 0.3
+    with pytest.raises(SystemExit):
+        spec_from_args(parse(["--game", "partition", "--dataset", "cifar10", "--rho", "0.3"]))
+
+
+def test_the_onesided_score_does_not_charge_raising_the_other_class() -> None:
+    """g_k = 1, g_l = -2. The two-sided score is 1 - 2 = -1, so the cell is empty.
+    The one-sided score is 1 - max(0, -2) = 1, so the cell is U_k. A cell that
+    lowers both classes is still S."""
+    omega = torch.tensor([[True]])
+    raised = torch.tensor([[[1.0], [-2.0]]])
+    assert int(cell_partition(raised, omega)[0, 0]) == NEITHER
+    assert int(cell_partition(raised, omega, penalty="positive")[0, 0]) == U_K
+    both = torch.tensor([[[1.0], [0.4]]])
+    assert int(cell_partition(both, omega, penalty="positive")[0, 0]) == SHARED
+
+
 def test_cell_partition_takes_the_best_positive_score_or_empty() -> None:
     g = torch.tensor([[[1.0, 0.0, 1.0, -0.5], [0.0, 1.0, 1.0, 0.5]]])
     omega = torch.tensor([[True, True, True, True]])
@@ -960,3 +988,77 @@ def test_the_no_shared_rule_ablation_reaches_the_partition() -> None:
 
     assert PartitionRunConfig().shared_rule
     assert not PARTITION_ABLATIONS["DA16_no_shared_rule"](PartitionRunConfig()).shared_rule
+
+
+# Option 3 (2026-10-24): ViT-B/16 scored on a 7 by 7 unit grid -----------------
+
+def test_unit_grid_overrides_one_backbone_inside_the_block_only() -> None:
+    from core.grid import grid_of, unit_grid
+
+    assert grid_of("vit_b_16") == (14, 14)
+    with unit_grid("vit_b_16", (7, 7)):
+        assert grid_of("vit_b_16") == (7, 7)
+        assert grid_of("resnet50") == (7, 7)
+        with unit_grid("vit_b_16", None):
+            assert grid_of("vit_b_16") == (7, 7)
+    assert grid_of("vit_b_16") == (14, 14)
+    with pytest.raises(RuntimeError):
+        with unit_grid("vit_b_16", (7, 7)):
+            raise RuntimeError("leaves the block")
+    assert grid_of("vit_b_16") == (14, 14)
+
+
+def test_a_grid_run_cannot_write_into_the_paper_cells() -> None:
+    from scripts.paper_run import parse, spec_from_args
+
+    base = ["--game", "partition", "--dataset", "planted_pair", "--backbone", "vit_b_16", "--grid", "7"]
+    with pytest.raises(SystemExit):
+        spec_from_args(parse(base))
+    assert spec_from_args(parse(base + ["--out", "/tmp/elsewhere"])).grid == 7
+    assert spec_from_args(parse(base[:-2] + ["--out", "/tmp/elsewhere"])).grid is None
+    with pytest.raises(SystemExit):
+        spec_from_args(parse(["--game", "contrastive", "--dataset", "cifar10", "--grid", "7", "--out", "/tmp/x"]))
+
+
+def test_the_null_grid_follows_the_unit_count() -> None:
+    from evaluation.run_methods import NULL_GRID_UNITS
+
+    assert 7 * 7 <= NULL_GRID_UNITS < 14 * 14
+
+
+def test_cdea_divides_the_omega_of_the_cell_rho() -> None:
+    """2026-10-25: CDEA rebuilt Omega at 0.5 whatever --rho was. Its partition must cover the context's Omega."""
+    from cdea.region import evidence_region
+    from evaluation.run_methods import Knobs, PartitionContext, PartitionRunConfig, cdea_partition
+
+    model, x = additive_toy()
+    h, evidence, _ = _setup(model, x, 1.0)
+    for rho in (0.3, 0.7):
+        omega = evidence_region(evidence, rho)
+        ctx = PartitionContext(evidence=evidence, omega=omega, rows=[0], grid=GRID, rho=rho)
+        out = cdea_partition(model, x, h, "resnet50", Knobs(), x.device, ctx, PartitionRunConfig(steps=0))
+        assert torch.equal(out.extra["partition"].omega, omega)
+
+
+def test_an_accepted_equivalent_hash_counts_and_nothing_else_does(tmp_path, monkeypatch) -> None:
+    """2026-10-25: rows at a hash that equivalent_hashes.json accepts for the tree count, and are named."""
+    import json
+
+    import pandas as pd
+
+    import scripts.partition_readout as readout
+    from evaluation.provenance import knobs_hash, method_code_hash
+    from evaluation.run_methods import Knobs
+
+    code, knobs = method_code_hash(), knobs_hash(Knobs())
+    table = tmp_path / "equivalent_hashes.json"
+    table.write_text(json.dumps({code: [{"hash": "old-but-checked", "evidence": "a same-rows check"}]}))
+    monkeypatch.setattr(readout, "EQUIVALENT_HASHES", table)
+    frame = pd.DataFrame([
+        {"dataset": "d", "backbone": "b", "seed": 0, "fast": 0, "method_code_hash": code, "knobs_hash": knobs, "tag": "current"},
+        {"dataset": "d", "backbone": "b", "seed": 1, "fast": 0, "method_code_hash": "old-but-checked", "knobs_hash": knobs, "tag": "equivalent"},
+        {"dataset": "d", "backbone": "b", "seed": 2, "fast": 0, "method_code_hash": "old-unchecked", "knobs_hash": knobs, "tag": "stale"},
+    ])
+    assert readout.current_rows(frame, False, False)["tag"].tolist() == ["current", "equivalent"]
+    table.write_text(json.dumps({"another-tree": [{"hash": "old-but-checked"}]}))
+    assert readout.current_rows(frame, False, False)["tag"].tolist() == ["current"]

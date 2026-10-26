@@ -1,0 +1,10 @@
+{
+  "f9a6e7ed12e29a749672e955221466bef8654f43839dbb484b6758cbc789c45d": [
+    {
+      "hash": "8425b129ac607bab96ef43b064853de1b19cf099f069dcd063d8cdd5583bdb14",
+      "accepted": "2026-10-25 by the user (option B)",
+      "change": "cdea_partition passes rho to partition() (PartitionContext.rho); only rho != 0.5 changes",
+      "evidence": "results/paper/logs/rho_fix/equivalence_check.log: planted_pair ResNet-50 seed 0, rho 0.5, ROAD, cdea, subtract, occlusion_partition, occlusion_onesided. Partitions identical on all 800 rows; continuous scores within 0.003 (median 1.4e-6); 5 occlusion_onesided rows flip an S confirmation against csci/fair, attributed to GPU rounding from a different method set in the cell"
+    }
+  ]
+}
