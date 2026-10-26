@@ -107,6 +107,8 @@ class CellSpec:
     out_dir: Optional[str] = None
     image_batch: int = 4
     precomputed_dir: Optional[str] = None
+    rho: float = 0.5
+    grid: Optional[int] = None           # units per side for the partition game; None is the backbone's own
 
 
 def _ranges(n: int, image_batch: int) -> list[tuple[int, int]]:

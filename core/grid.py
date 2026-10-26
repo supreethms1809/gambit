@@ -9,16 +9,42 @@ operator calls this same function.
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 
 import torch
 import torch.nn.functional as F
 
 
+_GRID_OVERRIDE: dict[str, tuple[int, int]] = {}
+
+
 def grid_of(backbone: str) -> tuple[int, int]:
-    """ResNet-50 is 7 by 7. ViT-B/16 is 14 by 14. Anything else is 7 by 7."""
+    """ResNet-50 is 7 by 7. ViT-B/16 is 14 by 14. Anything else is 7 by 7, unless ``unit_grid`` says otherwise."""
+    if backbone in _GRID_OVERRIDE:
+        return _GRID_OVERRIDE[backbone]
     if backbone == "vit_b_16":
         return 14, 14
     return 7, 7
+
+
+@contextmanager
+def unit_grid(backbone: str, grid: tuple[int, int] | None):
+    """Inside the block, ``grid_of(backbone)`` is ``grid``. ``None`` keeps the default.
+
+    ViT-B/16 on 7 by 7 makes each unit 2 by 2 tokens, the unit side of ResNet-50.
+    """
+    if grid is None:
+        yield
+        return
+    previous = _GRID_OVERRIDE.get(backbone)
+    _GRID_OVERRIDE[backbone] = (int(grid[0]), int(grid[1]))
+    try:
+        yield
+    finally:
+        if previous is None:
+            _GRID_OVERRIDE.pop(backbone, None)
+        else:
+            _GRID_OVERRIDE[backbone] = previous
 
 
 def unit_side(height: int, grid_h: int) -> float:

@@ -15,17 +15,16 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
-- The partition queue is in "Running". Do not launch `launch_runs.py` phases `dev`, `planted-val`, or `natural-val`: those still call `--game decomposition`. Resume with the same command; it skips done markers whose stamp matches.
-- Shift-val stays stopped. Its finished cells were written before this pull.
-- **Open decision 9 is still unsigned.** The queue was restarted because the user ordered the decomposition rerun after the cell-penalty fix. Do not read a version 2 number as a paper result until the sign-off.
-0. Method hash `eea2f74d`, knobs hash `38f5d7c0` (`main` at `ee8d70c`). The stopped partition cells are in `results/archive/2026-10-21-partition-4a716ca7/`. The version 1 cells are in the 2026-10-21 decomposition folder of `results/archive/`. Neither counts.
-1. Check the job under "Running". Resume it, if it has stopped, with:
+- Checkpoint training for seeds 1–4 is in "Running". The CSCI val queue waits for it and then starts. Do not launch a second copy.
+- Do not run the test split and do not pass `--final`. `EVAL_PLAN.md` 13.9 is not signed off and `eval-plan-frozen` does not exist.
+- The 13.9 selection on planted ResNet-50 val, seeds 0–4, role-confirmed RA all, read from `results/paper/cells/val/partition` at `a2e2066b`, chose `cdea@lr0.05_t50`. C's accuracy did not separate the grid. The paper's CDEA row is still the default until that label is pointed at.
+0. Resume the CSCI queue, if it has stopped, with:
    ```bash
-   PYTHONPATH=. python results/paper/logs/launch_partition_queue.py --dry-run
-   nohup env PYTHONPATH=. python -u results/paper/logs/launch_partition_queue.py > results/paper/logs/launch_partition.log 2>&1 &
+   PYTHONPATH=. python results/paper/logs/launch_csci_val.py
    ```
-2. When the dev partition cells finish, make the version 2 selection (EVAL_PLAN 13.7) with `scripts/partition_readout.py`. Record the chosen labels in the log. `gambitEnv` has no pandas; the readout was run with `/home/sureshm/anaconda3/envs/cdea/bin/python`.
-3. Shift-val stays stopped until someone decides whether the rows written before this pull still count. The shift gate's finished cells are in `results/paper/gate_shift`.
+   Records: `results/paper/csci/`. Log: `results/paper/logs/launch_csci_val.log`.
+1. After it finishes, read the fair row before editing the framing sentences. If it matches CDEA, the method claim is the definitions computed per cell.
+2. Sign-off of 13.9, the freeze, and the one test read stay with the user. Natural-image test cells were not queued.
 
 ## Current state, 2026-10-14
 
@@ -60,11 +59,34 @@ On the GH200:
 
 ## Running
 
-Last recorded on 2026-10-22, 23:45 local.
-- **Partition val queue, rerun at the shared-rule hash.** Launcher PID 1737802 (relaunched 23:45 in `gambitEnv`). 31 cells: the 26 of the last queue plus `adjacent-val` (`planted_pair_adjacent`, ResNet-50, seeds 0–4, n = 200). The ResNet dev, planted and adjacent cells run DA3, DA8, DA10–DA16. Val only. No `--final`.
+Last recorded on 2026-10-25, 04:05 local. Method hash at the tree is `f9a6e7ed` (the ρ fix). `8425b129` is accepted as equivalent for it (`scripts/equivalent_hashes.json`, the user's decision of 2026-10-25, evidence `results/paper/logs/rho_fix/equivalence_check.log`), so the readouts count both and say so. **Every result path, with its state, is in `results/paper/RESULTS_MANIFEST.md`.**
+- **Complete val set, 206 cells.** PID 91794. ρ 0.3/0.7 (fixed), ViT adjacent at 14×14 and 7×7, the one-sided row on natural images, natural val seeds 1–4 on both backbones, ViT 7×7 natural seeds 1–4. Three ViT and three ResNet cells at a time, `gambitEnv`.
+  - Command (resumes; skips finished cells): `PYTHONPATH=. /home/sureshm/anaconda3/envs/gambitEnv/bin/python -u results/paper/logs/launch_complete_val.py`
+  - Log: `results/paper/logs/launch_complete_val.log`. Cell logs: `results/paper/logs/complete_val/`.
+- **Test read: not launched.** It waits for the sign-off of `EVAL_PLAN.md` 13.9 and the freeze.
+- Finished on 2026-10-24/25: checkpoint training (120 of 120), the CSCI queue (40), ViT 7×7 (13), the 31-cell rerun at `8425b129`, and the ρ fix with its same-rows check.
+
+(Earlier entries of this section follow.)
+
+- **31-cell partition val rerun, chained after the 7×7 queue.** PID 2854449 (`results/paper/logs/launch_rerun_after_grid7.sh`). When `launch_vit_grid7.py` exits, it checks that the tree is still at `8425b129` and then runs `launch_partition_queue.py`, rewriting `results/paper/cells/val/partition/` cell by cell. Log: `results/paper/logs/launch_partition.log`. The `a2e2066b` cells were copied first to `results/archive/2026-10-24-partition-a2e2066b/` (verified identical).
+- **Every result path is listed in `results/paper/RESULTS_MANIFEST.md`.** Update it with each launch; the export zip is built from it.
+- **ViT-B/16 on a 7×7 grid (option 3), waiting on the two queues below.** PID 2841992. 13 val cells: planted_pair seeds 0–4 (n = 200) and the 8 natural datasets, seed 0 (n = 64). Core rows, `occlusion_onesided`, DA16; ROAD and blur; no candidates. Two cells at a time. Records: `results/paper/csci/vit_grid7/`. The `grid` record column reads `7x7`.
+  - Command: `PYTHONPATH=. /home/sureshm/anaconda3/envs/gambitEnv/bin/python -u results/paper/logs/launch_vit_grid7.py`
+  - Log: `results/paper/logs/launch_vit_grid7.log`. Cell logs: `results/paper/logs/vit_grid7/`.
+  - `--grid 7` makes each unit 2×2 tokens (32 px), the unit side of ResNet-50, so a planted patch is one unit. Blur's sigma follows the unit side, and the null is exact (it uses the size grid only above 49 units).
+- **CSCI val queue, waiting on the training below.** PID 2666886. It starts when `launch_paper_training.py` exits. 40 val cells, then the model table and one adjacent example image. No `--final`. Test split not read. Records under `results/paper/csci/` (`fair/`, `vit_da16/`, `rho0.3/`, `rho0.7/`).
+  - Command: `PYTHONPATH=. python -u results/paper/logs/launch_csci_val.py`
+  - Log: `results/paper/logs/launch_csci_val.log`. Cell logs: `results/paper/logs/csci/`.
+  - Two ViT and two ResNet cells at a time. `gambitEnv`.
+- **Checkpoint training, seeds 1–4.** Launcher PID 2568743, 6 cells at a time, `gambitEnv`. Trains every missing paper checkpoint for seeds 1–4: the 7 contrastive probes × 2 backbones for seeds 2–4 (42) and the shift fine-tunes still missing for seeds 1–4 (30). Existing checkpoints are reused, not retrained. Planted pairs are complete for seeds 0–4.
+  - Command: `PYTHONPATH=. /home/sureshm/anaconda3/envs/gambitEnv/bin/python -u scripts/launch_paper_training.py --seeds 1,2,3,4 --jobs 6`
+  - Log: `results/paper/logs/train_seeds1-4.log`. Cell logs and done markers: `results/paper/logs/train/`. Checkpoints: `results/paper/checkpoints/` (a link to `results/paper/run_8486647c/checkpoints/`).
+  - The training code at HEAD matches the seed-1 chain at `cf07ac2` in what it trains: the same backbone builder, ImageNet input convention and dataset arguments (the changes since are module moves).
+- **Partition val queue: finished** 2026-10-23 12:32, 31 of 31 cells, 0 failed.
+- (Was) **Partition val queue, rerun at the shared-rule hash.** Launcher PID 1737802 (relaunched 2026-10-22 23:45 in `gambitEnv`). 31 cells: the 26 of the last queue plus `adjacent-val` (`planted_pair_adjacent`, ResNet-50, seeds 0–4, n = 200). The ResNet dev, planted and adjacent cells run DA3, DA8, DA10–DA16. Val only. No `--final`.
   - Command: `PYTHONPATH=. /home/sureshm/anaconda3/envs/gambitEnv/bin/python -u results/paper/logs/launch_partition_queue.py`. Use `gambitEnv` (torch 2.9.1): the `cdea` env has no `captum` or `pytorch_grad_cam`, and a queue launched there on 2026-10-22 failed its first cell on `ig_minsplit`, `occlusion_minsplit` and `margin_gradcam_ref`.
   - Log: `results/paper/logs/launch_partition.log`. Cell logs: `results/paper/logs/runs/`.
-  - Records: `results/paper/cells/val/partition/`. Each cell's `records.csv.gz` is rewritten when it finishes; until then the cell holds its `eea2f74d` rows.
+  - Records: `results/paper/cells/val/partition/`. It holds only this queue's cells: on 2026-10-23 the `eea2f74d` records and the `cdea`-env adjacent dev cells were deleted there, after a byte-for-byte check against their copies (archive and `dev_adjacent`). A cell with no `records.csv.gz` has not finished.
   - Stamp: method `a2e2066b`, knobs `38f5d7c0` (`main` at `c6413fd`).
   - The same command resumes and skips done cells whose stamp matches.
 
@@ -72,10 +94,10 @@ Last recorded on 2026-10-22, 23:45 local.
 
 | Where | What | Hash | Read as |
 |---|---|---|---|
-| `results/paper/cells/val/partition/` | The queue above | `a2e2066b` once each cell finishes; `eea2f74d` before | The val result. Stale cells are skipped by name |
+| `results/paper/cells/val/partition/` | The queue above, and nothing else | `a2e2066b`, `gambitEnv` | The val result |
 | `results/archive/2026-10-22-partition-eea2f74d/` | Copy of the 26 cells read on 2026-10-22, before the shared rule | `eea2f74d` | Archive. Does not count |
 | `results/paper/dev_shared_rule/` | planted_pair ResNet-50 seeds 0–4: CDEA, DA16, `subtract`, `occlusion_partition`; default candidate | `a2e2066b` | Dev read of the shared rule. Not the selection |
-| `results/paper/dev_adjacent/` | planted_pair_adjacent seeds 0–4: CDEA, `subtract`, `occlusion_partition`; default candidate | `a2e2066b` | Dev read of D1″b's condition. Superseded by the queue's `adjacent-val` cells |
+| `results/paper/dev_adjacent/` | planted_pair_adjacent seeds 0–4: CDEA, `subtract`, `occlusion_partition`; default candidate. The only copy since 2026-10-23 | `a2e2066b`, `cdea` env | Dev read of D1″b's condition. Superseded by the queue's `adjacent-val` cells |
 | `results/paper/dev_adjacent_da16/` | As `dev_adjacent`, plus DA16 | `a2e2066b` | Dev read of the shared rule on D1″b's condition |
 
 ## Plan
@@ -231,6 +253,8 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-23, CSCI val queue armed.** It waits for the seed 1–4 checkpoint training, then runs the one-sided per-cell row (`occlusion_onesided`), ViT planted cells with DA16, and ρ = 0.3 and 0.7. Val only. The 13.9 selection on `results/paper/cells/val/partition`, planted ResNet-50 seeds 0–4, role-confirmed RA all, chose `cdea@lr0.05_t50`.
 
 - **2026-10-22, high-overlap read of the same records.** Images were split per dataset × backbone by O: the top tertile (section 6.8) and the top decile. The scratch scripts are named in the session; read with the `cdea` env.
   - **Readout fix.** `scripts/partition_readout.py` keyed images on `image_index` alone. The planted cells pool five seeds, so images of different seeds were merged: "882 images", the top tertile and the paired intervals were wrong. Per-method means were not affected. It now keys on seed and `image_index` (`with_image_key`), with a test. The planted rows now read 1000 images and a top tertile of 333.
