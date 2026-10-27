@@ -733,3 +733,41 @@ The config hash is `core.reporting.config_hash` of the method and knobs hashes a
 **The search analysis.** At the sign-off the user asked where CDEA's search helped. That analysis reads val only.
 - Any comparison it proposes for test is declared in a dated section here before any test record is read, and is then confirmatory on test.
 - Whatever it finds on val is exploratory and reported as such.
+
+### 13.11 The search tests, and the ceiling-check reading (2026-10-27, before any test record is read)
+
+The user approved this section on 2026-10-27, after the freeze. The test queue of 13.10 was running, and no test record had been opened. The test cells already hold every row these tests use. This section changes no cell, no row, no hash and no test of 13.9 or 13.10.
+
+**The ceiling-check reading.** The user confirmed the pooled reading of D1″b's ceiling check: 0.135 of the A_k and A_l cells inside Ω are mislabelled by `subtract`, which passes (13.10).
+
+**Why these tests.** At the sign-off the user asked where CDEA's search helps. The analysis read val only: `results/paper/analysis/search_benefit_val/`, at `8425b129` and `f9a6e7ed`.
+- It paired CDEA, per image, with `occlusion_onesided`, which has the same definitions computed per cell with no search, and with DA11, DA12, DA16, `subtract` and `occlusion_partition`.
+- The three tests below come from that read. Their val values are given with each, so the tests are post hoc to val and confirmatory on test only.
+- On val, the polish alone (DA12) matches CDEA wherever CDEA is ahead. CDEA − DA12 and DA12 − `occlusion_onesided` are reported beside each test, untested.
+
+**Rows.** Every test is CDEA − `occlusion_onesided`.
+- CDEA is the paper's row, `cdea@lr0.05_t50` (13.10). The val values below are the default `cdea` row, which the val cells without candidates hold.
+- **The statistic and test (family D-T, as in 13.4):** the image is the unit, seeds pooled. The statistic is the mean over seeds of the per-seed mean paired difference. The test is a sign-flip permutation within seed, and the interval is a two-level bootstrap, 10,000 each, seed 0.
+- S1–S3 are their own family. They do not change D1″ or the framing rule of 13.9. S1 and S2 are tested at 0.05. S3 uses Holm over its two backbones.
+
+| # | Test | Cells and images | Metric | Holds if | Val (exploratory) |
+|---|---|---|---|---|---|
+| S1 | Per-cell deletion misleads | `planted_pair`, ResNet-50, seeds 0–4, ROAD rows, role-confirmed images | RA over all patch cells | p < 0.05, mean > 0 | +0.016 [0.003, 0.030]; 46 of 940 images better, 0 worse |
+| S2 | A cue spans several units | ViT-B/16 at 14×14, `planted_pair` and `planted_pair_adjacent`, seeds 0–4, ROAD rows, role-confirmed images | Per image, the mean of A_k's and A_l's accuracy over all their cells | p < 0.05, mean > 0 | +0.015 and +0.014; A_k +0.032 and +0.030 |
+| S3 | Shared sets that hold up as sets | The 8 natural datasets, ResNet-50 and ViT-B/16 at their own grids, seeds 0–4, ROAD rows | S confirmation (formulation 6.4), on images where both rows have a non-empty S | Per backbone: two-sided exact Wilcoxon over the 8 datasets rejects, Holm over the two backbones, positive median | ViT-B/16 +0.069, 8 of 8 datasets positive; ResNet-50 +0.036, 6 of 8 |
+
+**Details of each test.**
+- **S1.** Reported beside it: each patch's accuracy, and the share of images where the two rows differ.
+- **S2.**
+  - The two conditions' images are stacked within each seed. The sign flip is within seed and condition, and the bootstrap resamples seeds, then images within each seed and condition.
+  - Reported beside it: C's accuracy and RA over all patch cells, where CDEA was behind on val (C −0.018 and −0.009), and each condition alone.
+  - ViT-B/16 remains a robustness row for D1″. S2 is a claim about the search only.
+- **S3.**
+  - Each dataset's value is the mean over seeds of its per-seed mean paired difference.
+  - The exact two-sided p for 8 of 8 positive is 0.0078. The first Holm rejection needs p ≤ 0.025.
+  - Reported beside it: U_k and U_l confirmation, which were mixed on val, and the blur rows. Blur is close to CDEA's polish objective, so it is not tested.
+
+**Reporting.** All three are reported whatever they show.
+- The paper's sentence about the search follows the result: "the set-level search corrects per-cell errors when single-cell deletion misleads (S1) or a cue spans several units (S2)" only for the tests that hold.
+- A test that fails is reported as a negative result.
+- The adjacent condition on ResNet-50 and ViT-B/16 at 7×7, where CDEA and `occlusion_onesided` gave identical labels on val, are reported beside the tests.

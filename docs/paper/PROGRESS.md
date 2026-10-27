@@ -20,9 +20,8 @@ On the GH200:
   - Log: `results/paper/logs/launch_test.log`. Per-cell logs: `results/paper/logs/test/`.
   - Records: `results/paper/cells/test/partition/` and `results/paper/csci/vit_grid7/test/partition/`.
   - If it stops, resume with the same command. It skips finished cells.
-- **Do not read a test record** until two things are done:
-  1. family D-T's statistics are wired to the partition records;
-  2. the search-analysis comparisons the user asked for on 2026-10-27 (val only) are declared in a dated section of `EVAL_PLAN.md`.
+- **Do not read a test record** until family D-T's statistics (`analysis/stats.py`) are wired to the partition records. They must cover D1″a, D1″b, the framing comparison and the search tests S1–S3.
+- **The search tests S1–S3** were declared in `EVAL_PLAN.md` 13.11 on 2026-10-27, before any test record was read. The user also confirmed the pooled reading of the ceiling check.
 - **The paper's CDEA row is `cdea@lr0.05_t50`** (13.10 selection). The best rule row is `subtract`.
 
 ## Current state, 2026-10-14
@@ -252,6 +251,8 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-27, search tests declared.** `EVAL_PLAN.md` 13.11 declares S1–S3, each CDEA − `occlusion_onesided`, from the val search analysis (`results/paper/analysis/search_benefit_val/`), and records the pooled ceiling-check reading the user confirmed. No test record had been read.
 
 - **2026-10-27, signed off, frozen, test read launched.** The user signed off `EVAL_PLAN.md` 13.9 and asked for the freeze and the test read.
   - The plan is frozen in 13.10, with the post-hoc additions, the ceiling check, the selection, the 150 test cells and the hashes. Tag `eval-plan-frozen`.
