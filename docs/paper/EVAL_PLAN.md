@@ -1,6 +1,8 @@
 # Evaluation plan
 
-**Status.** This plan is not frozen. The tag `eval-plan-frozen` was not created. The test split stays locked. No run reads the test split or passes `--final` until every item in "Freeze procedure" (section 12) is done and the tag exists. The selection rule in section 6 has not been applied. Sections marked **[set at freeze]** are filled from val runs only, never from test.
+frozen: true
+
+**Status.** Frozen on 2026-10-27 for the decomposition paper (section 13.10), tag `eval-plan-frozen`. The user signed off section 13.9 that day. The test split is read once, by the cells 13.10 lists, with config hash `291bd2d48c5502e4`. Any later change to this file is a new dated section with its reason. Sections marked **[set at freeze]** were filled from val runs only, never from test.
 
 **Scope.** This plan covers the decomposition paper. The method is `FORMULATION_DECOMPOSITION.md`, and its claims and tests are section 13. The contrast game (`FORMULATION.md`) is ablation DA2. The shift game is a separate paper (`SHIFT_EVAL_PLAN.md`).
 
@@ -601,7 +603,7 @@ The definitions are in `FORMULATION_DECOMPOSITION.md` section 6.
   - The framing rule of 13.4 applies, with `occlusion_partition` in place of `occlusion_assign`.
 - **Neither D1′ nor D2′ holds.** The decomposition is reported as a negative result, together with D0 and the descriptive measurements (formulation open decision 10).
 
-### 13.9 Route (a) re-declaration (DRAFT, 2026-10-22)
+### 13.9 Route (a) re-declaration (2026-10-22, signed off 2026-10-27)
 
 Written before any image was scored with the payoff of formulation section 4.1 as drafted on 2026-10-22. If the user signs it off, it replaces 13.5–13.8 for the decomposition. Until then, nothing here is read.
 
@@ -659,3 +661,75 @@ Written before any image was scored with the payoff of formulation section 4.1 a
 4. The plan is frozen.
 5. The planted test split and D1″b's test split are read once.
 
+### 13.10 Sign-off and freeze (2026-10-27)
+
+**Sign-off.** On 2026-10-27 the user signed off section 13.9, with its dated entries of 2026-10-22, and asked for the freeze and the test read. Section 13.9's order is complete:
+1. Sign-off: this entry.
+2. D1″b's condition: specified 2026-10-22, implemented as `planted_pair_adjacent`.
+3. The planted val cells rerun at the current hash, for the selection: done.
+
+Section 12's items 1–7 belong to the contrast-game plan and do not gate the decomposition paper. This entry replaces them for section 13.
+
+**Read before the freeze, all on val.** Every val record in `results/paper/RESULTS_MANIFEST.md` was read by the user and the assistant before this entry: 270 cells at method `8425b129` or `f9a6e7ed`, the export `decomposition_val_2026-10-26.zip`. The test split was not read.
+
+**Post-hoc additions, each made after a val read.** None of them changes a claim or a test of 13.9. They are reported beside the declared rows.
+- **`occlusion_onesided`** (2026-10-23). This is `occlusion_partition` with CDEA's one-sided charge, s_k = g_k − max(0, g_l) and s_l = g_l − max(0, g_k), and the same shared rule.
+  - It was added after the val read of the adjacent condition showed that the two-sided charge explained most of CDEA's lead over `occlusion_partition`.
+  - The declared framing comparison stays CDEA − `occlusion_partition`. CDEA − `occlusion_onesided` is reported beside it, untested.
+- **The ρ fix** (2026-10-25). `cdea_partition` did not pass ρ to `partition()`, which rebuilt Ω at 0.5, so CDEA ignored ρ. The fix moved the method hash from `8425b129` to `f9a6e7ed`.
+  - At ρ = 0.5 the fix changes no partition. The same-rows check gave identical partitions on all 800 rows (`results/paper/logs/rho_fix/equivalence_check.log`).
+  - The user accepted the two hashes as equivalent (`scripts/equivalent_hashes.json`). The test read runs at `f9a6e7ed` only.
+- **ViT-B/16 on a 7×7 unit grid** (2026-10-24, `--grid 7`). Each unit is 2×2 tokens, the unit side of ResNet-50, and the exact null applies (49 units).
+  - It was added after the val read of planted ViT-B/16 at 14×14, where the per-cell shared rule fails: a 32-pixel patch spans 4 cells.
+  - ViT-B/16 stays a robustness row, not a claim (13.9). The test read runs both grids, and both are reported whatever they show.
+- **ρ ∈ {0.3, 0.7}** after the fix. Val only, for the appendix. Not run on test.
+
+**D1″b's ceiling check, as declared.** The check reads val, `subtract` and `occlusion_partition` only, ResNet-50 seeds 0–4. The declared wording, "the A_k and A_l cells inside Ω", is read pooled over the two patches. It passes, so the condition is kept.
+
+| | `subtract` | `occlusion_partition` |
+|---|---|---|
+| Role-confirmed share | 0.91 | 0.91 |
+| Mislabelled inside Ω, A_k and A_l pooled | **0.135** | 0.367 |
+| A_k alone | 0.058 | 0.385 |
+| A_l alone | 0.253 | 0.339 |
+
+Ω covers A_k in 0.80 of the cells and A_l in 0.52.
+
+**Selection, by 13.9's rule.** The rule is mean RA over all patch cells, on role-confirmed planted val images, ResNet-50 seeds 0–4, ROAD rows, at `8425b129`. Each mean is over 940 image rows.
+
+| Row | RA over all patch cells |
+|---|---|
+| `cdea@lr0.05_t50` | **0.8645** |
+| `cdea@lr0.05_t100` | 0.8642 |
+| `cdea@lr0.2_t100` | 0.8631 |
+| `cdea@lr0.2_t50` | 0.8624 |
+| default `cdea` (not on the grid) | 0.8624 |
+
+- **CDEA:** `cdea@lr0.05_t50` is chosen. The per-seed means give the same order. It is the paper's CDEA row, and the default `cdea` is reported beside it.
+- **Best rule row:** by the same quantity it is `subtract`, at 0.8826 (`ig_minsplit` 0.8674, `occlusion_minsplit` 0.7500).
+  - So D1″b's two comparisons are one: CDEA − `subtract`, tested once.
+  - Nothing was chosen on D1″b's condition or on test.
+
+**Test cells (2.4, [set at freeze]).** The launcher is `scripts/launch_partition_test.py`, 150 cells. Every cell runs under ROAD and blur, with `--split test --final`.
+- **Rows in every cell:** the core rows, `occlusion_onesided` and `cdea@lr0.05_t50`.
+- **Planted, ResNet-50:** `planted_pair` and `planted_pair_adjacent`, seeds 0–4, n = 200 kept images, with DA3, DA8 and DA10–DA16 as on val. These cells carry D1″a, D1″b and the framing comparison.
+- **Planted, ViT-B/16:** both conditions, seeds 0–4, n = 200, with DA16. Run at 14×14 and at 7×7. This is the robustness row.
+- **Natural:** the 8 datasets on both backbones, seeds 0–4, n = 64. ViT-B/16 also at 7×7, with DA16. Descriptive only (13.9). No natural-image accuracy claim is made, so no validity gate applies.
+- **Sampling:** as on val, from each dataset's test indices (`data/splits`). The planted images use the seeded draw order 1000 + s on the CIFAR-10 test split.
+- **Where records go:** native-grid cells to `results/paper/cells/test/partition/`, 7×7 cells to `results/paper/csci/vit_grid7/test/partition/`.
+
+**Hashes.**
+
+| Hash | Value |
+|---|---|
+| Method | `f9a6e7ed12e29a749672e955221466bef8654f43839dbb484b6758cbc789c45d` |
+| Knobs | `38f5d7c0666d2bdda12b4de05d4b9fd64d4a5bc00732b3c0ad6896bb85d95521` |
+| Config | `291bd2d48c5502e4` |
+
+The config hash is `core.reporting.config_hash` of the method and knobs hashes and every cell's arguments (`scripts/launch_partition_test.py --config-hash`).
+
+**The read-out.** Family D-T's machinery is in `analysis/stats.py`: the sign-flip test within seed and the two-level bootstrap, 10,000 each, seed 0. It is wired to the partition records before any test record is read. Wiring the read-out does not touch the method hash, and no test or margin changes.
+
+**The search analysis.** At the sign-off the user asked where CDEA's search helped. That analysis reads val only.
+- Any comparison it proposes for test is declared in a dated section here before any test record is read, and is then confirmatory on test.
+- Whatever it finds on val is exploratory and reported as such.

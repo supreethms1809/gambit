@@ -15,16 +15,15 @@ Results are not typed here. Name the command and the records it read.
 ## Next session
 
 On the GH200:
-- Checkpoint training for seeds 1–4 is in "Running". The CSCI val queue waits for it and then starts. Do not launch a second copy.
-- Do not run the test split and do not pass `--final`. `EVAL_PLAN.md` 13.9 is not signed off and `eval-plan-frozen` does not exist.
-- The 13.9 selection on planted ResNet-50 val, seeds 0–4, role-confirmed RA all, read from `results/paper/cells/val/partition` at `a2e2066b`, chose `cdea@lr0.05_t50`. C's accuracy did not separate the grid. The paper's CDEA row is still the default until that label is pointed at.
-0. Resume the CSCI queue, if it has stopped, with:
-   ```bash
-   PYTHONPATH=. python results/paper/logs/launch_csci_val.py
-   ```
-   Records: `results/paper/csci/`. Log: `results/paper/logs/launch_csci_val.log`.
-1. After it finishes, read the fair row before editing the framing sentences. If it matches CDEA, the method claim is the definitions computed per cell.
-2. Sign-off of 13.9, the freeze, and the one test read stay with the user. Natural-image test cells were not queued.
+- **The plan is frozen** (2026-10-27, `EVAL_PLAN.md` 13.10, tag `eval-plan-frozen`). The user signed off 13.9.
+- **The test read is running:** `scripts/launch_partition_test.py`, 150 cells, config hash `291bd2d48c5502e4`, method `f9a6e7ed`.
+  - Log: `results/paper/logs/launch_test.log`. Per-cell logs: `results/paper/logs/test/`.
+  - Records: `results/paper/cells/test/partition/` and `results/paper/csci/vit_grid7/test/partition/`.
+  - If it stops, resume with the same command. It skips finished cells.
+- **Do not read a test record** until two things are done:
+  1. family D-T's statistics are wired to the partition records;
+  2. the search-analysis comparisons the user asked for on 2026-10-27 (val only) are declared in a dated section of `EVAL_PLAN.md`.
+- **The paper's CDEA row is `cdea@lr0.05_t50`** (13.10 selection). The best rule row is `subtract`.
 
 ## Current state, 2026-10-14
 
@@ -253,6 +252,11 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-27, signed off, frozen, test read launched.** The user signed off `EVAL_PLAN.md` 13.9 and asked for the freeze and the test read.
+  - The plan is frozen in 13.10, with the post-hoc additions, the ceiling check, the selection, the 150 test cells and the hashes. Tag `eval-plan-frozen`.
+  - Launcher: `scripts/launch_partition_test.py`.
+  - Earlier, 2026-10-24 to 26: the complete val set ran (206 cells). 270 current val cells are exported as `results/paper/exports/decomposition_val_2026-10-26.zip`.
 
 - **2026-10-23, CSCI val queue armed.** It waits for the seed 1–4 checkpoint training, then runs the one-sided per-cell row (`occlusion_onesided`), ViT planted cells with DA16, and ρ = 0.3 and 0.7. Val only. The 13.9 selection on `results/paper/cells/val/partition`, planted ResNet-50 seeds 0–4, role-confirmed RA all, chose `cdea@lr0.05_t50`.
 
