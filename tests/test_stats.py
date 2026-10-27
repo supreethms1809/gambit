@@ -17,6 +17,7 @@ import pytest
 
 import analysis.stats as stats
 from analysis.stats import (
+    stratified_two_level_bootstrap_ci,
     bootstrap_mean_ci,
     family_summary,
     holm_adjust,
@@ -185,3 +186,26 @@ def test_seed_pooled_summary_rows_and_holm() -> None:
 
     single = seed_pooled_summary({"rr": small}, n_perm=2000, n_boot=2000)
     assert single[0]["p_holm"] == single[0]["p"]
+
+
+def test_stratified_bootstrap_keeps_each_stratum_size() -> None:
+    # One seed, two constant strata of sizes 3 and 1: every resample keeps 3 zeros and 1 one, so the mean is 0.25.
+    # Resampling the four stacked images instead would give means from 0 to 1.
+    assert stratified_two_level_bootstrap_ci({0: [[0.0, 0.0, 0.0], [1.0]]}) == (0.25, 0.25)
+    assert two_level_bootstrap_ci([[0.0, 0.0, 0.0, 1.0]]) == (0.0, 0.75)
+
+
+def test_stratified_bootstrap_all_zero_and_seed_weights() -> None:
+    assert stratified_two_level_bootstrap_ci({0: [np.zeros(4), np.zeros(3)], 1: [np.zeros(5), np.zeros(2)]},
+                                             n_boot=200) == (0.0, 0.0)
+    # As in the unstratified case, seeds count equally whatever their size.
+    assert stratified_two_level_bootstrap_ci({0: [[1.0] * 50], 1: [[3.0] * 5]}, alpha=0.9) == (2.0, 2.0)
+
+
+def test_stratified_bootstrap_is_deterministic(monkeypatch) -> None:
+    seeds = {seed: [values[:20] * 0.15, values[20:] * 0.15] for seed, values in _shifted_seeds().items()}
+    first = stratified_two_level_bootstrap_ci(seeds, n_boot=2000)
+    assert first[0] < first[1]
+    assert stratified_two_level_bootstrap_ci(dict(reversed(list(seeds.items()))), n_boot=2000) == first
+    monkeypatch.setattr(stats, "_BLOCK", 7)
+    assert stratified_two_level_bootstrap_ci(seeds, n_boot=2000) == first

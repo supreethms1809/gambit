@@ -785,3 +785,17 @@ The user approved this section on 2026-10-27, after the freeze. The test queue o
 - **The deviation, against 13.3's "the paper rows use the chosen label":** the ablations (DA3, DA8, DA10–DA16) are variants of the default configuration. Each ablation is therefore compared with the default `cdea` from the same cell, at the same lr and steps, and the table says so.
   - On val the two settings differ by 0.002 in RA over all patch cells on role-confirmed planted ResNet-50 images (0.8645 and 0.8624), and C's accuracy is identical (0.6436).
 - **The ρ cells** (ρ = 0.3 and 0.7, val only) hold the default `cdea`. They are reported as val, in the appendix, with that row named.
+
+### 13.13 The read-out is wired, and a correction to 13.11 (2026-10-27, before any test record is read)
+
+**The read-out.** `scripts/partition_tests.py` computes every declared test on partition records: D1″a, D1″b, D1″, the framing comparison and S1–S3, each with the rows reported beside it.
+- **Machinery:** `analysis/stats.py`, with 13.4's statistic, sign flip and two-level bootstrap. It adds `stratified_two_level_bootstrap_ci` for S2, which resamples images within each seed and condition (13.11).
+- **Tests:** `tests/test_stats.py` and `tests/test_partition_tests.py`, which runs the read-out on synthetic records with known answers.
+- **On test,** the script reads only cells at the tree's method hash that were written with `--final`, the frozen config hash, `--split test` and a clean tree. It refuses a group whose rows disagree on the images: Ω's size and overlap do not depend on the method.
+- **On val** it reproduces the val numbers already read, with `cdea@lr0.05_t50` where the val cells hold it. For example, D1″a's lower bound is −0.0186. The output is in `results/paper/analysis/tests_val/`.
+- The script is outside the method hash, and no test, margin or row changes.
+
+**Correction to 13.11.** 13.11's last bullet says CDEA and `occlusion_onesided` "gave identical labels on val" in the adjacent condition on ResNet-50 and at 7×7. That is true of the planted patches only.
+- On every role-confirmed image, the two rows label the patch cells the same way.
+- They differ on other Ω cells, which carry no patch and which RA does not score.
+- The read-out reports both shares beside S1.

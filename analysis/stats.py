@@ -275,3 +275,43 @@ def seed_pooled_summary(
     for row, adjusted in zip(rows, holm_adjust([float(row["p"]) for row in rows])):
         row["p_holm"] = adjusted
     return rows
+
+
+def stratified_two_level_bootstrap_ci(
+    differences: Mapping[int, Sequence[Sequence[float]]],
+    n_boot: int = 10_000,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> tuple[float, float]:
+    """``two_level_bootstrap_ci`` with images in strata inside each seed (EVAL_PLAN 13.11, S2).
+
+    ``differences`` maps each seed to its strata (for S2, the two planted conditions).
+    The statistic is the mean over seeds of each seed's mean over all its images,
+    strata stacked. Each resample draws the seeds with replacement, then draws
+    each drawn seed's images with replacement within each stratum, so every
+    stratum keeps its size.
+    """
+    if n_boot < 1:
+        raise ValueError("n_boot must be >= 1")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    seeds = [differences[key] for key in sorted(differences)]
+    if not seeds:
+        raise ValueError("differences need at least one seed")
+    strata = [_seed_samples(list(groups)) for groups in seeds]
+    generator = np.random.default_rng(int(seed))
+    picks = generator.integers(0, len(strata), size=(int(n_boot), len(strata)))
+    slot_means = np.empty(picks.shape, dtype=np.float64)
+    for index, groups in enumerate(strata):
+        size = sum(group.size for group in groups)
+        rows, cols = np.nonzero(picks == index)
+        total = np.zeros(rows.size, dtype=np.float64)
+        for group in groups:
+            for start in range(0, rows.size, _BLOCK):
+                stop = min(start + _BLOCK, rows.size)
+                draws = generator.integers(0, group.size, size=(stop - start, group.size))
+                total[start:stop] += group[draws].sum(axis=1)
+        slot_means[rows, cols] = total / size
+    statistics = slot_means.mean(axis=1)
+    low, high = np.quantile(statistics, [alpha / 2.0, 1.0 - alpha / 2.0], method="linear")
+    return float(low), float(high)

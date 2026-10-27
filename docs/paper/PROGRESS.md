@@ -20,7 +20,7 @@ On the GH200:
   - Log: `results/paper/logs/launch_test.log`. Per-cell logs: `results/paper/logs/test/`.
   - Records: `results/paper/cells/test/partition/` and `results/paper/csci/vit_grid7/test/partition/`.
   - If it stops, resume with the same command. It skips finished cells.
-- **Do not read a test record** until family D-T's statistics (`analysis/stats.py`) are wired to the partition records. They must cover D1″a, D1″b, the framing comparison and the search tests S1–S3.
+- **The read-out is wired** (`EVAL_PLAN.md` 13.13): `PYTHONPATH=. python scripts/partition_tests.py --split test`, once the test queue has finished. Run it with the `ct` env or gambitEnv. It writes `results/paper/analysis/tests_test/`. The val run is in `results/paper/analysis/tests_val/`.
 - **The search tests S1–S3** were declared in `EVAL_PLAN.md` 13.11 on 2026-10-27, before any test record was read. The user also confirmed the pooled reading of the ceiling check.
 - **The paper's CDEA row is `cdea@lr0.05_t50`** (13.10 selection). The best rule row is `subtract`. The ablations are compared with the default `cdea` from the same cell (13.12).
 - **Test record layout differs from val.** On test, `occlusion_onesided` and the ViT-B/16 adjacent cells at 14×14 sit inside `results/paper/cells/test/partition/`, not in `csci/fair` or `csci/vit_adjacent`. The 7×7 cells are in `results/paper/csci/vit_grid7/test/partition/`. Point `tools/paper_numbers.py --split test` at these roots.
@@ -258,6 +258,8 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-27, read-out wired.** `scripts/partition_tests.py` computes D1″a, D1″b, the framing comparison and S1–S3 (`EVAL_PLAN.md` 13.13). It is tested on synthetic records and reproduces the val numbers. No test record was read.
 
 - **2026-10-27, CDEA setting.** `EVAL_PLAN.md` 13.12: the code default stays (changing it would void the frozen hashes and the written test cells). `cdea@lr0.05_t50` is the paper row in every test cell. The ablations are compared with the default `cdea` from the same cell.
 
