@@ -771,3 +771,17 @@ The user approved this section on 2026-10-27, after the freeze. The test queue o
 - The paper's sentence about the search follows the result: "the set-level search corrects per-cell errors when single-cell deletion misleads (S1) or a cue spans several units (S2)" only for the tests that hold.
 - A test that fails is reported as a negative result.
 - The adjacent condition on ResNet-50 and ViT-B/16 at 7×7, where CDEA and `occlusion_onesided` gave identical labels on val, are reported beside the tests.
+
+### 13.12 The CDEA setting in the test read: a dated deviation (2026-10-27, before any test record is read)
+
+**Decision.** The code default stays: lr 0.1, 100 steps. No test record had been opened when this was written.
+- Making `cdea@lr0.05_t50` the default after the freeze would change the method hash and the frozen config hash.
+- It would also void the test cells already written and every val record.
+
+**Which row is used where.**
+- **The selected row (13.10), `cdea@lr0.05_t50`, is the paper's CDEA row.** It is used for D1″a, D1″b, the framing comparison, S1–S3, and the main tables on every root.
+  - Every test cell holds it: planted ResNet-50, ViT-B/16 at 14×14 and 7×7 in both conditions, and the natural datasets on both backbones.
+  - The default `cdea` is reported beside it.
+- **The deviation, against 13.3's "the paper rows use the chosen label":** the ablations (DA3, DA8, DA10–DA16) are variants of the default configuration. Each ablation is therefore compared with the default `cdea` from the same cell, at the same lr and steps, and the table says so.
+  - On val the two settings differ by 0.002 in RA over all patch cells on role-confirmed planted ResNet-50 images (0.8645 and 0.8624), and C's accuracy is identical (0.6436).
+- **The ρ cells** (ρ = 0.3 and 0.7, val only) hold the default `cdea`. They are reported as val, in the appendix, with that row named.

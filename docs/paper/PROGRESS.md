@@ -22,7 +22,14 @@ On the GH200:
   - If it stops, resume with the same command. It skips finished cells.
 - **Do not read a test record** until family D-T's statistics (`analysis/stats.py`) are wired to the partition records. They must cover D1″a, D1″b, the framing comparison and the search tests S1–S3.
 - **The search tests S1–S3** were declared in `EVAL_PLAN.md` 13.11 on 2026-10-27, before any test record was read. The user also confirmed the pooled reading of the ceiling check.
-- **The paper's CDEA row is `cdea@lr0.05_t50`** (13.10 selection). The best rule row is `subtract`.
+- **The paper's CDEA row is `cdea@lr0.05_t50`** (13.10 selection). The best rule row is `subtract`. The ablations are compared with the default `cdea` from the same cell (13.12).
+- **Test record layout differs from val.** On test, `occlusion_onesided` and the ViT-B/16 adjacent cells at 14×14 sit inside `results/paper/cells/test/partition/`, not in `csci/fair` or `csci/vit_adjacent`. The 7×7 cells are in `results/paper/csci/vit_grid7/test/partition/`. Point `tools/paper_numbers.py --split test` at these roots.
+- **Re-check after the test read:**
+  - the D1″a lower bound (val −0.0186 against −0.02);
+  - "right on exactly the same squares" (adjacent: CDEA and `occlusion_onesided` labels identical on val);
+  - the ViT-B/16 7×7 sentences;
+  - S1–S3 (13.11);
+  - the ρ sentence, which stays a val result, since ρ is not run on test.
 
 ## Current state, 2026-10-14
 
@@ -251,6 +258,8 @@ Not part of this plan unless reopened:
 - `results/paper/shift_pairs/preview.png` (2026-10-03) shows the `planted_patch` patch moved, from before the in-place counterfactual. No script regenerates it. Do not use it in a figure.
 
 ## Log
+
+- **2026-10-27, CDEA setting.** `EVAL_PLAN.md` 13.12: the code default stays (changing it would void the frozen hashes and the written test cells). `cdea@lr0.05_t50` is the paper row in every test cell. The ablations are compared with the default `cdea` from the same cell.
 
 - **2026-10-27, search tests declared.** `EVAL_PLAN.md` 13.11 declares S1–S3, each CDEA − `occlusion_onesided`, from the val search analysis (`results/paper/analysis/search_benefit_val/`), and records the pooled ceiling-check reading the user confirmed. No test record had been read.
 
